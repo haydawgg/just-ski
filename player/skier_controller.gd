@@ -9,6 +9,7 @@ signal crashed
 enum State { GROUND, AIR, GRIND, BAIL }
 
 @export var profile: SkiPhysicsProfile = preload("res://resources/physics/default_ski_profile.tres")
+@export var flick_profile: FlickTrickProfile = preload("res://resources/physics/default_flick_trick_profile.tres")
 
 var state := State.AIR
 var contact := SkiContactSolver.new()
@@ -18,6 +19,10 @@ var lateral_slip := 0.0
 var carve_force := 0.0
 var coyote_remaining := 0.0
 var jump_charge := 0.0
+var tuck_amount := 0.0
+var braking := false
+var air_time := 0.0
+var rail_balance_input := 0.0
 var active_rail: GrindRail3D
 var rail_offset := 0.0
 var rail_direction := 1.0
@@ -27,7 +32,19 @@ var debug_enabled := false
 var trick: TrickController
 var spray: GPUParticles3D
 var visual_root: Node3D
+var animation_controller: SkierAnimationController
+var animation_frame := SkierAnimationFrame.new()
 var debug_mesh: ImmediateMesh
+var flick: FlickTrickInterpreter
+var trick_sample := TrickInputSample.new()
+var trick_command: TrickCommand
+var active_trick_kind := TrickCommand.Kind.NONE
+var trick_phase := TrickCommand.PresentationPhase.NEUTRAL
+var gesture_strength := 0.0
+var grab_amount := 0.0
+var grab_tweak := Vector2.ZERO
+var grab_release_time := 0.0
+var rail_pose := 0
 
 func _ready() -> void:
 	collision_layer = 2
@@ -40,6 +57,8 @@ func _ready() -> void:
 	_build_debug_draw()
 	trick = TrickController.new()
 	add_child(trick)
+	flick = FlickTrickInterpreter.new(flick_profile)
+	trick_command = TrickCommand.new()
 	SessionManager.respawn_requested.connect(respawn_at)
 	state_changed.emit("Air")
 
@@ -55,6 +74,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	contact.sample(self)
+	_sample_trick_input(delta)
 	match state:
 		State.GROUND: _update_ground(delta)
 		State.AIR: _update_air(delta)
@@ -62,7 +82,7 @@ func _physics_process(delta: float) -> void:
 		State.BAIL: _update_bail(delta)
 	if state != State.GRIND:
 		move_and_slide()
-	_update_visual(delta)
+	_update_animation(delta)
 	_update_debug()
 	AudioManager.update_surface_audio(velocity.length(), clampf(absf(lateral_slip) / 12.0, 0.0, 1.0), state == State.GRIND)
 	telemetry_updated.emit(telemetry())
@@ -78,8 +98,8 @@ func _update_ground(delta: float) -> void:
 	var ski_forward := (-global_basis.z).slide(normal).normalized()
 	var ski_right := ski_forward.cross(normal).normalized()
 	var steer := InputManager.axis(&"steer_left", &"steer_right")
-	var braking := Input.is_action_pressed("brake")
-	var tuck_amount := Input.get_action_strength("tuck")
+	braking = Input.is_action_pressed("brake")
+	tuck_amount = 0.0 if braking else Input.get_action_strength("tuck")
 	edge_amount = move_toward(edge_amount, steer, profile.edge_response * delta)
 
 	# Gravity acts down the slope; friction is anisotropic along/across the skis.
@@ -110,9 +130,13 @@ func _update_ground(delta: float) -> void:
 	var target_basis := Basis.looking_at(turned_forward, normal).orthonormalized()
 	global_basis = Basis(Quaternion(global_basis).slerp(Quaternion(target_basis), 1.0 - exp(-8.0 * delta)))
 
-	if Input.is_action_pressed("jump"):
+	if trick_command.phase == TrickCommand.PresentationPhase.SETUP:
+		jump_charge = maxf(jump_charge, trick_command.gesture_strength * 0.32)
+	if trick_command.pop_strength > 0.0:
+		_pop(normal, trick_command.pop_strength, trick_command.rotation_impulse, trick_command.kind)
+	elif Input.is_action_pressed("jump"):
 		jump_charge = minf(jump_charge + delta, 0.32)
-	if Input.is_action_just_released("jump"):
+	if trick_command.pop_strength <= 0.0 and Input.is_action_just_released("jump"):
 		_pop(normal)
 	elif Input.is_action_just_pressed("jump") and last_physics_delta > 0.0:
 		jump_charge = maxf(jump_charge, 0.06)
@@ -121,18 +145,19 @@ func _update_ground(delta: float) -> void:
 	spray.emitting = absf(lateral_slip) > 2.5 or braking
 
 func _update_air(delta: float) -> void:
+	air_time += delta
+	braking = false
+	tuck_amount = 0.0
 	velocity += Vector3.DOWN * profile.gravity * delta
-	var trick_input := InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down")
-	angular_velocity.y += -trick_input.x * profile.air_yaw_acceleration * delta
-	angular_velocity.x += trick_input.y * profile.air_flip_acceleration * delta
-	var roll_input := Input.get_action_strength("grab_right") - Input.get_action_strength("grab_left")
-	angular_velocity.z += roll_input * profile.air_roll_acceleration * delta
+	if trick_command.committed:
+		angular_velocity += trick_command.rotation_impulse
+	angular_velocity.y += -trick_sample.left_stick.x * flick_profile.air_yaw_trim_acceleration * delta
 	angular_velocity = angular_velocity.limit_length(profile.maximum_angular_speed)
 	angular_velocity *= exp(-profile.air_angular_damping * delta)
 	rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta)
 	rotate_object_local(Vector3.UP, angular_velocity.y * delta)
 	rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
-	trick.update_air(angular_velocity, delta)
+	trick.update_air(angular_velocity, delta, trick_command)
 	spray.emitting = false
 	_try_capture_rail()
 	if contact.grounded and velocity.dot(contact.average_normal) < 0.0:
@@ -143,6 +168,7 @@ func _update_grind(delta: float) -> void:
 		_enter_air()
 		return
 	var tangent := active_rail.tangent_at(rail_offset) * rail_direction
+	rail_balance_input = trick_sample.left_stick.x
 	var slope_acceleration := Vector3.DOWN.dot(tangent) * profile.gravity
 	rail_speed = maxf(0.0, rail_speed + slope_acceleration * delta - (profile.rail_friction + active_rail.base_friction) * delta)
 	rail_offset += rail_speed * rail_direction * delta
@@ -153,31 +179,40 @@ func _update_grind(delta: float) -> void:
 	velocity = tangent * rail_speed
 	var target_basis := Basis.looking_at(tangent, Vector3.UP)
 	global_basis = Basis(Quaternion(global_basis).slerp(Quaternion(target_basis), 1.0 - exp(-12.0 * delta)))
-	trick.update_grind(delta)
+	if trick_command.kind == TrickCommand.Kind.RAIL_SLIDE_LEFT:
+		rail_pose = -1
+	elif trick_command.kind == TrickCommand.Kind.RAIL_SLIDE_RIGHT:
+		rail_pose = 1
+	trick.update_grind(delta, rail_pose)
 	AudioManager.rail_feedback(rail_speed)
-	if Input.is_action_just_pressed("jump"):
+	if trick_command.kind == TrickCommand.Kind.RAIL_POP or Input.is_action_just_pressed("jump"):
 		_exit_rail(true)
 
 func _update_bail(delta: float) -> void:
+	braking = false
 	bail_time -= delta
 	velocity += Vector3.DOWN * profile.gravity * delta
 	rotate_object_local(Vector3.BACK, delta * 2.8)
 	if bail_time <= 0.0 and contact.grounded:
 		SessionManager.request_respawn()
 
-func _pop(normal: Vector3) -> void:
-	var strength := lerpf(0.72, 1.0, clampf(jump_charge / 0.28, 0.0, 1.0))
+func _pop(normal: Vector3, requested_strength: float = -1.0, rotation_impulse: Vector3 = Vector3.ZERO, takeoff_kind: int = TrickCommand.Kind.POP) -> void:
+	var strength := requested_strength if requested_strength >= 0.0 else lerpf(0.72, 1.0, clampf(jump_charge / 0.28, 0.0, 1.0))
 	velocity += normal * profile.pop_impulse * strength
+	animation_controller.trigger(SkierAnimationController.AnimationEvent.POP, strength)
 	jump_charge = 0.0
-	_enter_air()
+	_enter_air(takeoff_kind)
+	angular_velocity = (angular_velocity + rotation_impulse).limit_length(profile.maximum_angular_speed)
 
-func _enter_air() -> void:
+func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE) -> void:
 	if state == State.AIR:
 		return
 	state = State.AIR
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	angular_velocity = Vector3.ZERO
-	trick.begin_air(velocity.dot(-global_basis.z) < 0.0)
+	air_time = 0.0
+	active_trick_kind = takeoff_kind
+	trick.begin_air(velocity.dot(-global_basis.z) < 0.0, takeoff_kind)
 	state_changed.emit("Air")
 
 func _handle_landing() -> void:
@@ -194,6 +229,12 @@ func _handle_landing() -> void:
 	if int(result.outcome) == LandingSolver.Outcome.BAIL:
 		_bail()
 		return
+	var landing_event := SkierAnimationController.AnimationEvent.LAND_CLEAN
+	if int(result.outcome) == LandingSolver.Outcome.SKETCHY:
+		landing_event = SkierAnimationController.AnimationEvent.LAND_SKETCHY
+	elif int(result.outcome) == LandingSolver.Outcome.HARD:
+		landing_event = SkierAnimationController.AnimationEvent.LAND_HARD
+	animation_controller.trigger(landing_event, clampf(float(result.impact) / profile.bail_impact_speed + 0.35, 0.35, 1.25), signf(lateral_slip))
 	var quality := float(result.score)
 	if int(result.outcome) == LandingSolver.Outcome.SKETCHY:
 		velocity *= 0.78
@@ -205,6 +246,9 @@ func _handle_landing() -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
 	trick.land(quality, velocity.dot(-global_basis.z) < 0.0)
+	active_trick_kind = TrickCommand.Kind.NONE
+	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
+	rail_pose = 0
 	state_changed.emit("Ground")
 
 func _try_capture_rail() -> void:
@@ -224,8 +268,10 @@ func _try_capture_rail() -> void:
 		rail_direction = float(best.direction)
 		rail_speed = float(best.speed)
 		state = State.GRIND
+		rail_pose = 0
 		motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 		global_position = best.position as Vector3
+		animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_ENTER, clampf(rail_speed / 20.0, 0.25, 1.0), rail_direction)
 		state_changed.emit("Grind")
 
 func _exit_rail(pop_off: bool) -> void:
@@ -233,14 +279,17 @@ func _exit_rail(pop_off: bool) -> void:
 	velocity = tangent * rail_speed
 	if pop_off:
 		velocity += Vector3.UP * profile.pop_impulse * 0.72
+	animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_EXIT, clampf(rail_speed / 20.0, 0.25, 1.0), rail_direction)
 	active_rail = null
-	_enter_air()
+	_enter_air(TrickCommand.Kind.POP if pop_off else TrickCommand.Kind.NONE)
 
 func _bail() -> void:
 	state = State.BAIL
 	bail_time = 1.0
 	trick.reset()
+	flick.reset()
 	AudioManager.crash_feedback()
+	animation_controller.trigger(SkierAnimationController.AnimationEvent.BAIL, 1.0, signf(lateral_slip))
 	crashed.emit()
 	state_changed.emit("Bail")
 
@@ -253,7 +302,12 @@ func respawn_at(value: Transform3D) -> void:
 	state = State.AIR
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	trick.reset()
+	flick.reset()
+	active_trick_kind = TrickCommand.Kind.NONE
+	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
+	rail_pose = 0
 	AudioManager.stop_feedback()
+	animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
 	state_changed.emit("Air")
 
 func telemetry() -> Dictionary:
@@ -269,6 +323,16 @@ func telemetry() -> Dictionary:
 		"carve_force": carve_force,
 		"angular_velocity": angular_velocity,
 		"rail": active_rail.name if active_rail != null else "—",
+		"flick": {
+			"stick": trick_sample.right_stick,
+			"kind": TrickCommand.Kind.keys()[active_trick_kind],
+			"phase": TrickCommand.PresentationPhase.keys()[trick_phase],
+			"strength": gesture_strength,
+			"left_trigger": trick_sample.left_trigger,
+			"right_trigger": trick_sample.right_trigger,
+			"grab": TrickController.GRAB_NAMES[trick.grab_pose],
+		},
+		"animation": animation_controller.debug_snapshot() if animation_controller != null else {},
 	}
 
 func _build_body() -> void:
@@ -279,29 +343,10 @@ func _build_body() -> void:
 	shape.shape = capsule
 	shape.position.y = 0.92
 	add_child(shape)
-	visual_root = Node3D.new()
-	add_child(visual_root)
-	var body_mesh := MeshInstance3D.new()
-	var body_capsule := CapsuleMesh.new()
-	body_capsule.radius = 0.34
-	body_capsule.height = 1.45
-	body_mesh.mesh = body_capsule
-	body_mesh.position.y = 1.05
-	var jacket := StandardMaterial3D.new()
-	jacket.albedo_color = Color("#ff4f64")
-	jacket.roughness = 0.72
-	body_mesh.material_override = jacket
-	visual_root.add_child(body_mesh)
-	for side: float in [-0.32, 0.32]:
-		var ski := MeshInstance3D.new()
-		var ski_mesh := BoxMesh.new()
-		ski_mesh.size = Vector3(0.12, 0.055, 1.9)
-		ski.mesh = ski_mesh
-		ski.position = Vector3(side, 0.07, -0.12)
-		var ski_material := StandardMaterial3D.new()
-		ski_material.albedo_color = Color("#172a3a")
-		ski.material_override = ski_material
-		visual_root.add_child(ski)
+	animation_controller = SkierAnimationController.new()
+	animation_controller.name = "SkierAnimationController"
+	visual_root = animation_controller
+	add_child(animation_controller)
 
 func _build_spray() -> void:
 	spray = GPUParticles3D.new()
@@ -337,9 +382,86 @@ func _build_debug_draw() -> void:
 	instance.material_override = material
 	add_child(instance)
 
-func _update_visual(delta: float) -> void:
-	var target_lean := -edge_amount * clampf(velocity.length() / 18.0, 0.0, 1.0) * 0.45
-	visual_root.rotation.z = lerpf(visual_root.rotation.z, target_lean, 1.0 - exp(-7.0 * delta))
+func _sample_trick_input(delta: float) -> void:
+	trick_sample.right_stick = InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down")
+	trick_sample.left_stick = Vector2(InputManager.axis(&"steer_left", &"steer_right"), 0.0)
+	trick_sample.left_trigger = Input.get_action_strength("grab_left")
+	trick_sample.right_trigger = Input.get_action_strength("grab_right")
+	trick_sample.keyboard_pop_pressed = Input.is_action_pressed("jump")
+	trick_sample.keyboard_pop_released = Input.is_action_just_released("jump")
+	var previous_grab := grab_amount
+	trick_command = flick.step(trick_sample, _flick_context(), delta)
+	gesture_strength = trick_command.gesture_strength if trick_command.gesture_strength > 0.0 else move_toward(gesture_strength, 0.0, delta * 3.0)
+	grab_amount = trick_command.grab_amount
+	grab_tweak = trick_command.grab_tweak
+	if trick_command.committed and trick_command.kind not in [TrickCommand.Kind.NONE, TrickCommand.Kind.POP, TrickCommand.Kind.RAIL_POP, TrickCommand.Kind.RAIL_SLIDE_LEFT, TrickCommand.Kind.RAIL_SLIDE_RIGHT]:
+		active_trick_kind = trick_command.kind
+	if previous_grab > 0.0 and grab_amount <= 0.0 and state == State.AIR:
+		grab_release_time = 0.22
+	else:
+		grab_release_time = maxf(0.0, grab_release_time - delta)
+	trick_phase = trick_command.phase
+	if state == State.AIR and trick_phase == TrickCommand.PresentationPhase.NEUTRAL:
+		if grab_release_time > 0.0:
+			trick_phase = TrickCommand.PresentationPhase.OPEN
+		elif active_trick_kind != TrickCommand.Kind.NONE and angular_velocity.length() > 0.2:
+			trick_phase = TrickCommand.PresentationPhase.ROTATE
+
+func _flick_context() -> int:
+	match state:
+		State.GROUND: return FlickTrickInterpreter.Context.GROUND
+		State.AIR: return FlickTrickInterpreter.Context.AIR
+		State.GRIND: return FlickTrickInterpreter.Context.GRIND
+	return FlickTrickInterpreter.Context.BAIL
+
+func _update_animation(delta: float) -> void:
+	var predicted_landing := _predict_landing_time()
+	var landing_release := 0.0
+	if predicted_landing >= 0.0 and predicted_landing < animation_controller.profile.landing_anticipation_time:
+		landing_release = 1.0 - predicted_landing / animation_controller.profile.landing_anticipation_time
+	animation_frame.locomotion_state = state
+	animation_frame.speed_mps = velocity.length()
+	animation_frame.speed_ratio = clampf(velocity.length() / profile.maximum_speed, 0.0, 1.0)
+	animation_frame.edge = edge_amount
+	animation_frame.skid = lateral_slip
+	animation_frame.carve_force = carve_force
+	animation_frame.tuck = tuck_amount
+	animation_frame.braking = braking
+	animation_frame.compression = clampf(jump_charge / 0.32, 0.0, 1.0)
+	animation_frame.contact_confidence = contact.confidence
+	animation_frame.ground_normal = contact.average_normal
+	animation_frame.angular_velocity = angular_velocity
+	animation_frame.vertical_velocity = velocity.y
+	animation_frame.air_time = air_time
+	animation_frame.predicted_landing_time = predicted_landing
+	animation_frame.grab_pose = trick.grab_pose
+	animation_frame.switch_stance = velocity.dot(-global_basis.z) < 0.0
+	animation_frame.rail_speed = rail_speed if state == State.GRIND else 0.0
+	animation_frame.rail_balance = (float(rail_pose) if rail_pose != 0 else rail_balance_input) if state == State.GRIND else 0.0
+	animation_frame.rail_type = active_rail.rail_type if active_rail != null else 0
+	animation_frame.trick_kind = active_trick_kind
+	animation_frame.trick_phase = TrickCommand.PresentationPhase.LANDING if landing_release > 0.58 else trick_phase
+	animation_frame.gesture_strength = gesture_strength
+	animation_frame.gesture_direction = trick_sample.right_stick
+	animation_frame.left_trigger = trick_sample.left_trigger
+	animation_frame.right_trigger = trick_sample.right_trigger
+	animation_frame.grab_amount = grab_amount * (1.0 - landing_release)
+	animation_frame.grab_tweak = grab_tweak
+	var rotation_amount := maxf(absf(trick.accumulated_rotation.x), maxf(absf(trick.accumulated_rotation.y), absf(trick.accumulated_rotation.z)))
+	animation_frame.rotation_progress = fmod(rotation_amount / TAU, 1.0)
+	animation_controller.apply_frame(animation_frame, delta)
+
+func _predict_landing_time() -> float:
+	if state != State.AIR or velocity.y > 1.0:
+		return -1.0
+	var origin := global_position + Vector3.UP * 0.2
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + Vector3.DOWN * 12.0, 0b101)
+	query.exclude = [get_rid()]
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return -1.0
+	var distance := origin.distance_to(hit.position as Vector3)
+	return clampf(distance / maxf(2.0, -velocity.y), 0.0, 2.0)
 
 func _update_debug() -> void:
 	debug_mesh.clear_surfaces()

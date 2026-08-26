@@ -25,6 +25,7 @@ const DEFAULTS := {
 	"stick_response": 1.35,
 	"units_mph": false,
 	"landing_assist": 0.35,
+	"trick_visualizer_enabled": true,
 }
 
 var active: Dictionary = {}

@@ -36,10 +36,12 @@ func vector(left: StringName, right: StringName, up: StringName, down: StringNam
 func glyph(action: StringName) -> String:
 	var pad := last_device != "keyboard"
 	match action:
-		&"jump": return "A / Cross" if pad else "Space"
+		&"jump": return "Right stick flick" if pad else "Space"
 		&"respawn": return "Y / Triangle" if pad else "R"
 		&"set_marker": return "D-pad Up" if pad else "T"
 		&"brake": return "LT / L2" if pad else "Ctrl"
+		&"grab_left": return "LT / L2" if pad else "Q"
+		&"grab_right": return "RT / R2" if pad else "E"
 		_: return str(action)
 
 func rumble(weak: float, strong: float, duration: float) -> void:

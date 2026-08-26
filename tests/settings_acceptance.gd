@@ -9,11 +9,15 @@ func _ready() -> void:
 
 	GameSettings.begin_edit()
 	GameSettings.set_pending("render_scale", staged_scale)
+	var original_visualizer := bool(GameSettings.active["trick_visualizer_enabled"])
+	GameSettings.set_pending("trick_visualizer_enabled", not original_visualizer)
 	_check(is_equal_approx(float(GameSettings.active["render_scale"]), original_scale), "Editing pending settings changed active state")
+	_check(bool(GameSettings.active["trick_visualizer_enabled"]) == original_visualizer, "Editing visualizer setting changed active state")
 	_check(is_equal_approx(get_viewport().scaling_3d_scale, original_scale), "Editing pending settings changed renderer state")
 
 	GameSettings.cancel_pending()
 	_check(is_equal_approx(float(GameSettings.pending["render_scale"]), original_scale), "Cancel did not restore pending state")
+	_check(bool(GameSettings.pending["trick_visualizer_enabled"]) == original_visualizer, "Cancel did not restore visualizer setting")
 
 	GameSettings.begin_edit()
 	GameSettings.set_pending("render_scale", staged_scale)

@@ -10,6 +10,8 @@ var debug_label: Label
 var notice_label: Label
 var pause_panel: PanelContainer
 var options_panel: PanelContainer
+var trick_guide_panel: PanelContainer
+var trick_visualizer: FlickVisualizer
 var total_score := 0
 var notice_time := 0.0
 
@@ -17,6 +19,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build_hud()
 	_build_pause_menu()
+	_build_trick_guide()
 	_build_options_menu()
 	InputManager.device_changed.connect(_on_device_changed)
 	SessionManager.marker_changed.connect(_on_marker_changed)
@@ -33,7 +36,9 @@ func bind_player(value: SkierController) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("pause"):
-		if options_panel.visible:
+		if trick_guide_panel.visible:
+			_close_trick_guide()
+		elif options_panel.visible:
 			_close_options(false)
 		elif get_tree().paused:
 			_resume()
@@ -86,6 +91,9 @@ func _build_hud() -> void:
 	debug_label.position = Vector2(1120, 0)
 	debug_label.size = Vector2(410, 360)
 	overlay.add_child(debug_label)
+	trick_visualizer = FlickVisualizer.new()
+	trick_visualizer.position = Vector2(1240, 585)
+	overlay.add_child(trick_visualizer)
 
 func _build_pause_menu() -> void:
 	pause_panel = PanelContainer.new()
@@ -105,9 +113,67 @@ func _build_pause_menu() -> void:
 	box.add_child(_button("Resume", _resume))
 	box.add_child(_button("Return to Marker", _respawn_from_menu))
 	box.add_child(_button("Set Marker Here", _set_marker_from_menu))
+	var guide_button := _button("Trick Guide", _open_trick_guide)
+	guide_button.name = "TrickGuideButton"
+	box.add_child(guide_button)
 	box.add_child(_button("Options", _open_options))
 	box.add_child(_button("Restart from Summit", _restart_summit))
 	box.add_child(_button("Quit to Desktop", _quit_game))
+
+func _build_trick_guide() -> void:
+	trick_guide_panel = PanelContainer.new()
+	trick_guide_panel.name = "TrickGuidePanel"
+	trick_guide_panel.visible = false
+	trick_guide_panel.position = Vector2(330, 55)
+	trick_guide_panel.size = Vector2(940, 790)
+	add_child(trick_guide_panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	trick_guide_panel.add_child(box)
+	var title := _label("FLICK-IT TRICK GUIDE", 30)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(900, 650)
+	box.add_child(scroll)
+	var guide := VBoxContainer.new()
+	guide.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	guide.add_theme_constant_override("separation", 12)
+	scroll.add_child(guide)
+	_add_guide_section(guide, "TAKEOFFS", [
+		"Right stick down → up: straight pop",
+		"Right stick down → left/right: pop into spin",
+		"Right stick down → diagonal: pop into cork",
+	])
+	_add_guide_section(guide, "AIR ROTATIONS", [
+		"Flick left/right: spin impulse",
+		"Flick up: frontflip   •   Flick down: backflip",
+		"Flick diagonal: left/right cork",
+		"Recenter before each additional flick; left stick trims yaw",
+	])
+	_add_guide_section(guide, "GRABS & TWEAKS", [
+		"LT/L2: left hand   •   RT/R2: right hand   •   Both: double grab",
+		"Trigger + inward stick: mute   •   Trigger + up: Japan",
+		"Left trigger + down: tail   •   Right trigger + down: nose",
+		"Both + up: spread eagle   •   Both + down: daffy",
+		"Triggers must be released after takeoff before the first grab",
+	])
+	_add_guide_section(guide, "RAILS", [
+		"Neutral entry: 50-50   •   Flick left/right: boardslide",
+		"Down → up: pop off   •   Left stick: balance",
+	])
+	var back := _button("Back", _close_trick_guide)
+	back.name = "TrickGuideBack"
+	box.add_child(back)
+
+func _add_guide_section(parent: VBoxContainer, heading: String, lines: Array[String]) -> void:
+	var heading_label := _label(heading, 20)
+	heading_label.add_theme_color_override("font_color", Color("#ffc857"))
+	parent.add_child(heading_label)
+	for line: String in lines:
+		var label := _label("  " + line, 17)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		parent.add_child(label)
 
 func _build_options_menu() -> void:
 	options_panel = PanelContainer.new()
@@ -241,6 +307,11 @@ func _build_options_menu() -> void:
 	assist.step = 0.05
 	gameplay_tab.add_child(_row("Landing assist", assist))
 	assist.value_changed.connect(func(value: float) -> void: GameSettings.set_pending("landing_assist", value))
+	var visualizer_toggle := CheckButton.new()
+	visualizer_toggle.name = "TrickVisualizerToggle"
+	visualizer_toggle.text = "Enabled"
+	gameplay_tab.add_child(_row("Flick-It visualizer", visualizer_toggle))
+	visualizer_toggle.toggled.connect(func(value: bool) -> void: GameSettings.set_pending("trick_visualizer_enabled", value))
 
 	var controller_tab := VBoxContainer.new()
 	controller_tab.name = "Controller"
@@ -314,6 +385,7 @@ func _pause() -> void:
 	get_tree().paused = true
 	AudioManager.stop_feedback()
 	pause_panel.visible = true
+	trick_guide_panel.visible = false
 	var first := pause_panel.find_child("", true, false)
 	for node: Node in pause_panel.find_children("*", "Button", true, false):
 		(node as Button).grab_focus()
@@ -321,6 +393,7 @@ func _pause() -> void:
 
 func _resume() -> void:
 	options_panel.visible = false
+	trick_guide_panel.visible = false
 	pause_panel.visible = false
 	get_tree().paused = false
 
@@ -341,6 +414,18 @@ func _restart_summit() -> void:
 func _quit_game() -> void:
 	AudioManager.shutdown_audio()
 	get_tree().quit()
+
+func _open_trick_guide() -> void:
+	pause_panel.visible = false
+	trick_guide_panel.visible = true
+	(trick_guide_panel.find_child("TrickGuideBack", true, false) as Button).grab_focus()
+
+func _close_trick_guide() -> void:
+	trick_guide_panel.visible = false
+	pause_panel.visible = true
+	var guide_button := pause_panel.find_child("TrickGuideButton", true, false) as Button
+	if guide_button != null:
+		guide_button.grab_focus()
 
 func _open_options() -> void:
 	GameSettings.begin_edit()
@@ -369,6 +454,7 @@ func _sync_options() -> void:
 	(options_panel.find_child("SFX", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["sfx_volume_db"]))
 	(options_panel.find_child("MPH", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["units_mph"]))
 	(options_panel.find_child("LandingAssist", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["landing_assist"]))
+	(options_panel.find_child("TrickVisualizerToggle", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["trick_visualizer_enabled"]))
 	(options_panel.find_child("Rumble", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["controller_rumble"]))
 	(options_panel.find_child("Deadzone", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_deadzone"]))
 	(options_panel.find_child("OuterDeadzone", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_outer_deadzone"]))
@@ -397,9 +483,15 @@ func _close_options(applied: bool) -> void:
 func _on_telemetry(data: Dictionary) -> void:
 	var speed := float(data.speed_mps) * (2.23694 if bool(GameSettings.active["units_mph"]) else 3.6)
 	speed_label.text = "%d %s" % [roundi(speed), "mph" if bool(GameSettings.active["units_mph"]) else "km/h"]
-	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSpeed %.2f m/s\nNormal %s\nEdge %.2f\nLateral slip %.2f\nCarve force %.2f\nAngular %s\nRail %s" % [
+	var animation: Dictionary = data.get("animation", {})
+	var flick_data: Dictionary = data.get("flick", {})
+	if trick_visualizer != null:
+		trick_visualizer.apply_snapshot(flick_data)
+	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSpeed %.2f m/s\nNormal %s\nEdge %.2f\nLateral slip %.2f\nCarve force %.2f\nAngular %s\nRail %s\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f" % [
 		Engine.get_frames_per_second(), Engine.physics_ticks_per_second, data.state, data.grounded, data.contact_confidence,
-		data.speed_mps, data.surface_normal, data.edge, data.lateral_slip, data.carve_force, data.angular_velocity, data.rail]
+		data.speed_mps, data.surface_normal, data.edge, data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
+		flick_data.get("kind", "NONE"), flick_data.get("phase", "NEUTRAL"),
+		animation.get("state", "—"), animation.get("pose", "—"), animation.get("blend", 0.0)]
 
 func _on_trick_changed(text: String) -> void:
 	trick_label.text = text
@@ -426,7 +518,7 @@ func _on_device_changed(_device: String) -> void:
 	_update_hint()
 
 func _update_hint() -> void:
-	hint_label.text = "%s pop   •   %s brake   •   %s marker   •   %s return   •   F3 debug" % [InputManager.glyph(&"jump"), InputManager.glyph(&"brake"), InputManager.glyph(&"set_marker"), InputManager.glyph(&"respawn")]
+	hint_label.text = "%s pop/tricks   •   LT/RT grabs in air   •   %s marker   •   %s return   •   F3 debug" % [InputManager.glyph(&"jump"), InputManager.glyph(&"set_marker"), InputManager.glyph(&"respawn")]
 
 func _show_notice(text: String) -> void:
 	notice_label.text = text

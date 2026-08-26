@@ -1,0 +1,63 @@
+class_name SkierAnimationFrame
+extends RefCounted
+
+var locomotion_state: int = 0
+var speed_mps: float = 0.0
+var speed_ratio: float = 0.0
+var edge: float = 0.0
+var skid: float = 0.0
+var carve_force: float = 0.0
+var tuck: float = 0.0
+var braking: bool = false
+var compression: float = 0.0
+var contact_confidence: float = 0.0
+var ground_normal: Vector3 = Vector3.UP
+var angular_velocity: Vector3 = Vector3.ZERO
+var vertical_velocity: float = 0.0
+var air_time: float = 0.0
+var predicted_landing_time: float = -1.0
+var grab_pose: int = 0
+var switch_stance: bool = false
+var rail_speed: float = 0.0
+var rail_balance: float = 0.0
+var rail_type: int = 0
+var trick_kind: int = 0
+var trick_phase: int = 0
+var gesture_strength: float = 0.0
+var gesture_direction: Vector2 = Vector2.ZERO
+var left_trigger: float = 0.0
+var right_trigger: float = 0.0
+var grab_amount: float = 0.0
+var grab_tweak: Vector2 = Vector2.ZERO
+var rotation_progress: float = 0.0
+
+func reset() -> void:
+	locomotion_state = 0
+	speed_mps = 0.0
+	speed_ratio = 0.0
+	edge = 0.0
+	skid = 0.0
+	carve_force = 0.0
+	tuck = 0.0
+	braking = false
+	compression = 0.0
+	contact_confidence = 0.0
+	ground_normal = Vector3.UP
+	angular_velocity = Vector3.ZERO
+	vertical_velocity = 0.0
+	air_time = 0.0
+	predicted_landing_time = -1.0
+	grab_pose = 0
+	switch_stance = false
+	rail_speed = 0.0
+	rail_balance = 0.0
+	rail_type = 0
+	trick_kind = 0
+	trick_phase = 0
+	gesture_strength = 0.0
+	gesture_direction = Vector2.ZERO
+	left_trigger = 0.0
+	right_trigger = 0.0
+	grab_amount = 0.0
+	grab_tweak = Vector2.ZERO
+	rotation_progress = 0.0
