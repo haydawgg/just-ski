@@ -3,6 +3,7 @@ extends Node3D
 const SNOW := Color("#dcecf5")
 const SNOW_SHADOW := Color("#a9c7d8")
 const FEATURE := Color("#ff9f43")
+const SnowSurface := preload("res://world/snow_material.gd")
 
 var player: SkierController
 var camera_rig: SkiCameraController
@@ -18,26 +19,56 @@ func _ready() -> void:
 func _build_environment() -> void:
 	environment = WorldEnvironment.new()
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color("#84bde3")
-	env.background_energy_multiplier = 0.8
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("#a8c8df")
-	env.ambient_light_energy = 0.75
+	var sky := Sky.new()
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.23, 0.45, 0.72)
+	sky_mat.sky_horizon_color = Color(0.82, 0.9, 0.96)
+	sky_mat.sky_curve = 0.09
+	sky_mat.sky_energy_multiplier = 1.15
+	sky_mat.ground_bottom_color = Color(0.72, 0.8, 0.88)
+	sky_mat.ground_horizon_color = Color(0.9, 0.94, 0.97)
+	sky_mat.ground_curve = 0.12
+	sky_mat.ground_energy_multiplier = 0.85
+	sky_mat.sun_angle_max = 18.0
+	sky_mat.sun_curve = 0.07
+	sky.sky_material = sky_mat
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_sky_contribution = 0.92
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = 1.08
+	env.tonemap_white = 6.2
 	env.fog_enabled = true
-	env.fog_light_color = Color("#d8e8f2")
-	env.fog_density = 0.0045
-	env.fog_height = 4.0
-	env.fog_height_density = 0.08
+	env.fog_light_color = Color(0.86, 0.92, 0.97)
+	env.fog_sun_scatter = 0.18
+	env.fog_density = 0.0032
+	env.fog_aerial_perspective = 0.55
+	env.fog_sky_affect = 0.45
+	env.fog_height = 2.0
+	env.fog_height_density = 0.055
+	env.glow_enabled = true
+	env.glow_intensity = 0.32
+	env.glow_strength = 0.72
+	env.glow_bloom = 0.035
+	env.glow_hdr_threshold = 0.85
+	env.ssao_radius = 1.6
+	env.ssao_intensity = 1.8
 	environment.environment = env
 	add_child(environment)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-52.0, -28.0, 0.0)
-	sun.light_color = Color("#fff3df")
-	sun.light_energy = 1.45
+	sun.name = "Sun"
+	sun.rotation_degrees = Vector3(-38.0, -42.0, 0.0)
+	sun.light_color = Color(1.0, 0.94, 0.84)
+	sun.light_energy = 1.72
+	sun.light_indirect_energy = 0.85
+	sun.light_specular = 0.7
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 180.0
+	sun.shadow_bias = 0.04
+	sun.shadow_normal_bias = 1.2
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	sun.directional_shadow_max_distance = 220.0
 	add_child(sun)
 
 func _build_resort() -> void:
@@ -69,6 +100,7 @@ func _build_resort() -> void:
 		_add_tree(Vector3(38.0, 10.5 + z * 0.135, z + 5.0))
 	_add_sign(Vector3(0, 20.0, 66), "PARK ↓   RAILS →   JUMPS ←")
 	_add_sign(Vector3(0, 1.0, -87), "BASE HUB   •   PRESS R TO RETURN")
+	_add_distant_ridges()
 
 func _build_player() -> void:
 	player = SkierController.new()
@@ -100,10 +132,7 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	mesh_instance.mesh = mesh
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.84 if color == SNOW else 0.5
-	mesh_instance.material_override = material
+	mesh_instance.material_override = _material_for_color(color)
 	body.add_child(mesh_instance)
 	if collision_enabled:
 		var shape_node := CollisionShape3D.new()
@@ -115,8 +144,62 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 	return body
 
 func _add_kicker(position: Vector3, length: float, angle: float) -> void:
-	_add_box("Kicker", Vector3(8.5, 1.2, length), position, Vector3(angle, 0, 0), FEATURE, true)
-	_add_box("Landing", Vector3(11.0, 1.3, length * 1.7), position + Vector3(0, -2.0, -length * 1.55), Vector3(-12.0, 0, 0), SNOW_SHADOW, true)
+	var width := 8.5
+	var bury := 0.45
+	var rise := length * tan(deg_to_rad(angle))
+	var hw := width * 0.5
+	var hl := length * 0.5
+	var points := PackedVector3Array([
+		Vector3(-hw, 0.04, hl),
+		Vector3(hw, 0.04, hl),
+		Vector3(-hw, rise, -hl),
+		Vector3(hw, rise, -hl),
+		Vector3(-hw, -bury, hl),
+		Vector3(hw, -bury, hl),
+		Vector3(-hw, -bury, -hl),
+		Vector3(hw, -bury, -hl),
+	])
+	var body := StaticBody3D.new()
+	body.name = "Kicker"
+	body.position = position
+	body.collision_layer = 1
+	body.collision_mask = 2
+	var shape_node := CollisionShape3D.new()
+	var convex := ConvexPolygonShape3D.new()
+	convex.points = points
+	shape_node.shape = convex
+	body.add_child(shape_node)
+	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.mesh = _wedge_mesh(points)
+	mesh_instance.material_override = SnowSurface.create(SnowSurface.Kind.GROOMED)
+	body.add_child(mesh_instance)
+	add_child(body)
+	_add_box("Landing", Vector3(11.0, 1.6, length * 1.85), position + Vector3(0.0, -2.15, -length * 1.42), Vector3(-12.0, 0.0, 0.0), SNOW_SHADOW, true)
+
+func _wedge_mesh(points: PackedVector3Array) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var faces := [
+		[0, 1, 3, 2],
+		[4, 6, 7, 5],
+		[0, 2, 6, 4],
+		[1, 5, 7, 3],
+		[2, 3, 7, 6],
+		[0, 4, 5, 1],
+	]
+	for face: Array in faces:
+		var a: Vector3 = points[int(face[0])]
+		var b: Vector3 = points[int(face[1])]
+		var c: Vector3 = points[int(face[2])]
+		var d: Vector3 = points[int(face[3])]
+		st.add_vertex(a)
+		st.add_vertex(b)
+		st.add_vertex(c)
+		st.add_vertex(a)
+		st.add_vertex(c)
+		st.add_vertex(d)
+	st.generate_normals()
+	return st.commit()
 
 func _add_rail(label: String, points: Array[Vector3], type: GrindRail3D.RailType) -> void:
 	var rail := GrindRail3D.new()
@@ -129,8 +212,19 @@ func _add_rail(label: String, points: Array[Vector3], type: GrindRail3D.RailType
 	add_child(rail)
 
 func _add_tree(position: Vector3) -> void:
-	var root := Node3D.new()
+	var root := StaticBody3D.new()
+	root.name = "ParkTree"
 	root.position = position
+	root.collision_layer = 4
+	root.collision_mask = 2
+	root.add_to_group("park_trees")
+	var trunk_shape := CollisionShape3D.new()
+	var cylinder := CylinderShape3D.new()
+	cylinder.radius = 0.32
+	cylinder.height = 3.4
+	trunk_shape.shape = cylinder
+	trunk_shape.position.y = 1.7
+	root.add_child(trunk_shape)
 	var trunk := MeshInstance3D.new()
 	var trunk_mesh := CylinderMesh.new()
 	trunk_mesh.top_radius = 0.18
@@ -154,7 +248,32 @@ func _add_tree(position: Vector3) -> void:
 		needles.albedo_color = Color("#214b46")
 		crown.material_override = needles
 		root.add_child(crown)
+	var cap := MeshInstance3D.new()
+	var cap_mesh := SphereMesh.new()
+	cap_mesh.radius = 0.95
+	cap_mesh.height = 0.55
+	cap.mesh = cap_mesh
+	cap.position.y = 5.35
+	cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER)
+	root.add_child(cap)
 	add_child(root)
+
+func _add_distant_ridges() -> void:
+	_add_box("NorthRidge", Vector3(220.0, 38.0, 70.0), Vector3(0.0, 28.0, 165.0), Vector3(-18.0, 0.0, 0.0), SNOW, false)
+	_add_box("WestRidge", Vector3(70.0, 32.0, 180.0), Vector3(-95.0, 22.0, 10.0), Vector3(-8.0, 12.0, -16.0), SNOW_SHADOW, false)
+	_add_box("EastRidge", Vector3(70.0, 30.0, 180.0), Vector3(98.0, 20.0, 8.0), Vector3(-8.0, -14.0, 14.0), SNOW_SHADOW, false)
+
+func _material_for_color(color: Color) -> Material:
+	if color.is_equal_approx(SNOW):
+		return SnowSurface.create(SnowSurface.Kind.POWDER)
+	if color.is_equal_approx(SNOW_SHADOW):
+		return SnowSurface.create(SnowSurface.Kind.PACKED)
+	if color.is_equal_approx(FEATURE):
+		return SnowSurface.create(SnowSurface.Kind.GROOMED)
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.5
+	return material
 
 func _add_lodge(position: Vector3) -> void:
 	_add_box("SummitLodge", Vector3(14, 5, 9), position, Vector3.ZERO, Color("#6f4837"), true)

@@ -54,7 +54,7 @@ func _process(delta: float) -> void:
 	camera.fov = lerpf(camera.fov, base_fov + clampf(speed / 45.0, 0.0, 1.0) * speed_fov_gain, 1.0 - exp(-4.0 * delta))
 
 func _avoid_collision(from: Vector3, desired: Vector3) -> Vector3:
-	var query := PhysicsRayQueryParameters3D.create(from, desired, 0b101)
+	var query := PhysicsRayQueryParameters3D.create(from, desired, 1 | 4 | 8)
 	query.exclude = [target.get_rid()]
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():

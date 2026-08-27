@@ -7,4 +7,4 @@
 - Graphics settings apply render scale and high-level environment effects. The menu does not yet expose every advanced Godot 4.7 renderer option listed in the long-term plan (FSR2, HDR, GI mode, reflection quality, and risky-resolution confirmation).
 - Audio currently uses a lightweight procedural speed/skid/rail layer. Authored powder, ice, wind, impact, ambience, and spatial feature recordings are not yet included.
 - The graybox provides multiple connected lines but has not received the final art, vegetation density, resort expansion, LOD, or profiler-driven 1080p High optimization pass.
-- Thin-feature collision and grind capture have not yet been stress-tested at maximum speed for a 20-minute session.
+- Thin-feature grind capture at maximum speed for a 20-minute session is still a human playtest item; automated checks cover a live rail capture and a kicker ride, not a full park stress pass.

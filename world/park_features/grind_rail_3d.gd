@@ -66,7 +66,7 @@ func _build_visual_and_collision() -> void:
 		var visual := MeshInstance3D.new()
 		var collision := CollisionShape3D.new()
 		var body := StaticBody3D.new()
-		body.collision_layer = 4
+		body.collision_layer = 8
 		body.collision_mask = 2
 		if rail_type == RailType.BOX:
 			var box_mesh := BoxMesh.new()

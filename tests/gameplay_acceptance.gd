@@ -5,6 +5,10 @@ var skier: SkierController
 var frame := 0
 var failures: Array[String] = []
 var carve_start_x := 0.0
+var carve_start_yaw := 0.0
+var carve_start_speed := 0.0
+var carve_start_pos := Vector3.ZERO
+var carve_start_right := Vector3.ZERO
 var speed_before_brake := 0.0
 var air_seen := false
 var marker_position := Vector3.ZERO
@@ -18,11 +22,27 @@ func _physics_process(_delta: float) -> void:
 	frame += 1
 	if frame == 180:
 		carve_start_x = skier.global_position.x
+		carve_start_pos = skier.global_position
+		carve_start_yaw = _heading_yaw()
+		carve_start_speed = skier.velocity.length()
+		var start_forward := (-skier.global_basis.z).slide(Vector3.UP)
+		carve_start_right = start_forward.cross(Vector3.UP).normalized() if start_forward.length_squared() > 0.01 else Vector3.RIGHT
+		if skier.state != SkierController.State.GROUND:
+			failures.append("Skier was not grounded when carve input began")
 		Input.action_press("steer_left", 1.0)
 	elif frame == 330:
 		Input.action_release("steer_left")
-		if absf(skier.global_position.x - carve_start_x) < 0.5:
+		var lateral_travel := absf((skier.global_position - carve_start_pos).dot(carve_start_right))
+		var heading_delta := absf(angle_difference(carve_start_yaw, _heading_yaw()))
+		print("CARVE_TELEMETRY lateral=", lateral_travel, " heading_deg=", rad_to_deg(heading_delta), " speed=", skier.velocity.length(), " start_speed=", carve_start_speed, " state=", SkierController.State.keys()[skier.state], " dx=", skier.global_position.x - carve_start_x)
+		if skier.state != SkierController.State.GROUND:
+			failures.append("Skier left the snow during the carve")
+		if lateral_travel < 2.0:
 			failures.append("Carve input did not produce meaningful lateral travel")
+		if heading_delta < deg_to_rad(28.0):
+			failures.append("Carve input did not rotate ski heading enough for arcade turning")
+		if carve_start_speed > 6.0 and skier.velocity.length() < carve_start_speed * 0.35:
+			failures.append("Carve destroyed too much speed instead of redirecting it")
 		Input.action_press("jump", 1.0)
 	elif frame == 350:
 		Input.action_release("jump")
@@ -70,6 +90,10 @@ func _test_rail_filtering() -> void:
 		failures.append("Plausible rail approach was rejected")
 	if bool(invalid.get("valid", false)):
 		failures.append("Far rail approach was incorrectly captured")
+
+func _heading_yaw() -> float:
+	var forward := -skier.global_basis.z
+	return atan2(forward.x, forward.z)
 
 func _finish() -> void:
 	Input.action_release("steer_left")

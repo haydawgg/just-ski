@@ -48,7 +48,7 @@ var rail_pose := 0
 
 func _ready() -> void:
 	collision_layer = 2
-	collision_mask = 5
+	collision_mask = 1 | 4
 	floor_max_angle = deg_to_rad(62.0)
 	floor_snap_length = 0.42
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
@@ -74,6 +74,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	contact.sample(self)
+	contact.merge_capsule_floor(is_on_floor(), get_floor_normal())
 	_sample_trick_input(delta)
 	match state:
 		State.GROUND: _update_ground(delta)
@@ -82,6 +83,8 @@ func _physics_process(delta: float) -> void:
 		State.BAIL: _update_bail(delta)
 	if state != State.GRIND:
 		move_and_slide()
+		if state == State.GROUND and contact.grounded:
+			_suppress_into_slope_bounce()
 	_update_animation(delta)
 	_update_debug()
 	AudioManager.update_surface_audio(velocity.length(), clampf(absf(lateral_slip) / 12.0, 0.0, 1.0), state == State.GRIND)
@@ -92,43 +95,85 @@ func _update_ground(delta: float) -> void:
 		coyote_remaining -= delta
 		if coyote_remaining <= 0.0:
 			_enter_air()
-		return
-	coyote_remaining = profile.coyote_time
+			return
+	else:
+		coyote_remaining = profile.coyote_time
 	var normal := contact.average_normal
-	var ski_forward := (-global_basis.z).slide(normal).normalized()
-	var ski_right := ski_forward.cross(normal).normalized()
+	var forward_on_slope := (-global_basis.z).slide(normal)
+	if forward_on_slope.length_squared() < 0.0001:
+		forward_on_slope = contact.downhill()
+	if forward_on_slope.length_squared() < 0.0001:
+		return
+	var ski_forward := forward_on_slope.normalized()
 	var steer := InputManager.axis(&"steer_left", &"steer_right")
 	braking = Input.is_action_pressed("brake")
 	tuck_amount = 0.0 if braking else Input.get_action_strength("tuck")
-	edge_amount = move_toward(edge_amount, steer, profile.edge_response * delta)
+	var edge_rate := profile.edge_response if absf(steer) >= absf(edge_amount) - 0.001 else profile.edge_release
+	edge_amount = move_toward(edge_amount, steer, edge_rate * delta)
 
 	# Gravity acts down the slope; friction is anisotropic along/across the skis.
 	velocity += Vector3.DOWN.slide(normal) * profile.gravity * delta
-	var longitudinal_speed := velocity.dot(ski_forward)
-	lateral_slip = velocity.dot(ski_right)
-	var speed_ratio := clampf(absf(longitudinal_speed) / 28.0, 0.0, 1.0)
-	var grip := minf(profile.maximum_edge_grip, profile.lateral_friction + absf(edge_amount) * profile.maximum_edge_grip * speed_ratio)
+	var fall_line := contact.downhill()
+	var planar := velocity.slide(normal)
+	var planar_speed := planar.length()
+	var pointing_downhill := maxf(0.0, ski_forward.dot(fall_line))
+	if not braking and pointing_downhill > 0.0:
+		velocity += ski_forward * (pointing_downhill * profile.glide_acceleration * delta)
+		planar = velocity.slide(normal)
+		planar_speed = planar.length()
+	var speed_ratio := clampf(planar_speed / maxf(profile.steering_speed_reference, 1.0), 0.0, 1.0)
+	var steer_rate := lerpf(profile.low_speed_steering, profile.high_speed_steering, speed_ratio)
+	var speed_gate := clampf(planar_speed / maxf(profile.full_steer_speed, 1.0), 0.28, 1.0)
 	if braking:
-		grip = profile.brake_friction
-		longitudinal_speed = move_toward(longitudinal_speed, 0.0, profile.brake_friction * 0.4 * delta)
-	var lateral_correction := minf(absf(lateral_slip), grip * delta) * signf(lateral_slip)
-	velocity -= ski_right * lateral_correction
-	carve_force = absf(lateral_correction) / maxf(delta, 0.001)
+		steer_rate *= 1.45
+		speed_gate = 1.0
+	steer_rate *= speed_gate * lerpf(1.0, 0.86, tuck_amount)
+	var requested_yaw := -edge_amount * (steer_rate + planar_speed * profile.sidecut) * delta
+	var needed_centripetal := planar_speed * absf(edge_amount) * (steer_rate + planar_speed * profile.sidecut)
+	var grip := profile.lateral_friction + absf(edge_amount) * profile.maximum_edge_grip * lerpf(0.82, 1.0, speed_ratio)
+	grip *= clampf(1.0 + contact.tip_load * profile.tip_grip_gain, 0.7, 1.22)
+	if braking:
+		grip = maxf(grip, profile.brake_friction)
+	var carve_ratio := 1.0 if needed_centripetal <= 0.05 else clampf(grip / needed_centripetal, 0.0, 1.0)
+	var velocity_yaw := requested_yaw * carve_ratio
+	if planar_speed > 0.08:
+		var rotated := planar.rotated(normal, velocity_yaw)
+		if carve_ratio < 1.0:
+			rotated = rotated.move_toward(Vector3.ZERO, (1.0 - carve_ratio) * profile.skid_friction * delta)
+		velocity = rotated + normal * velocity.dot(normal)
+	var heading_yaw := requested_yaw
+	if absf(edge_amount) < profile.weathervane_edge and planar_speed > 0.4:
+		var travel := velocity.slide(normal).normalized()
+		if ski_forward.dot(travel) < 0.0:
+			travel = -travel
+		var align := ski_forward.signed_angle_to(travel, normal)
+		var vane := 1.0 - absf(edge_amount) / maxf(profile.weathervane_edge, 0.001)
+		heading_yaw += clampf(align, -profile.weathervane_rate * vane * delta, profile.weathervane_rate * vane * delta)
+	var turned_forward := ski_forward.rotated(normal, heading_yaw).normalized()
+	var turned_right := turned_forward.cross(normal).normalized()
+	lateral_slip = velocity.dot(turned_right)
+	var unused_grip := maxf(0.0, grip - needed_centripetal)
+	var tracking := minf(absf(lateral_slip), unused_grip * delta) * signf(lateral_slip)
+	velocity -= turned_right * tracking
+	carve_force = planar_speed * absf(velocity_yaw) / maxf(delta, 0.001)
+	if braking:
+		var longitudinal_speed := velocity.dot(turned_forward)
+		velocity -= turned_forward * (longitudinal_speed - move_toward(longitudinal_speed, 0.0, profile.brake_friction * 0.4 * delta))
 
 	var drag_multiplier := lerpf(1.0, profile.tuck_drag_multiplier, tuck_amount)
 	var drag := profile.base_drag * drag_multiplier * velocity.length_squared()
-	velocity -= velocity.normalized() * minf(drag * delta, velocity.length())
-	velocity -= ski_forward * minf(absf(longitudinal_speed), profile.longitudinal_friction * delta) * signf(longitudinal_speed)
+	if velocity.length_squared() > 0.0001:
+		velocity -= velocity.normalized() * minf(drag * delta, velocity.length())
+	var glide_speed := velocity.dot(turned_forward)
+	velocity -= turned_forward * minf(absf(glide_speed), profile.longitudinal_friction * delta) * signf(glide_speed)
 	if velocity.length() > profile.maximum_speed:
 		velocity = velocity.limit_length(profile.maximum_speed)
 
-	var steer_rate := lerpf(profile.low_speed_steering, profile.high_speed_steering, speed_ratio)
-	if braking:
-		steer_rate *= 1.45
-	var yaw := -edge_amount * steer_rate * delta
-	var turned_forward := ski_forward.rotated(normal, yaw)
-	var target_basis := Basis.looking_at(turned_forward, normal).orthonormalized()
-	global_basis = Basis(Quaternion(global_basis).slerp(Quaternion(target_basis), 1.0 - exp(-8.0 * delta)))
+	# Apply turn yaw fully; only slope-normal alignment is smoothed so bumps don't eat steering.
+	var aligned_up := global_basis.y.slerp(normal, 1.0 - exp(-profile.ground_align_rate * delta)).normalized()
+	if absf(aligned_up.dot(turned_forward)) > 0.92:
+		aligned_up = normal
+	global_basis = Basis.looking_at(turned_forward, aligned_up).orthonormalized()
 
 	if trick_command.phase == TrickCommand.PresentationPhase.SETUP:
 		jump_charge = maxf(jump_charge, trick_command.gesture_strength * 0.32)
@@ -160,7 +205,9 @@ func _update_air(delta: float) -> void:
 	trick.update_air(angular_velocity, delta, trick_command)
 	spray.emitting = false
 	_try_capture_rail()
-	if contact.grounded and velocity.dot(contact.average_normal) < 0.0:
+	if state != State.AIR:
+		return
+	if contact.grounded and air_time >= profile.min_air_time and velocity.dot(contact.average_normal) < 0.0:
 		_handle_landing()
 
 func _update_grind(delta: float) -> void:
@@ -236,12 +283,17 @@ func _handle_landing() -> void:
 		landing_event = SkierAnimationController.AnimationEvent.LAND_HARD
 	animation_controller.trigger(landing_event, clampf(float(result.impact) / profile.bail_impact_speed + 0.35, 0.35, 1.25), signf(lateral_slip))
 	var quality := float(result.score)
+	velocity = velocity.slide(contact.average_normal)
 	if int(result.outcome) == LandingSolver.Outcome.SKETCHY:
 		velocity *= 0.78
 	elif int(result.outcome) == LandingSolver.Outcome.HARD:
 		velocity *= 0.48
-	var projected_forward := (-global_basis.z).slide(contact.average_normal).normalized()
-	global_basis = Basis.looking_at(projected_forward, contact.average_normal)
+	var projected_forward := (-global_basis.z).slide(contact.average_normal)
+	if projected_forward.length_squared() < 0.0001:
+		projected_forward = contact.downhill()
+	if projected_forward.length_squared() < 0.0001:
+		projected_forward = Vector3.FORWARD
+	global_basis = Basis.looking_at(projected_forward.normalized(), contact.average_normal)
 	angular_velocity = Vector3.ZERO
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
@@ -250,6 +302,11 @@ func _handle_landing() -> void:
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	rail_pose = 0
 	state_changed.emit("Ground")
+
+func _suppress_into_slope_bounce() -> void:
+	var into := velocity.dot(contact.average_normal)
+	if into < 0.0:
+		velocity -= contact.average_normal * into
 
 func _try_capture_rail() -> void:
 	if velocity.y > 3.0:
@@ -350,23 +407,32 @@ func _build_body() -> void:
 
 func _build_spray() -> void:
 	spray = GPUParticles3D.new()
-	spray.amount = 80
-	spray.lifetime = 0.65
-	spray.visibility_aabb = AABB(Vector3(-4, -2, -4), Vector3(8, 6, 8))
+	spray.amount = 140
+	spray.lifetime = 0.85
+	spray.explosiveness = 0.05
+	spray.visibility_aabb = AABB(Vector3(-5, -2, -5), Vector3(10, 8, 10))
 	var process_material := ParticleProcessMaterial.new()
-	process_material.direction = Vector3(0.0, 0.75, 0.6)
-	process_material.spread = 55.0
-	process_material.initial_velocity_min = 2.0
-	process_material.initial_velocity_max = 7.0
-	process_material.gravity = Vector3(0.0, -7.0, 0.0)
-	process_material.scale_min = 0.04
-	process_material.scale_max = 0.12
+	process_material.direction = Vector3(0.0, 0.85, 0.55)
+	process_material.spread = 48.0
+	process_material.initial_velocity_min = 1.6
+	process_material.initial_velocity_max = 6.2
+	process_material.gravity = Vector3(0.0, -5.5, 0.0)
+	process_material.damping_min = 0.4
+	process_material.damping_max = 1.2
+	process_material.scale_min = 0.035
+	process_material.scale_max = 0.11
+	process_material.color = Color(0.93, 0.97, 1.0, 0.82)
 	spray.process_material = process_material
 	var particle_mesh := QuadMesh.new()
-	particle_mesh.size = Vector2(0.08, 0.08)
+	particle_mesh.size = Vector2(0.07, 0.07)
 	var particle_material := StandardMaterial3D.new()
-	particle_material.albedo_color = Color(0.9, 0.96, 1.0, 0.75)
+	particle_material.albedo_color = Color(0.95, 0.98, 1.0, 0.7)
 	particle_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	particle_material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	particle_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	particle_material.emission_enabled = true
+	particle_material.emission = Color(0.85, 0.93, 1.0)
+	particle_material.emission_energy_multiplier = 0.35
 	particle_mesh.material = particle_material
 	spray.draw_pass_1 = particle_mesh
 	spray.position = Vector3(0.0, 0.15, 0.55)
@@ -455,7 +521,7 @@ func _predict_landing_time() -> float:
 	if state != State.AIR or velocity.y > 1.0:
 		return -1.0
 	var origin := global_position + Vector3.UP * 0.2
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + Vector3.DOWN * 12.0, 0b101)
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + Vector3.DOWN * 12.0, 1)
 	query.exclude = [get_rid()]
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
