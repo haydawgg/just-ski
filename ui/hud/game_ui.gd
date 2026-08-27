@@ -8,19 +8,23 @@ var score_label: Label
 var hint_label: Label
 var debug_label: Label
 var notice_label: Label
+var menu_backdrop: ColorRect
 var pause_panel: PanelContainer
 var options_panel: PanelContainer
 var trick_guide_panel: PanelContainer
 var trick_visualizer: FlickVisualizer
 var total_score := 0
 var notice_time := 0.0
+var _stored_mouse_mode := Input.MOUSE_MODE_VISIBLE
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build_hud()
+	_build_menu_backdrop()
 	_build_pause_menu()
 	_build_trick_guide()
 	_build_options_menu()
+	_build_notice_overlay()
 	InputManager.device_changed.connect(_on_device_changed)
 	SessionManager.marker_changed.connect(_on_marker_changed)
 	InputManager.controller_connection_changed.connect(_on_controller_connection)
@@ -35,14 +39,14 @@ func bind_player(value: SkierController) -> void:
 	player.crashed.connect(_on_crashed)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("pause"):
+	if event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and get_tree().paused):
 		if trick_guide_panel.visible:
 			_close_trick_guide()
 		elif options_panel.visible:
 			_close_options(false)
 		elif get_tree().paused:
 			_resume()
-		else:
+		elif event.is_action_pressed("pause"):
 			_pause()
 		get_viewport().set_input_as_handled()
 
@@ -58,6 +62,7 @@ func _process(delta: float) -> void:
 func _build_hud() -> void:
 	var safe := MarginContainer.new()
 	safe.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	safe.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	safe.add_theme_constant_override("margin_left", 26)
 	safe.add_theme_constant_override("margin_top", 22)
 	safe.add_theme_constant_override("margin_right", 26)
@@ -68,36 +73,59 @@ func _build_hud() -> void:
 	safe.add_child(overlay)
 
 	speed_label = _label("0 km/h", 28)
+	speed_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	speed_label.position = Vector2(0, 0)
 	overlay.add_child(speed_label)
 	trick_label = _label("", 30)
+	trick_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	trick_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	trick_label.position = Vector2(360, 36)
 	trick_label.size = Vector2(800, 54)
 	overlay.add_child(trick_label)
 	score_label = _label("SCORE 000000", 20)
+	score_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	score_label.position = Vector2(0, 42)
 	overlay.add_child(score_label)
 	hint_label = _label("", 17)
+	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_label.position = Vector2(0, 780)
 	hint_label.size = Vector2(900, 40)
 	overlay.add_child(hint_label)
-	notice_label = _label("", 22)
-	notice_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	notice_label.position = Vector2(460, 120)
-	notice_label.size = Vector2(600, 40)
-	overlay.add_child(notice_label)
 	debug_label = _label("", 14)
+	debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	debug_label.position = Vector2(1120, 0)
 	debug_label.size = Vector2(410, 360)
 	overlay.add_child(debug_label)
 	trick_visualizer = FlickVisualizer.new()
+	trick_visualizer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	trick_visualizer.position = Vector2(1240, 585)
 	overlay.add_child(trick_visualizer)
 
+func _build_notice_overlay() -> void:
+	notice_label = _label("", 22)
+	notice_label.name = "NoticeLabel"
+	notice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	notice_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	notice_label.position = Vector2(460, 72)
+	notice_label.size = Vector2(600, 40)
+	notice_label.z_index = 20
+	add_child(notice_label)
+
+func _build_menu_backdrop() -> void:
+	menu_backdrop = ColorRect.new()
+	menu_backdrop.name = "MenuBackdrop"
+	menu_backdrop.visible = false
+	menu_backdrop.color = Color(0.02, 0.05, 0.09, 0.62)
+	menu_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	menu_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	menu_backdrop.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(menu_backdrop)
+
 func _build_pause_menu() -> void:
 	pause_panel = PanelContainer.new()
+	pause_panel.name = "PausePanel"
 	pause_panel.visible = false
+	pause_panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	pause_panel.position = Vector2(530, 145)
 	pause_panel.size = Vector2(540, 580)
 	add_child(pause_panel)
@@ -110,20 +138,19 @@ func _build_pause_menu() -> void:
 	var subtitle := _label("PAUSED", 16)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(subtitle)
-	box.add_child(_button("Resume", _resume))
-	box.add_child(_button("Return to Marker", _respawn_from_menu))
-	box.add_child(_button("Set Marker Here", _set_marker_from_menu))
-	var guide_button := _button("Trick Guide", _open_trick_guide)
-	guide_button.name = "TrickGuideButton"
-	box.add_child(guide_button)
-	box.add_child(_button("Options", _open_options))
-	box.add_child(_button("Restart from Summit", _restart_summit))
-	box.add_child(_button("Quit to Desktop", _quit_game))
+	box.add_child(_named_button("ResumeButton", "Resume", _resume))
+	box.add_child(_named_button("ReturnMarkerButton", "Return to Marker", _respawn_from_menu))
+	box.add_child(_named_button("SetMarkerButton", "Set Marker Here", _set_marker_from_menu))
+	box.add_child(_named_button("TrickGuideButton", "Trick Guide", _open_trick_guide))
+	box.add_child(_named_button("OptionsButton", "Options", _open_options))
+	box.add_child(_named_button("RestartButton", "Restart from Summit", _restart_summit))
+	box.add_child(_named_button("QuitButton", "Quit to Desktop", _quit_game))
 
 func _build_trick_guide() -> void:
 	trick_guide_panel = PanelContainer.new()
 	trick_guide_panel.name = "TrickGuidePanel"
 	trick_guide_panel.visible = false
+	trick_guide_panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	trick_guide_panel.position = Vector2(330, 55)
 	trick_guide_panel.size = Vector2(940, 790)
 	add_child(trick_guide_panel)
@@ -162,9 +189,7 @@ func _build_trick_guide() -> void:
 		"Neutral entry: 50-50   •   Flick left/right: boardslide",
 		"Down → up: pop off   •   Left stick: balance",
 	])
-	var back := _button("Back", _close_trick_guide)
-	back.name = "TrickGuideBack"
-	box.add_child(back)
+	box.add_child(_named_button("TrickGuideBack", "Back", _close_trick_guide))
 
 func _add_guide_section(parent: VBoxContainer, heading: String, lines: Array[String]) -> void:
 	var heading_label := _label(heading, 20)
@@ -177,7 +202,9 @@ func _add_guide_section(parent: VBoxContainer, heading: String, lines: Array[Str
 
 func _build_options_menu() -> void:
 	options_panel = PanelContainer.new()
+	options_panel.name = "OptionsPanel"
 	options_panel.visible = false
+	options_panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	options_panel.position = Vector2(365, 58)
 	options_panel.size = Vector2(870, 785)
 	add_child(options_panel)
@@ -244,6 +271,18 @@ func _build_options_menu() -> void:
 	scale.step = 0.05
 	graphics_tab.add_child(_row("3D render scale", scale))
 	scale.value_changed.connect(func(value: float) -> void: GameSettings.set_pending("render_scale", value))
+	var anti_aliasing := OptionButton.new()
+	anti_aliasing.name = "AntiAliasing"
+	for text: String in ["Off", "TAA"]:
+		anti_aliasing.add_item(text)
+	graphics_tab.add_child(_row("Anti-aliasing", anti_aliasing))
+	anti_aliasing.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("anti_aliasing", index))
+	var shadow_quality := OptionButton.new()
+	shadow_quality.name = "ShadowQuality"
+	for text: String in ["Low", "Medium", "High", "Ultra"]:
+		shadow_quality.add_item(text)
+	graphics_tab.add_child(_row("Shadow quality", shadow_quality))
+	shadow_quality.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("shadow_quality", index))
 	var ssao := CheckButton.new()
 	ssao.name = "SSAO"
 	ssao.text = "Enabled"
@@ -350,9 +389,9 @@ func _build_options_menu() -> void:
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 12)
 	box.add_child(buttons)
-	buttons.add_child(_button("Apply", _apply_options))
-	buttons.add_child(_button("Cancel", _cancel_options))
-	buttons.add_child(_button("Reset Defaults", _reset_options))
+	buttons.add_child(_named_button("ApplyButton", "Apply", _apply_options))
+	buttons.add_child(_named_button("CancelButton", "Cancel", _cancel_options))
+	buttons.add_child(_named_button("ResetButton", "Reset Defaults", _reset_options))
 
 func _row(label_text: String, control: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()
@@ -367,6 +406,7 @@ func _row(label_text: String, control: Control) -> HBoxContainer:
 func _label(text: String, size: int) -> Label:
 	var label := Label.new()
 	label.text = text
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.add_theme_font_size_override("font_size", size)
 	label.add_theme_color_override("font_color", Color("#f4fbff"))
 	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
@@ -374,41 +414,73 @@ func _label(text: String, size: int) -> Label:
 	label.add_theme_constant_override("shadow_offset_y", 2)
 	return label
 
+func _named_button(button_name: String, text: String, callback: Callable) -> Button:
+	var button := _button(text, callback)
+	button.name = button_name
+	return button
+
 func _button(text: String, callback: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
+	button.focus_mode = Control.FOCUS_ALL
 	button.custom_minimum_size = Vector2(260, 52)
 	button.pressed.connect(callback)
 	return button
 
-func _pause() -> void:
-	get_tree().paused = true
-	AudioManager.stop_feedback()
-	pause_panel.visible = true
-	trick_guide_panel.visible = false
-	var first := pause_panel.find_child("", true, false)
+func _focus_first_pause_button() -> void:
+	var resume := pause_panel.find_child("ResumeButton", true, false) as Button
+	if resume != null:
+		resume.grab_focus()
+		return
 	for node: Node in pause_panel.find_children("*", "Button", true, false):
 		(node as Button).grab_focus()
 		break
+
+func _set_menu_visible(panel: Control) -> void:
+	menu_backdrop.visible = true
+	pause_panel.visible = panel == pause_panel
+	trick_guide_panel.visible = panel == trick_guide_panel
+	options_panel.visible = panel == options_panel
+
+func _pause() -> void:
+	_stored_mouse_mode = Input.mouse_mode
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	get_tree().paused = true
+	AudioManager.stop_feedback()
+	_set_menu_visible(pause_panel)
+	_focus_first_pause_button()
 
 func _resume() -> void:
 	options_panel.visible = false
 	trick_guide_panel.visible = false
 	pause_panel.visible = false
+	menu_backdrop.visible = false
 	get_tree().paused = false
+	Input.mouse_mode = _stored_mouse_mode
 
 func _respawn_from_menu() -> void:
+	if not SessionManager.has_marker:
+		_show_notice("NO MARKER SET")
+		_focus_first_pause_button()
+		return
 	SessionManager.request_respawn()
+	_show_notice("RETURNED TO MARKER")
 	_resume()
 
 func _set_marker_from_menu() -> void:
-	if player != null and player.contact.grounded:
-		SessionManager.set_marker(player.global_transform.translated_local(Vector3.UP * 0.5))
+	if player == null or not player.contact.grounded:
+		_show_notice("NEED SNOW CONTACT")
+		_focus_first_pause_button()
+		return
+	SessionManager.set_marker(player.global_transform.translated_local(Vector3.UP * 0.5))
 	_resume()
 
 func _restart_summit() -> void:
 	SessionManager.clear_marker()
+	total_score = 0
+	score_label.text = "SCORE 000000"
 	SessionManager.request_respawn()
+	_show_notice("RESTART FROM SUMMIT")
 	_resume()
 
 func _quit_game() -> void:
@@ -416,21 +488,18 @@ func _quit_game() -> void:
 	get_tree().quit()
 
 func _open_trick_guide() -> void:
-	pause_panel.visible = false
-	trick_guide_panel.visible = true
+	_set_menu_visible(trick_guide_panel)
 	(trick_guide_panel.find_child("TrickGuideBack", true, false) as Button).grab_focus()
 
 func _close_trick_guide() -> void:
-	trick_guide_panel.visible = false
-	pause_panel.visible = true
+	_set_menu_visible(pause_panel)
 	var guide_button := pause_panel.find_child("TrickGuideButton", true, false) as Button
 	if guide_button != null:
 		guide_button.grab_focus()
 
 func _open_options() -> void:
 	GameSettings.begin_edit()
-	pause_panel.visible = false
-	options_panel.visible = true
+	_set_menu_visible(options_panel)
 	_sync_options()
 	(options_panel.find_child("Preset", true, false) as OptionButton).grab_focus()
 
@@ -445,6 +514,8 @@ func _sync_options() -> void:
 	(options_panel.find_child("FPSCap", true, false) as SpinBox).set_value_no_signal(float(GameSettings.pending["fps_cap"]))
 	(options_panel.find_child("Preset", true, false) as OptionButton).select(int(GameSettings.pending["graphics_preset"]))
 	(options_panel.find_child("RenderScale", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["render_scale"]))
+	(options_panel.find_child("AntiAliasing", true, false) as OptionButton).select(clampi(int(GameSettings.pending["anti_aliasing"]), 0, 1))
+	(options_panel.find_child("ShadowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["shadow_quality"]), 0, 3))
 	(options_panel.find_child("SSAO", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssao_enabled"]))
 	(options_panel.find_child("SSIL", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssil_enabled"]))
 	(options_panel.find_child("SSR", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssr_enabled"]))
@@ -474,11 +545,12 @@ func _reset_options() -> void:
 func _close_options(applied: bool) -> void:
 	if not applied:
 		GameSettings.cancel_pending()
-	options_panel.visible = false
-	pause_panel.visible = true
-	for node: Node in pause_panel.find_children("*", "Button", true, false):
-		(node as Button).grab_focus()
-		break
+	_set_menu_visible(pause_panel)
+	var options_button := pause_panel.find_child("OptionsButton", true, false) as Button
+	if options_button != null:
+		options_button.grab_focus()
+	else:
+		_focus_first_pause_button()
 
 func _on_telemetry(data: Dictionary) -> void:
 	var speed := float(data.speed_mps) * (2.23694 if bool(GameSettings.active["units_mph"]) else 3.6)

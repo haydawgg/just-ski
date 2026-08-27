@@ -3,7 +3,7 @@ extends Node
 signal marker_changed(position: Vector3)
 signal respawn_requested(transform: Transform3D)
 
-var default_spawn := Transform3D(Basis.IDENTITY, Vector3(0.0, 22.0, 68.0))
+var default_spawn := Transform3D(Basis.IDENTITY, Vector3(0.0, 21.5, 75.0))
 var marker := Transform3D.IDENTITY
 var has_marker := false
 

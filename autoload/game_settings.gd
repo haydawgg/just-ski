@@ -90,6 +90,9 @@ func _validated(key: String, value: Variant) -> Variant:
 	match key:
 		"fps_cap": return clampi(int(value), 0, 360)
 		"render_scale": return clampf(float(value), 0.5, 1.5)
+		"anti_aliasing": return clampi(int(value), 0, 1)
+		"shadow_quality": return clampi(int(value), 0, 3)
+		"graphics_preset": return clampi(int(value), 0, 4)
 		"controller_rumble", "landing_assist": return clampf(float(value), 0.0, 1.0)
 		"stick_deadzone": return clampf(float(value), 0.0, 0.45)
 		"stick_outer_deadzone": return clampf(float(value), 0.0, 0.25)

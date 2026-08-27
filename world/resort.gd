@@ -8,6 +8,7 @@ const SnowSurface := preload("res://world/snow_material.gd")
 var player: SkierController
 var camera_rig: SkiCameraController
 var environment: WorldEnvironment
+var sun: DirectionalLight3D
 
 func _ready() -> void:
 	_build_environment()
@@ -57,7 +58,7 @@ func _build_environment() -> void:
 	env.ssao_intensity = 1.8
 	environment.environment = env
 	add_child(environment)
-	var sun := DirectionalLight3D.new()
+	sun = DirectionalLight3D.new()
 	sun.name = "Sun"
 	sun.rotation_degrees = Vector3(-38.0, -42.0, 0.0)
 	sun.light_color = Color(1.0, 0.94, 0.84)
@@ -91,21 +92,22 @@ func _build_resort() -> void:
 	_add_rail("FinalBox", [Vector3(7, 3.8, -48), Vector3(7, 2.0, -63)], GrindRail3D.RailType.BOX)
 	_add_rail("Rainbow", [Vector3(17, 3.6, -49), Vector3(17, 5.0, -55), Vector3(17, 1.8, -63)], GrindRail3D.RailType.RAIL)
 
-	# Side hits, banks, landmarks, and readable boundary trees.
-	_add_box("LeftSideHit", Vector3(8, 1.5, 13), Vector3(-21, 8.0, -12), Vector3(10, -18, 0), FEATURE, true)
-	_add_box("QuarterBank", Vector3(10, 2.0, 9), Vector3(21, 4.2, -42), Vector3(18, 0, -8), FEATURE, true)
+	# Side hits / banked ramps — packed snow shader (not flat feature paint).
+	_add_box("LeftSideHit", Vector3(8, 1.5, 13), Vector3(-21, 8.0, -12), Vector3(10, -18, 0), SNOW_SHADOW, true)
+	_add_box("QuarterBank", Vector3(10, 2.0, 9), Vector3(21, 4.2, -42), Vector3(18, 0, -8), SNOW_SHADOW, true)
 	_add_lodge(Vector3(-18, 21.0, 72))
 	for z: float in [-75, -48, -18, 12, 42, 68]:
 		_add_tree(Vector3(-38.0, 10.5 + z * 0.135, z))
 		_add_tree(Vector3(38.0, 10.5 + z * 0.135, z + 5.0))
-	_add_sign(Vector3(0, 20.0, 66), "PARK ↓   RAILS →   JUMPS ←")
+	_add_sign(Vector3(0, 21.2, 74), "PARK ↓   RAILS →   JUMPS ←")
 	_add_sign(Vector3(0, 1.0, -87), "BASE HUB   •   PRESS R TO RETURN")
 	_add_distant_ridges()
 
 func _build_player() -> void:
 	player = SkierController.new()
 	player.name = "Skier"
-	player.position = Vector3(0.0, 20.4, 67.0)
+	# Upper main face (still on-snow); z past ~76.7 falls off the ridge.
+	player.position = Vector3(0.0, 21.5, 75.0)
 	player.rotation.y = 0.0
 	add_child(player)
 	SessionManager.set_default_spawn(player.global_transform)
@@ -169,9 +171,10 @@ func _add_kicker(position: Vector3, length: float, angle: float) -> void:
 	convex.points = points
 	shape_node.shape = convex
 	body.add_child(shape_node)
+	var snow := SnowSurface.create(SnowSurface.Kind.GROOMED)
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = _wedge_mesh(points)
-	mesh_instance.material_override = SnowSurface.create(SnowSurface.Kind.GROOMED)
+	mesh_instance.material_override = snow
 	body.add_child(mesh_instance)
 	add_child(body)
 	_add_box("Landing", Vector3(11.0, 1.6, length * 1.85), position + Vector3(0.0, -2.15, -length * 1.42), Vector3(-12.0, 0.0, 0.0), SNOW_SHADOW, true)
@@ -179,27 +182,34 @@ func _add_kicker(position: Vector3, length: float, angle: float) -> void:
 func _wedge_mesh(points: PackedVector3Array) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# Quads listed CCW when viewed from outside so normals face outward.
 	var faces := [
-		[0, 1, 3, 2],
-		[4, 6, 7, 5],
-		[0, 2, 6, 4],
-		[1, 5, 7, 3],
-		[2, 3, 7, 6],
-		[0, 4, 5, 1],
+		[0, 2, 3, 1], # deck (rideable face)
+		[4, 5, 7, 6], # bottom
+		[0, 1, 5, 4], # lip / approach
+		[2, 6, 7, 3], # tip / takeoff wall
+		[0, 4, 6, 2], # left side
+		[1, 3, 7, 5], # right side
 	]
 	for face: Array in faces:
 		var a: Vector3 = points[int(face[0])]
 		var b: Vector3 = points[int(face[1])]
 		var c: Vector3 = points[int(face[2])]
 		var d: Vector3 = points[int(face[3])]
-		st.add_vertex(a)
-		st.add_vertex(b)
-		st.add_vertex(c)
-		st.add_vertex(a)
-		st.add_vertex(c)
-		st.add_vertex(d)
+		_add_wedge_tri(st, a, b, c)
+		_add_wedge_tri(st, a, c, d)
 	st.generate_normals()
+	st.generate_tangents()
 	return st.commit()
+
+func _add_wedge_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
+	var normal := (b - a).cross(c - a).normalized()
+	if not normal.is_finite() or normal.length_squared() < 0.0001:
+		normal = Vector3.UP
+	for point: Vector3 in [a, b, c]:
+		st.set_normal(normal)
+		st.set_uv(Vector2(point.x * 0.12, point.z * 0.12))
+		st.add_vertex(point)
 
 func _add_rail(label: String, points: Array[Vector3], type: GrindRail3D.RailType) -> void:
 	var rail := GrindRail3D.new()
@@ -299,3 +309,31 @@ func _apply_graphics_settings() -> void:
 	env.ssil_enabled = bool(GameSettings.active.get("ssil_enabled", false))
 	env.ssr_enabled = bool(GameSettings.active.get("ssr_enabled", true))
 	env.fog_enabled = bool(GameSettings.active.get("fog_enabled", true))
+	_apply_shadow_quality(int(GameSettings.active.get("shadow_quality", 2)))
+
+func _apply_shadow_quality(quality: int) -> void:
+	if sun == null:
+		return
+	var level := clampi(quality, 0, 3)
+	sun.shadow_enabled = true
+	match level:
+		0:
+			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+			sun.directional_shadow_max_distance = 120.0
+			sun.shadow_bias = 0.06
+			sun.shadow_normal_bias = 1.6
+		1:
+			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+			sun.directional_shadow_max_distance = 160.0
+			sun.shadow_bias = 0.05
+			sun.shadow_normal_bias = 1.4
+		2:
+			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+			sun.directional_shadow_max_distance = 220.0
+			sun.shadow_bias = 0.04
+			sun.shadow_normal_bias = 1.2
+		_:
+			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+			sun.directional_shadow_max_distance = 280.0
+			sun.shadow_bias = 0.03
+			sun.shadow_normal_bias = 1.0
