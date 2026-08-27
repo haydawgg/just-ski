@@ -1,7 +1,10 @@
 extends Node
 
+const ParkLayout := preload("res://world/park_features/park_layout.gd")
+
 @onready var resort: Node = $Resort
 var skier: SkierController
+var jump: Node3D
 var frame := 0
 var failures: Array[String] = []
 var grounded_frames := 0
@@ -12,6 +15,9 @@ var grind_speed := 0.0
 
 func _ready() -> void:
 	skier = resort.get_node("Skier") as SkierController
+	jump = resort.get_node("SmallTable") as Node3D
+	if jump == null:
+		failures.append("Named SmallTable jump was not spawned")
 	_test_tree_block.call_deferred()
 
 func _physics_process(_delta: float) -> void:
@@ -27,13 +33,15 @@ func _physics_process(_delta: float) -> void:
 			failures.append("Main-face contact was not stably grounded")
 		_place_on_kicker_line()
 	elif frame > 360 and frame < 520:
-		if not kicker_seen and skier.global_position.z <= 46.0 and skier.global_position.z >= 38.0:
-			kicker_seen = true
-			kicker_speed = skier.velocity.length()
-			if skier.state == SkierController.State.BAIL:
-				failures.append("Kicker ride entered Bail")
-			if kicker_speed < 2.5:
-				failures.append("Kicker ride collapsed speed")
+		if jump != null:
+			var lip_z := float(jump.get_meta("lip_z"))
+			if not kicker_seen and skier.global_position.z <= lip_z + 6.0 and skier.global_position.z >= lip_z - 8.0:
+				kicker_seen = true
+				kicker_speed = skier.velocity.length()
+				if skier.state == SkierController.State.BAIL:
+					failures.append("Kicker ride entered Bail")
+				if kicker_speed < 2.5:
+					failures.append("Kicker ride collapsed speed")
 	elif frame == 520:
 		if not kicker_seen:
 			failures.append("Skier never reached the first kicker")
@@ -48,9 +56,12 @@ func _physics_process(_delta: float) -> void:
 		_finish()
 
 func _place_on_kicker_line() -> void:
-	skier.global_position = Vector3(-11.0, 18.4, 52.0)
-	skier.velocity = Vector3(0.0, -1.0, -9.0)
-	skier.global_basis = Basis.looking_at(Vector3(0.0, 0.0, -1.0), Vector3.UP)
+	if jump == null:
+		return
+	var lip_z := float(jump.get_meta("lip_z"))
+	skier.global_position = ParkLayout.snow_at(-12.0, lip_z + 8.0) + ParkLayout.snow_normal() * 1.5
+	skier.velocity = ParkLayout.downhill() * 12.0
+	skier.global_basis = ParkLayout.downhill_basis()
 	skier.motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	skier.state = SkierController.State.AIR
 	skier.air_time = 0.2

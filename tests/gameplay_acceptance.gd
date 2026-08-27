@@ -1,5 +1,7 @@
 extends Node
 
+const ParkLayout := preload("res://world/park_features/park_layout.gd")
+
 @onready var resort: Node = $Resort
 var skier: SkierController
 var frame := 0
@@ -16,6 +18,7 @@ var marker_position := Vector3.ZERO
 func _ready() -> void:
 	skier = resort.get_node("Skier") as SkierController
 	_test_landing_solver()
+	_test_jump_table()
 	_test_rail_filtering.call_deferred()
 
 func _physics_process(_delta: float) -> void:
@@ -69,6 +72,14 @@ func _physics_process(_delta: float) -> void:
 			failures.append("Brake did not reduce speed")
 	elif frame == 760:
 		_finish()
+
+func _test_jump_table() -> void:
+	var sizing := ParkLayout.jump_table(18.0, 9.0)
+	var table_length := float(sizing.table_length)
+	if table_length < 8.0 or table_length > 20.0:
+		failures.append("Ballistic table length %.2f was outside the 8-20 m design band" % table_length)
+	if float(sizing.lip_length) < 7.0 or float(sizing.landing_length) < 8.0:
+		failures.append("Jump table lip/landing lengths were not authored for a rideable tabletop")
 
 func _test_landing_solver() -> void:
 	var profile := SkiPhysicsProfile.new()

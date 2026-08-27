@@ -79,7 +79,7 @@ func update_grind(delta: float, selected_pose: int = 0) -> void:
 	var rail_name := "50-50" if rail_pose == 0 else ("Boardslide Left" if rail_pose < 0 else "Boardslide Right")
 	trick_changed.emit("%s %.1fs" % [rail_name, grind_seconds])
 
-func land(quality: float, switch_landing: bool) -> void:
+func land(quality: float, switch_landing: bool, link_bonus: int = 0) -> void:
 	if not active:
 		return
 	var name := current_name()
@@ -93,11 +93,16 @@ func land(quality: float, switch_landing: bool) -> void:
 	if switch_landing != switch_takeoff:
 		name += " to Switch"
 		points += 120
+	if link_bonus > 0:
+		name = "Line Link + " + name
+		points += 200 * link_bonus
 	if points <= 0 and dominant_kind == TrickCommand.Kind.POP and air_seconds >= 0.15:
 		points = 50
-	if points <= 0:
+	if points <= 0 and grind_seconds < 0.08:
 		reset()
 		return
+	if points <= 0 and grind_seconds >= 0.08:
+		points = int(grind_seconds * 300.0)
 	points = int(points * clampf(quality, 0.2, 1.0))
 	trick_landed.emit(name, points, quality)
 	reset()

@@ -4,6 +4,7 @@ const SNOW := Color("#dcecf5")
 const SNOW_SHADOW := Color("#a9c7d8")
 const FEATURE := Color("#ff9f43")
 const SnowSurface := preload("res://world/snow_material.gd")
+const ParkLayout := preload("res://world/park_features/park_layout.gd")
 
 var player: SkierController
 var camera_rig: SkiCameraController
@@ -69,45 +70,60 @@ func _build_environment() -> void:
 	sun.shadow_bias = 0.04
 	sun.shadow_normal_bias = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 220.0
+	sun.directional_shadow_max_distance = 320.0
 	add_child(sun)
 
 func _build_resort() -> void:
-	# One broad seamless face plus side lanes and a flat bottom hub.
-	_add_box("MainSnowFace", Vector3(48.0, 1.5, 155.0), Vector3(0.0, 9.5, 0.0), Vector3(-7.8, 0.0, 0.0), SNOW, true)
-	_add_box("BottomHub", Vector3(70.0, 1.5, 42.0), Vector3(0.0, -0.4, -93.0), Vector3.ZERO, SNOW, true)
-	_add_box("LeftBank", Vector3(16.0, 1.5, 145.0), Vector3(-29.0, 11.0, 3.0), Vector3(-8.0, 0.0, -12.0), SNOW_SHADOW, true)
-	_add_box("RightBank", Vector3(16.0, 1.5, 145.0), Vector3(29.0, 11.0, 3.0), Vector3(-8.0, 0.0, 12.0), SNOW_SHADOW, true)
-
-	# Main jump line: three predictable blockout kickers with open landings.
-	_add_kicker(Vector3(-11.0, 16.7, 44.0), 10.0, 13.0)
-	_add_kicker(Vector3(-11.0, 10.8, 3.0), 13.0, 16.0)
-	_add_kicker(Vector3(-11.0, 5.0, -39.0), 16.0, 18.0)
-
-	# Technical lane: five grindable features and multiple transfers.
-	_add_rail("SummitFlatBox", [Vector3(7, 17.7, 52), Vector3(7, 16.3, 42)], GrindRail3D.RailType.BOX)
-	_add_rail("DownRail", [Vector3(12, 14.3, 28), Vector3(12, 12.1, 14)], GrindRail3D.RailType.RAIL)
-	_add_rail("KinkRail", [Vector3(7, 10.5, 2), Vector3(7, 9.6, -5), Vector3(7, 7.9, -13)], GrindRail3D.RailType.RAIL)
-	_add_rail("LongTube", [Vector3(14, 7.6, -17), Vector3(14, 5.0, -38)], GrindRail3D.RailType.PIPE)
-	_add_rail("FinalBox", [Vector3(7, 3.8, -48), Vector3(7, 2.0, -63)], GrindRail3D.RailType.BOX)
-	_add_rail("Rainbow", [Vector3(17, 3.6, -49), Vector3(17, 5.0, -55), Vector3(17, 1.8, -63)], GrindRail3D.RailType.RAIL)
-
-	# Side hits / banked ramps — packed snow shader (not flat feature paint).
-	_add_box("LeftSideHit", Vector3(8, 1.5, 13), Vector3(-21, 8.0, -12), Vector3(10, -18, 0), SNOW_SHADOW, true)
-	_add_box("QuarterBank", Vector3(10, 2.0, 9), Vector3(21, 4.2, -42), Vector3(18, 0, -8), SNOW_SHADOW, true)
-	_add_lodge(Vector3(-18, 21.0, 72))
-	for z: float in [-75, -48, -18, 12, 42, 68]:
-		_add_tree(Vector3(-38.0, 10.5 + z * 0.135, z))
-		_add_tree(Vector3(38.0, 10.5 + z * 0.135, z + 5.0))
-	_add_sign(Vector3(0, 21.2, 74), "PARK ↓   RAILS →   JUMPS ←")
-	_add_sign(Vector3(0, 1.0, -87), "BASE HUB   •   PRESS R TO RETURN")
+	var face_len := ParkLayout.FACE_SLOPE_LENGTH
+	ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, true)
+	_add_box("BottomHub", Vector3(80.0, 1.5, 52.0), Vector3(0.0, 2.4, -165.0), Vector3.ZERO, SNOW, true)
+	ParkLayout.add_slope_box(self, "LeftBank", -36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), -10.0, SNOW_SHADOW, true)
+	ParkLayout.add_slope_box(self, "RightBank", 36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), 10.0, SNOW_SHADOW, true)
+	_build_jump_line()
+	_build_rail_line()
+	_build_transfers()
+	var lodge_pos := ParkLayout.snow_at(-18.0, 145.0) + Vector3(0.0, 2.6, 0.0)
+	_add_lodge(lodge_pos)
+	for z: float in [130.0, 95.0, 55.0, 15.0, -25.0, -70.0, -115.0]:
+		_add_tree(ParkLayout.snow_at(-40.0, z))
+		_add_tree(ParkLayout.snow_at(40.0, z + 6.0))
+	_add_sign(ParkLayout.snow_at(0.0, 142.0) + Vector3(0.0, 1.2, 0.0), "PARK ↓   RAILS →   JUMPS ←")
+	_add_sign(Vector3(0.0, 4.2, -158.0), "BASE HUB   •   PRESS R TO RETURN")
 	_add_distant_ridges()
+
+func _build_jump_line() -> void:
+	ParkLayout.add_tabletop(self, "SmallTable", -12.0, 110.0, 14.0, 7.0)
+	ParkLayout.add_roller(self, "UpperRoller", -12.0, 82.0, 8.0, 0.8)
+	ParkLayout.add_tabletop(self, "MediumTable", -12.0, 52.0, 18.0, 9.0)
+	ParkLayout.add_hip(self, "HipTransfer", -12.0, 12.0, 16.0, 8.0, 28.0)
+	ParkLayout.add_tabletop(self, "LargeTable", -12.0, -32.0, 22.0, 11.0)
+	ParkLayout.add_tabletop(self, "StepDownTable", -12.0, -88.0, 18.0, 8.0, 8.5, 3.0)
+
+func _build_rail_line() -> void:
+	ParkLayout.add_rail(self, "SummitFlatBox", [ParkLayout.rail_point(10.0, 124.0, 0.22), ParkLayout.rail_point(10.0, 110.0, 0.22)], GrindRail3D.RailType.BOX, 1.35, 1.15)
+	ParkLayout.add_rail(self, "DownRail", [ParkLayout.rail_point(14.0, 98.0, 0.16), ParkLayout.rail_point(14.0, 80.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.55)
+	ParkLayout.add_rail(self, "KinkRail", [ParkLayout.rail_point(10.0, 68.0, 0.16), ParkLayout.rail_point(10.0, 58.0, 0.16), ParkLayout.rail_point(15.0, 46.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.7)
+	var dfd_start := ParkLayout.rail_point(10.0, 40.0, 0.22)
+	var dfd_end := ParkLayout.rail_point(10.0, 16.0, 0.22)
+	var dfd_flat := dfd_start.lerp(dfd_end, 0.5)
+	dfd_flat.y = dfd_start.y - 0.9
+	ParkLayout.add_rail(self, "DFDBox", [dfd_start, dfd_flat, dfd_end], GrindRail3D.RailType.BOX, 1.35, 1.05)
+	ParkLayout.add_rail(self, "LongTube", [ParkLayout.rail_point(18.0, 8.0, 0.14), ParkLayout.rail_point(18.0, -18.0, 0.14)], GrindRail3D.RailType.PIPE, 0.9, 0.45)
+	ParkLayout.add_rail(self, "SRail", [ParkLayout.rail_point(16.0, -24.0, 0.16), ParkLayout.rail_point(9.0, -36.0, 0.16), ParkLayout.rail_point(16.0, -48.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.7)
+	var rainbow_crest := ParkLayout.snow_at(16.0, -58.0) + ParkLayout.snow_normal() * 0.18 + Vector3(0.0, 3.2, 0.0)
+	ParkLayout.add_rail(self, "Rainbow", [ParkLayout.rail_point(16.0, -50.0, 0.16), rainbow_crest, ParkLayout.rail_point(16.0, -70.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.6)
+	ParkLayout.add_rail(self, "TransferBox", [ParkLayout.rail_point(14.0, 4.0, 0.22), ParkLayout.rail_point(2.0, -22.0, 0.22)], GrindRail3D.RailType.BOX, 1.35, 0.95)
+	ParkLayout.add_rail(self, "FinalBox", [ParkLayout.rail_point(8.0, -96.0, 0.22), ParkLayout.rail_point(8.0, -118.0, 0.22)], GrindRail3D.RailType.BOX, 1.35, 1.1)
+
+func _build_transfers() -> void:
+	ParkLayout.add_slope_box(self, "SpineBank", 0.0, 38.0, Vector3(14.0, 2.0, 16.0), -16.0, SNOW_SHADOW, true, 0.35)
+	ParkLayout.add_slope_box(self, "QuarterBank", 21.0, -72.0, Vector3(12.0, 2.2, 14.0), -32.0, SNOW_SHADOW, true, 0.45)
+	ParkLayout.add_roller(self, "MidRoller", 0.0, -8.0, 9.0, 0.7, 12.0)
 
 func _build_player() -> void:
 	player = SkierController.new()
 	player.name = "Skier"
-	# Upper main face (still on-snow); z past ~76.7 falls off the ridge.
-	player.position = Vector3(0.0, 21.5, 75.0)
+	player.position = ParkLayout.spawn_position()
 	player.rotation.y = 0.0
 	add_child(player)
 	SessionManager.set_default_spawn(player.global_transform)
@@ -144,82 +160,6 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 		body.add_child(shape_node)
 	add_child(body)
 	return body
-
-func _add_kicker(position: Vector3, length: float, angle: float) -> void:
-	var width := 8.5
-	var bury := 0.45
-	var rise := length * tan(deg_to_rad(angle))
-	var hw := width * 0.5
-	var hl := length * 0.5
-	var points := PackedVector3Array([
-		Vector3(-hw, 0.04, hl),
-		Vector3(hw, 0.04, hl),
-		Vector3(-hw, rise, -hl),
-		Vector3(hw, rise, -hl),
-		Vector3(-hw, -bury, hl),
-		Vector3(hw, -bury, hl),
-		Vector3(-hw, -bury, -hl),
-		Vector3(hw, -bury, -hl),
-	])
-	var body := StaticBody3D.new()
-	body.name = "Kicker"
-	body.position = position
-	body.collision_layer = 1
-	body.collision_mask = 2
-	var shape_node := CollisionShape3D.new()
-	var convex := ConvexPolygonShape3D.new()
-	convex.points = points
-	shape_node.shape = convex
-	body.add_child(shape_node)
-	var snow := SnowSurface.create(SnowSurface.Kind.GROOMED)
-	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.mesh = _wedge_mesh(points)
-	mesh_instance.material_override = snow
-	body.add_child(mesh_instance)
-	add_child(body)
-	_add_box("Landing", Vector3(11.0, 1.6, length * 1.85), position + Vector3(0.0, -2.15, -length * 1.42), Vector3(-12.0, 0.0, 0.0), SNOW_SHADOW, true)
-
-func _wedge_mesh(points: PackedVector3Array) -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	# Quads listed CCW when viewed from outside so normals face outward.
-	var faces := [
-		[0, 2, 3, 1], # deck (rideable face)
-		[4, 5, 7, 6], # bottom
-		[0, 1, 5, 4], # lip / approach
-		[2, 6, 7, 3], # tip / takeoff wall
-		[0, 4, 6, 2], # left side
-		[1, 3, 7, 5], # right side
-	]
-	for face: Array in faces:
-		var a: Vector3 = points[int(face[0])]
-		var b: Vector3 = points[int(face[1])]
-		var c: Vector3 = points[int(face[2])]
-		var d: Vector3 = points[int(face[3])]
-		_add_wedge_tri(st, a, b, c)
-		_add_wedge_tri(st, a, c, d)
-	st.generate_normals()
-	st.generate_tangents()
-	return st.commit()
-
-func _add_wedge_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3) -> void:
-	var normal := (b - a).cross(c - a).normalized()
-	if not normal.is_finite() or normal.length_squared() < 0.0001:
-		normal = Vector3.UP
-	for point: Vector3 in [a, b, c]:
-		st.set_normal(normal)
-		st.set_uv(Vector2(point.x * 0.12, point.z * 0.12))
-		st.add_vertex(point)
-
-func _add_rail(label: String, points: Array[Vector3], type: GrindRail3D.RailType) -> void:
-	var rail := GrindRail3D.new()
-	rail.name = label
-	rail.rail_type = type
-	rail.capture_radius = 1.0 if type != GrindRail3D.RailType.BOX else 1.35
-	rail.path = Curve3D.new()
-	for point: Vector3 in points:
-		rail.path.add_point(point)
-	add_child(rail)
 
 func _add_tree(position: Vector3) -> void:
 	var root := StaticBody3D.new()
@@ -269,9 +209,9 @@ func _add_tree(position: Vector3) -> void:
 	add_child(root)
 
 func _add_distant_ridges() -> void:
-	_add_box("NorthRidge", Vector3(220.0, 38.0, 70.0), Vector3(0.0, 28.0, 165.0), Vector3(-18.0, 0.0, 0.0), SNOW, false)
-	_add_box("WestRidge", Vector3(70.0, 32.0, 180.0), Vector3(-95.0, 22.0, 10.0), Vector3(-8.0, 12.0, -16.0), SNOW_SHADOW, false)
-	_add_box("EastRidge", Vector3(70.0, 30.0, 180.0), Vector3(98.0, 20.0, 8.0), Vector3(-8.0, -14.0, 14.0), SNOW_SHADOW, false)
+	_add_box("NorthRidge", Vector3(280.0, 48.0, 90.0), Vector3(0.0, 42.0, 210.0), Vector3(-18.0, 0.0, 0.0), SNOW, false)
+	_add_box("WestRidge", Vector3(80.0, 40.0, 280.0), Vector3(-110.0, 30.0, 10.0), Vector3(-8.0, 12.0, -16.0), SNOW_SHADOW, false)
+	_add_box("EastRidge", Vector3(80.0, 38.0, 280.0), Vector3(112.0, 28.0, 8.0), Vector3(-8.0, -14.0, 14.0), SNOW_SHADOW, false)
 
 func _material_for_color(color: Color) -> Material:
 	if color.is_equal_approx(SNOW):
@@ -319,21 +259,21 @@ func _apply_shadow_quality(quality: int) -> void:
 	match level:
 		0:
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-			sun.directional_shadow_max_distance = 120.0
+			sun.directional_shadow_max_distance = 180.0
 			sun.shadow_bias = 0.06
 			sun.shadow_normal_bias = 1.6
 		1:
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-			sun.directional_shadow_max_distance = 160.0
+			sun.directional_shadow_max_distance = 240.0
 			sun.shadow_bias = 0.05
 			sun.shadow_normal_bias = 1.4
 		2:
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-			sun.directional_shadow_max_distance = 220.0
+			sun.directional_shadow_max_distance = 320.0
 			sun.shadow_bias = 0.04
 			sun.shadow_normal_bias = 1.2
 		_:
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-			sun.directional_shadow_max_distance = 280.0
+			sun.directional_shadow_max_distance = 400.0
 			sun.shadow_bias = 0.03
 			sun.shadow_normal_bias = 1.0

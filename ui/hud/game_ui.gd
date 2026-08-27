@@ -14,6 +14,8 @@ var options_panel: PanelContainer
 var trick_guide_panel: PanelContainer
 var trick_visualizer: FlickVisualizer
 var total_score := 0
+var combo_count := 0
+var combo_multiplier := 1.0
 var notice_time := 0.0
 var _stored_mouse_mode := Input.MOUSE_MODE_VISIBLE
 
@@ -478,6 +480,7 @@ func _set_marker_from_menu() -> void:
 func _restart_summit() -> void:
 	SessionManager.clear_marker()
 	total_score = 0
+	_reset_combo()
 	score_label.text = "SCORE 000000"
 	SessionManager.request_respawn()
 	_show_notice("RESTART FROM SUMMIT")
@@ -559,9 +562,12 @@ func _on_telemetry(data: Dictionary) -> void:
 	var flick_data: Dictionary = data.get("flick", {})
 	if trick_visualizer != null:
 		trick_visualizer.apply_snapshot(flick_data)
-	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSpeed %.2f m/s\nNormal %s\nEdge %.2f\nLateral slip %.2f\nCarve force %.2f\nAngular %s\nRail %s\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f" % [
+	var combo_text := "" if combo_count <= 1 else "  x%.1f (%d)" % [combo_multiplier, combo_count]
+	score_label.text = "SCORE %06d%s" % [total_score, combo_text]
+	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSpeed %.2f m/s\nNormal %s\nEdge %.2f\nPressure %.2f\nLateral slip %.2f\nCarve force %.2f\nAngular %s\nRail %s (bal %.2f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f" % [
 		Engine.get_frames_per_second(), Engine.physics_ticks_per_second, data.state, data.grounded, data.contact_confidence,
-		data.speed_mps, data.surface_normal, data.edge, data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
+		data.speed_mps, data.surface_normal, data.edge, data.get("pressure", 0.0), data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
+		data.get("rail_balance", 0.0),
 		flick_data.get("kind", "NONE"), flick_data.get("phase", "NEUTRAL"),
 		animation.get("state", "—"), animation.get("pose", "—"), animation.get("blend", 0.0)]
 
@@ -569,16 +575,26 @@ func _on_trick_changed(text: String) -> void:
 	trick_label.text = text
 
 func _on_trick_landed(text: String, points: int, quality: float) -> void:
-	total_score += points
-	score_label.text = "SCORE %06d" % total_score
-	_show_notice("%s  +%d  [%s]" % [text, points, _quality_name(quality)])
+	combo_count += 1
+	combo_multiplier = minf(4.0, 1.0 + float(combo_count - 1) * 0.25)
+	var awarded := int(round(float(points) * combo_multiplier))
+	total_score += awarded
+	score_label.text = "SCORE %06d  x%.1f (%d)" % [total_score, combo_multiplier, combo_count]
+	var link_note := "  LINE" if text.begins_with("Line Link") else ""
+	_show_notice("%s  +%d  [%s]%s" % [text, awarded, _quality_name(quality), link_note])
 
 func _on_landed(result: Dictionary) -> void:
 	if float(result.score) < 0.72:
 		_show_notice(_quality_name(float(result.score)) + " LANDING")
 
 func _on_crashed() -> void:
-	_show_notice("BAIL — recovering…")
+	_reset_combo()
+	_show_notice("BAIL — recover on snow")
+
+func _reset_combo() -> void:
+	combo_count = 0
+	combo_multiplier = 1.0
+	score_label.text = "SCORE %06d" % total_score
 
 func _on_marker_changed(_position: Vector3) -> void:
 	_show_notice("SESSION MARKER SAVED")

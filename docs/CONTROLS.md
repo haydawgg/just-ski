@@ -4,7 +4,8 @@ All actions are declared in `project.godot` and use Godot's SDL-compatible input
 
 ## Controller layout
 
-- Left stick carves on snow, trims yaw in air, and balances on rails.
+- Left stick X carves on snow, trims yaw in air, and balances on rails.
+- Left stick Y pressures the skis on snow (forward = tip bite / speed, back = unweight) and trims flip in air.
 - Right stick is the Flick-It trick control.
 - LT/L2 brakes on snow and controls the left hand after takeoff.
 - RT/R2 tucks on snow and controls the right hand after takeoff.
@@ -47,8 +48,8 @@ Trigger pressure controls reach. Right-stick magnitude controls tweak intensity.
 
 ## Rails and keyboard fallback
 
-Neutral rail capture produces a 50-50. Flick left/right to select a boardslide and use a down-to-up flick to pop off. Left stick remains the balance input.
+Neutral rail capture produces a 50-50. Flick left/right to select a boardslide and use a down-to-up flick to pop off. Left stick X is balance; ignore it long enough on a kink or boardslide and you slip off into air. Uphill / rainbow features can reverse and slide you back.
 
-Keyboard development/accessibility bindings remain A/D, Space, Shift, Ctrl, arrow keys, Q/E, R, T, Esc, and F3. Space preserves the charge/release pop fallback because a keyboard cannot reproduce an analog Flick-It path.
+Keyboard development/accessibility bindings remain A/D (carve), W/S (pressure), Space, Shift, Ctrl, arrow keys, Q/E, R, T, Esc, and F3. Space preserves the charge/release pop fallback because a keyboard cannot reproduce an analog Flick-It path.
 
 The optional HUD visualizer shows the recent right-stick path, recognized command, presentation phase, gesture strength, trigger pressure, and active grab. The pause menu contains the same mappings in a controller-navigable Trick Guide.

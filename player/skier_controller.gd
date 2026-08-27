@@ -15,6 +15,7 @@ var state := State.AIR
 var contact := SkiContactSolver.new()
 var angular_velocity := Vector3.ZERO
 var edge_amount := 0.0
+var pressure_amount := 0.0
 var lateral_slip := 0.0
 var carve_force := 0.0
 var coyote_remaining := 0.0
@@ -23,11 +24,14 @@ var tuck_amount := 0.0
 var braking := false
 var air_time := 0.0
 var rail_balance_input := 0.0
+var rail_balance := 0.0
 var active_rail: GrindRail3D
 var rail_offset := 0.0
 var rail_direction := 1.0
 var rail_speed := 0.0
+var rail_prev_tangent := Vector3.ZERO
 var bail_time := 0.0
+var bail_recovering := false
 var debug_enabled := false
 var trick: TrickController
 var spray: GPUParticles3D
@@ -45,6 +49,8 @@ var grab_amount := 0.0
 var grab_tweak := Vector2.ZERO
 var grab_release_time := 0.0
 var rail_pose := 0
+var last_feature_kind := ""
+var line_link_ready := false
 
 func _ready() -> void:
 	collision_layer = 2
@@ -106,6 +112,7 @@ func _update_ground(delta: float) -> void:
 		return
 	var ski_forward := forward_on_slope.normalized()
 	var steer := InputManager.axis(&"steer_left", &"steer_right")
+	pressure_amount = InputManager.axis(&"steer_back", &"steer_forward")
 	braking = Input.is_action_pressed("brake")
 	tuck_amount = 0.0 if braking else Input.get_action_strength("tuck")
 	var edge_rate := profile.edge_response if absf(steer) >= absf(edge_amount) - 0.001 else profile.edge_release
@@ -117,8 +124,9 @@ func _update_ground(delta: float) -> void:
 	var planar := velocity.slide(normal)
 	var planar_speed := planar.length()
 	var pointing_downhill := maxf(0.0, ski_forward.dot(fall_line))
+	var pressure_glide := 1.0 + maxf(0.0, pressure_amount) * profile.pressure_glide_gain * 0.15
 	if not braking and pointing_downhill > 0.0:
-		velocity += ski_forward * (pointing_downhill * profile.glide_acceleration * delta)
+		velocity += ski_forward * (pointing_downhill * profile.glide_acceleration * pressure_glide * delta)
 		planar = velocity.slide(normal)
 		planar_speed = planar.length()
 	var speed_ratio := clampf(planar_speed / maxf(profile.steering_speed_reference, 1.0), 0.0, 1.0)
@@ -130,8 +138,10 @@ func _update_ground(delta: float) -> void:
 	steer_rate *= speed_gate * lerpf(1.0, 0.86, tuck_amount)
 	var requested_yaw := -edge_amount * (steer_rate + planar_speed * profile.sidecut) * delta
 	var needed_centripetal := planar_speed * absf(edge_amount) * (steer_rate + planar_speed * profile.sidecut)
+	var tip_scale := clampf(1.0 + (contact.tip_load + pressure_amount * 0.35) * profile.tip_grip_gain, 0.7, 1.22)
+	tip_scale *= clampf(1.0 + pressure_amount * profile.pressure_grip_gain, 0.78, 1.28)
 	var grip := profile.lateral_friction + absf(edge_amount) * profile.maximum_edge_grip * lerpf(0.82, 1.0, speed_ratio)
-	grip *= clampf(1.0 + contact.tip_load * profile.tip_grip_gain, 0.7, 1.22)
+	grip *= tip_scale
 	if braking:
 		grip = maxf(grip, profile.brake_friction)
 	var carve_ratio := 1.0 if needed_centripetal <= 0.05 else clampf(grip / needed_centripetal, 0.0, 1.0)
@@ -188,17 +198,23 @@ func _update_ground(delta: float) -> void:
 
 	AudioManager.skid_feedback(clampf(absf(lateral_slip) / 14.0 + (0.35 if braking else 0.0), 0.0, 1.0))
 	spray.emitting = absf(lateral_slip) > 2.5 or braking
+	_decay_line_link(delta)
 
 func _update_air(delta: float) -> void:
 	air_time += delta
 	braking = false
 	tuck_amount = 0.0
-	velocity += Vector3.DOWN * profile.gravity * delta
+	velocity += Vector3.DOWN * profile.air_gravity * delta
 	if trick_command.committed:
 		angular_velocity += trick_command.rotation_impulse
 	angular_velocity.y += -trick_sample.left_stick.x * flick_profile.air_yaw_trim_acceleration * delta
+	angular_velocity.x += -trick_sample.left_stick.y * profile.air_flip_trim_acceleration * delta
 	angular_velocity = angular_velocity.limit_length(profile.maximum_angular_speed)
-	angular_velocity *= exp(-profile.air_angular_damping * delta)
+	var damping := profile.air_angular_damping
+	var predicted := _predict_landing_time()
+	if predicted >= 0.0 and predicted < profile.air_landing_window:
+		damping = lerpf(profile.air_landing_damping, damping, predicted / maxf(profile.air_landing_window, 0.01))
+	angular_velocity *= exp(-damping * delta)
 	rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta)
 	rotate_object_local(Vector3.UP, angular_velocity.y * delta)
 	rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
@@ -217,31 +233,63 @@ func _update_grind(delta: float) -> void:
 	var tangent := active_rail.tangent_at(rail_offset) * rail_direction
 	rail_balance_input = trick_sample.left_stick.x
 	var slope_acceleration := Vector3.DOWN.dot(tangent) * profile.gravity
-	rail_speed = maxf(0.0, rail_speed + slope_acceleration * delta - (profile.rail_friction + active_rail.base_friction) * delta)
+	rail_speed += slope_acceleration * delta - (profile.rail_friction + active_rail.base_friction) * signf(rail_speed) * delta
+	# Allow reverse travel on uphill / rainbow features instead of dying at a stop.
+	if absf(rail_speed) < 0.35 and absf(slope_acceleration) > 1.0:
+		rail_speed = signf(slope_acceleration) * 0.35
 	rail_offset += rail_speed * rail_direction * delta
-	if rail_offset <= 0.02 or rail_offset >= active_rail.path_length - 0.02 or rail_speed < 1.2:
+	if rail_offset <= 0.02 or rail_offset >= active_rail.path_length - 0.02:
 		_exit_rail(false)
+		return
+	# Balance: left stick counters drift; kinks and boardslides add instability.
+	var kink := 0.0
+	if rail_prev_tangent.length_squared() > 0.01:
+		kink = 1.0 - clampf(rail_prev_tangent.normalized().dot(tangent.normalized()), 0.0, 1.0)
+	rail_prev_tangent = tangent
+	var boardslide_factor := 1.0 + absf(float(rail_pose)) * profile.rail_boardslide_instability
+	var drift := (profile.rail_balance_drift + kink * profile.rail_kink_instability) * boardslide_factor
+	var preferred_side := signf(rail_balance) if absf(rail_balance) > 0.08 else (1.0 if rail_balance_input >= 0.0 else -1.0)
+	if preferred_side == 0.0:
+		preferred_side = 1.0
+	rail_balance += preferred_side * drift * delta
+	rail_balance += -rail_balance_input * profile.rail_balance_input_gain * delta
+	rail_balance = clampf(rail_balance, -1.35, 1.35)
+	if absf(rail_balance) >= profile.rail_balance_fail:
+		_slip_off_rail()
 		return
 	global_position = active_rail.sample_world(rail_offset)
 	velocity = tangent * rail_speed
-	var target_basis := Basis.looking_at(tangent, Vector3.UP)
+	var look_tangent := tangent if rail_speed >= 0.0 else -tangent
+	if look_tangent.length_squared() < 0.0001:
+		look_tangent = tangent
+	var target_basis := Basis.looking_at(look_tangent, Vector3.UP)
 	global_basis = Basis(Quaternion(global_basis).slerp(Quaternion(target_basis), 1.0 - exp(-12.0 * delta)))
 	if trick_command.kind == TrickCommand.Kind.RAIL_SLIDE_LEFT:
 		rail_pose = -1
 	elif trick_command.kind == TrickCommand.Kind.RAIL_SLIDE_RIGHT:
 		rail_pose = 1
 	trick.update_grind(delta, rail_pose)
-	AudioManager.rail_feedback(rail_speed)
+	AudioManager.rail_feedback(absf(rail_speed))
 	if trick_command.kind == TrickCommand.Kind.RAIL_POP or Input.is_action_just_pressed("jump"):
 		_exit_rail(true)
 
 func _update_bail(delta: float) -> void:
 	braking = false
 	bail_time -= delta
-	velocity += Vector3.DOWN * profile.gravity * delta
-	rotate_object_local(Vector3.BACK, delta * 2.8)
+	velocity += Vector3.DOWN * profile.air_gravity * delta
+	if contact.grounded:
+		velocity = velocity.slide(contact.average_normal)
+		velocity *= exp(-2.8 * delta)
+		var aligned_up := global_basis.y.slerp(contact.average_normal, 1.0 - exp(-6.0 * delta)).normalized()
+		var forward := (-global_basis.z).slide(contact.average_normal)
+		if forward.length_squared() < 0.0001:
+			forward = contact.downhill()
+		if forward.length_squared() > 0.0001:
+			global_basis = Basis.looking_at(forward.normalized(), aligned_up)
+	else:
+		rotate_object_local(Vector3.BACK, delta * 2.8)
 	if bail_time <= 0.0 and contact.grounded:
-		SessionManager.request_respawn()
+		_recover_from_bail()
 
 func _pop(normal: Vector3, requested_strength: float = -1.0, rotation_impulse: Vector3 = Vector3.ZERO, takeoff_kind: int = TrickCommand.Kind.POP) -> void:
 	var strength := requested_strength if requested_strength >= 0.0 else lerpf(0.72, 1.0, clampf(jump_charge / 0.28, 0.0, 1.0))
@@ -297,7 +345,12 @@ func _handle_landing() -> void:
 	angular_velocity = Vector3.ZERO
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
-	trick.land(quality, velocity.dot(-global_basis.z) < 0.0)
+	var link_bonus := 0
+	if line_link_ready and last_feature_kind == "rail":
+		link_bonus = 1
+	trick.land(quality, velocity.dot(-global_basis.z) < 0.0, link_bonus)
+	last_feature_kind = "jump"
+	line_link_ready = true
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	rail_pose = 0
@@ -324,11 +377,13 @@ func _try_capture_rail() -> void:
 		rail_offset = float(best.offset)
 		rail_direction = float(best.direction)
 		rail_speed = float(best.speed)
+		rail_balance = 0.0
+		rail_prev_tangent = best.tangent as Vector3
 		state = State.GRIND
 		rail_pose = 0
 		motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 		global_position = best.position as Vector3
-		animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_ENTER, clampf(rail_speed / 20.0, 0.25, 1.0), rail_direction)
+		animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_ENTER, clampf(absf(rail_speed) / 20.0, 0.25, 1.0), rail_direction)
 		state_changed.emit("Grind")
 
 func _exit_rail(pop_off: bool) -> void:
@@ -336,19 +391,57 @@ func _exit_rail(pop_off: bool) -> void:
 	velocity = tangent * rail_speed
 	if pop_off:
 		velocity += Vector3.UP * profile.pop_impulse * 0.72
-	animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_EXIT, clampf(rail_speed / 20.0, 0.25, 1.0), rail_direction)
+	animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_EXIT, clampf(absf(rail_speed) / 20.0, 0.25, 1.0), rail_direction)
+	var link_bonus := 1 if line_link_ready and last_feature_kind == "jump" else 0
+	if trick.grind_seconds > 0.05:
+		trick.land(0.85, false, link_bonus)
+	last_feature_kind = "rail"
+	line_link_ready = true
 	active_rail = null
+	rail_balance = 0.0
 	_enter_air(TrickCommand.Kind.POP if pop_off else TrickCommand.Kind.NONE)
+
+func _slip_off_rail() -> void:
+	var tangent := active_rail.tangent_at(rail_offset) * rail_direction if active_rail != null else -global_basis.z
+	var sideways := Vector3.UP.cross(tangent).normalized()
+	if sideways.length_squared() < 0.01:
+		sideways = global_basis.x
+	velocity = tangent * rail_speed * 0.55 + sideways * signf(rail_balance) * 3.5 + Vector3.UP * 1.2
+	animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_EXIT, 0.45, signf(rail_balance))
+	active_rail = null
+	rail_balance = 0.0
+	line_link_ready = false
+	_enter_air()
 
 func _bail() -> void:
 	state = State.BAIL
-	bail_time = 1.0
+	bail_time = profile.bail_tumble_time
+	bail_recovering = true
+	velocity *= profile.bail_speed_retain
+	angular_velocity = Vector3.ZERO
+	line_link_ready = false
+	last_feature_kind = ""
 	trick.reset()
 	flick.reset()
 	AudioManager.crash_feedback()
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.BAIL, 1.0, signf(lateral_slip))
 	crashed.emit()
 	state_changed.emit("Bail")
+
+func _recover_from_bail() -> void:
+	bail_recovering = false
+	velocity = velocity.slide(contact.average_normal) * 0.55
+	angular_velocity = Vector3.ZERO
+	var projected_forward := (-global_basis.z).slide(contact.average_normal)
+	if projected_forward.length_squared() < 0.0001:
+		projected_forward = contact.downhill()
+	if projected_forward.length_squared() < 0.0001:
+		projected_forward = Vector3.FORWARD
+	global_basis = Basis.looking_at(projected_forward.normalized(), contact.average_normal)
+	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
+	state = State.GROUND
+	animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN, 0.55)
+	state_changed.emit("Ground")
 
 func respawn_at(value: Transform3D) -> void:
 	active_rail = null
@@ -363,6 +456,10 @@ func respawn_at(value: Transform3D) -> void:
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	rail_pose = 0
+	rail_balance = 0.0
+	bail_recovering = false
+	line_link_ready = false
+	last_feature_kind = ""
 	AudioManager.stop_feedback()
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
 	state_changed.emit("Air")
@@ -376,10 +473,13 @@ func telemetry() -> Dictionary:
 		"contact_confidence": contact.confidence,
 		"surface_normal": contact.average_normal,
 		"edge": edge_amount,
+		"pressure": pressure_amount,
 		"lateral_slip": lateral_slip,
 		"carve_force": carve_force,
 		"angular_velocity": angular_velocity,
 		"rail": active_rail.name if active_rail != null else "—",
+		"rail_balance": rail_balance,
+		"line_link": line_link_ready,
 		"flick": {
 			"stick": trick_sample.right_stick,
 			"kind": TrickCommand.Kind.keys()[active_trick_kind],
@@ -450,7 +550,7 @@ func _build_debug_draw() -> void:
 
 func _sample_trick_input(delta: float) -> void:
 	trick_sample.right_stick = InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down")
-	trick_sample.left_stick = Vector2(InputManager.axis(&"steer_left", &"steer_right"), 0.0)
+	trick_sample.left_stick = InputManager.vector(&"steer_left", &"steer_right", &"steer_forward", &"steer_back")
 	trick_sample.left_trigger = Input.get_action_strength("grab_left")
 	trick_sample.right_trigger = Input.get_action_strength("grab_right")
 	trick_sample.keyboard_pop_pressed = Input.is_action_pressed("jump")
@@ -480,6 +580,13 @@ func _flick_context() -> int:
 		State.GRIND: return FlickTrickInterpreter.Context.GRIND
 	return FlickTrickInterpreter.Context.BAIL
 
+func _decay_line_link(_delta: float) -> void:
+	if not line_link_ready:
+		return
+	if velocity.length() < 2.5:
+		line_link_ready = false
+		last_feature_kind = ""
+
 func _update_animation(delta: float) -> void:
 	var predicted_landing := _predict_landing_time()
 	var landing_release := 0.0
@@ -502,8 +609,8 @@ func _update_animation(delta: float) -> void:
 	animation_frame.predicted_landing_time = predicted_landing
 	animation_frame.grab_pose = trick.grab_pose
 	animation_frame.switch_stance = velocity.dot(-global_basis.z) < 0.0
-	animation_frame.rail_speed = rail_speed if state == State.GRIND else 0.0
-	animation_frame.rail_balance = (float(rail_pose) if rail_pose != 0 else rail_balance_input) if state == State.GRIND else 0.0
+	animation_frame.rail_speed = absf(rail_speed) if state == State.GRIND else 0.0
+	animation_frame.rail_balance = rail_balance if state == State.GRIND else 0.0
 	animation_frame.rail_type = active_rail.rail_type if active_rail != null else 0
 	animation_frame.trick_kind = active_trick_kind
 	animation_frame.trick_phase = TrickCommand.PresentationPhase.LANDING if landing_release > 0.58 else trick_phase
