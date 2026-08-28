@@ -1,0 +1,229 @@
+[gd_resource type="Resource" script_class="GrabAnimationLibrary" load_steps=14 format=3]
+
+[ext_resource type="Script" path="res://player/animation/grab_animation_library.gd" id="1"]
+[ext_resource type="Script" path="res://player/animation/grab_animation_definition.gd" id="2"]
+
+[sub_resource type="Resource" id="SafetyLeft"]
+script = ExtResource("2")
+pose_id = 1
+display_name = "Safety Grab Left"
+hand = 1
+target_ski = 1
+target = 1
+body_compactness = 0.62
+pelvis_offset = Vector3(-0.035, -0.04, 0.035)
+pelvis_rotation = Vector3(-0.04, -0.025, -0.04)
+spine_rotation = Vector3(-0.16, -0.04, -0.1)
+chest_rotation = Vector3(-0.08, -0.03, -0.12)
+left_hip_rotation = Vector3(-1.05, 0.0, -0.1)
+right_hip_rotation = Vector3(-0.06, 0.0, 0.02)
+left_knee_rotation = Vector3(1.65, 0.0, 0.0)
+right_knee_rotation = Vector3(0.1, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.16, 0.08, -0.32)
+right_shoulder_rotation = Vector3(-0.04, 0.04, 0.34)
+left_elbow_rotation = Vector3(-0.16, 0.0, -0.08)
+
+[sub_resource type="Resource" id="SafetyRight"]
+script = ExtResource("2")
+pose_id = 2
+display_name = "Safety Grab Right"
+hand = 2
+target_ski = 2
+target = 1
+body_compactness = 0.62
+pelvis_offset = Vector3(0.035, -0.04, 0.035)
+pelvis_rotation = Vector3(-0.04, 0.025, 0.04)
+spine_rotation = Vector3(-0.16, 0.04, 0.1)
+chest_rotation = Vector3(-0.08, 0.03, 0.12)
+left_hip_rotation = Vector3(-0.06, 0.0, -0.02)
+right_hip_rotation = Vector3(-1.05, 0.0, 0.1)
+left_knee_rotation = Vector3(0.1, 0.0, 0.0)
+right_knee_rotation = Vector3(1.65, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.04, -0.04, -0.34)
+right_shoulder_rotation = Vector3(-0.16, -0.08, 0.32)
+right_elbow_rotation = Vector3(-0.16, 0.0, 0.08)
+
+[sub_resource type="Resource" id="MuteLeft"]
+script = ExtResource("2")
+pose_id = 3
+display_name = "Mute Grab Left"
+hand = 1
+target_ski = 2
+target = 2
+body_compactness = 0.76
+contact_acquire_distance = 0.82
+contact_maintain_distance = 0.94
+pelvis_offset = Vector3(0.025, -0.055, 0.055)
+pelvis_rotation = Vector3(-0.06, 0.08, -0.025)
+spine_rotation = Vector3(-0.22, 0.18, -0.08)
+chest_rotation = Vector3(-0.12, 0.2, -0.1)
+left_hip_rotation = Vector3(-0.14, 0.04, -0.06)
+right_hip_rotation = Vector3(-1.1, -0.04, -0.32)
+left_knee_rotation = Vector3(0.22, 0.0, 0.0)
+right_knee_rotation = Vector3(1.7, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.2, -0.14, -0.42)
+right_shoulder_rotation = Vector3(-0.12, 0.04, 0.26)
+left_elbow_rotation = Vector3(-0.2, 0.0, -0.1)
+
+[sub_resource type="Resource" id="MuteRight"]
+script = ExtResource("2")
+pose_id = 4
+display_name = "Mute Grab Right"
+hand = 2
+target_ski = 1
+target = 2
+body_compactness = 0.76
+contact_acquire_distance = 0.82
+contact_maintain_distance = 0.94
+pelvis_offset = Vector3(-0.025, -0.055, 0.055)
+pelvis_rotation = Vector3(-0.06, -0.08, 0.025)
+spine_rotation = Vector3(-0.22, -0.18, 0.08)
+chest_rotation = Vector3(-0.12, -0.2, 0.1)
+left_hip_rotation = Vector3(-1.1, 0.04, 0.32)
+right_hip_rotation = Vector3(-0.14, -0.04, 0.06)
+left_knee_rotation = Vector3(1.7, 0.0, 0.0)
+right_knee_rotation = Vector3(0.22, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.12, -0.04, -0.26)
+right_shoulder_rotation = Vector3(-0.2, 0.14, 0.42)
+right_elbow_rotation = Vector3(-0.2, 0.0, 0.1)
+
+[sub_resource type="Resource" id="JapanLeft"]
+script = ExtResource("2")
+pose_id = 5
+display_name = "Japan Grab Left"
+hand = 1
+target_ski = 1
+target = 2
+body_compactness = 0.84
+contact_acquire_distance = 0.7
+contact_maintain_distance = 0.8
+pelvis_offset = Vector3(-0.045, -0.07, 0.07)
+pelvis_rotation = Vector3(-0.08, -0.06, -0.08)
+spine_rotation = Vector3(-0.28, -0.14, -0.18)
+chest_rotation = Vector3(-0.14, -0.12, -0.17)
+left_hip_rotation = Vector3(-1.1, 0.02, -0.16)
+right_hip_rotation = Vector3(-0.1, 0.0, 0.03)
+left_knee_rotation = Vector3(1.75, 0.0, -0.04)
+right_knee_rotation = Vector3(0.14, 0.0, 0.0)
+left_ski_rotation = Vector3(0.12, 0.0, -0.08)
+left_shoulder_rotation = Vector3(-0.22, 0.12, -0.46)
+right_shoulder_rotation = Vector3(-0.08, 0.05, 0.32)
+
+[sub_resource type="Resource" id="JapanRight"]
+script = ExtResource("2")
+pose_id = 6
+display_name = "Japan Grab Right"
+hand = 2
+target_ski = 2
+target = 2
+body_compactness = 0.84
+contact_acquire_distance = 0.7
+contact_maintain_distance = 0.8
+pelvis_offset = Vector3(0.045, -0.07, 0.07)
+pelvis_rotation = Vector3(-0.08, 0.06, 0.08)
+spine_rotation = Vector3(-0.28, 0.14, 0.18)
+chest_rotation = Vector3(-0.14, 0.12, 0.17)
+left_hip_rotation = Vector3(-0.1, 0.0, -0.03)
+right_hip_rotation = Vector3(-1.1, -0.02, 0.16)
+left_knee_rotation = Vector3(0.14, 0.0, 0.0)
+right_knee_rotation = Vector3(1.75, 0.0, 0.04)
+right_ski_rotation = Vector3(0.12, 0.0, 0.08)
+left_shoulder_rotation = Vector3(-0.08, -0.05, -0.32)
+right_shoulder_rotation = Vector3(-0.22, -0.12, 0.46)
+
+[sub_resource type="Resource" id="Tail"]
+script = ExtResource("2")
+pose_id = 7
+display_name = "Tail Grab"
+hand = 1
+target_ski = 1
+target = 4
+body_compactness = 0.82
+minimum_air_time = 0.12
+contact_acquire_distance = 0.9
+contact_maintain_distance = 1.0
+pelvis_offset = Vector3(-0.035, -0.06, 0.1)
+pelvis_rotation = Vector3(-0.07, 0.08, -0.05)
+spine_rotation = Vector3(-0.26, 0.2, -0.1)
+chest_rotation = Vector3(-0.14, 0.18, -0.1)
+left_hip_rotation = Vector3(-1.15, 0.0, -0.1)
+right_hip_rotation = Vector3(-0.12, 0.0, 0.02)
+left_knee_rotation = Vector3(1.8, 0.0, 0.0)
+right_knee_rotation = Vector3(0.18, 0.0, 0.0)
+left_ski_rotation = Vector3(0.14, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.24, 0.16, -0.48)
+right_shoulder_rotation = Vector3(-0.04, 0.02, 0.36)
+
+[sub_resource type="Resource" id="Nose"]
+script = ExtResource("2")
+pose_id = 8
+display_name = "Nose Grab"
+hand = 2
+target_ski = 2
+target = 3
+body_compactness = 0.88
+minimum_air_time = 0.12
+contact_acquire_distance = 0.78
+contact_maintain_distance = 0.88
+pelvis_offset = Vector3(0.03, -0.075, -0.055)
+pelvis_rotation = Vector3(-0.1, -0.06, 0.04)
+spine_rotation = Vector3(-0.34, -0.14, 0.08)
+chest_rotation = Vector3(-0.2, -0.12, 0.08)
+left_hip_rotation = Vector3(-0.12, 0.0, -0.02)
+right_hip_rotation = Vector3(-1.15, 0.0, 0.1)
+left_knee_rotation = Vector3(0.18, 0.0, 0.0)
+right_knee_rotation = Vector3(1.8, 0.0, 0.0)
+right_ski_rotation = Vector3(-0.12, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.06, -0.02, -0.36)
+right_shoulder_rotation = Vector3(-0.28, -0.16, 0.5)
+
+[sub_resource type="Resource" id="Double"]
+script = ExtResource("2")
+pose_id = 9
+display_name = "Double Grab"
+hand = 3
+target_ski = 3
+target = 1
+body_compactness = 0.9
+contact_acquire_distance = 0.64
+contact_maintain_distance = 0.74
+pelvis_offset = Vector3(0.0, -0.08, 0.065)
+pelvis_rotation = Vector3(-0.1, 0.0, 0.0)
+spine_rotation = Vector3(-0.32, 0.0, 0.0)
+chest_rotation = Vector3(-0.16, 0.0, 0.0)
+left_hip_rotation = Vector3(-1.05, 0.0, -0.08)
+right_hip_rotation = Vector3(-1.05, 0.0, 0.08)
+left_knee_rotation = Vector3(1.65, 0.0, 0.0)
+right_knee_rotation = Vector3(1.65, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.24, 0.08, -0.42)
+right_shoulder_rotation = Vector3(-0.24, -0.08, 0.42)
+left_elbow_rotation = Vector3(-0.18, 0.0, -0.06)
+right_elbow_rotation = Vector3(-0.18, 0.0, 0.06)
+
+[sub_resource type="Resource" id="SpreadEagle"]
+script = ExtResource("2")
+pose_id = 10
+display_name = "Spread Eagle"
+style_only = true
+body_compactness = 0.15
+left_hip_rotation = Vector3(0.3, -0.2, -0.55)
+right_hip_rotation = Vector3(0.3, 0.2, 0.55)
+left_shoulder_rotation = Vector3(0.0, 0.0, -1.15)
+right_shoulder_rotation = Vector3(0.0, 0.0, 1.15)
+
+[sub_resource type="Resource" id="Daffy"]
+script = ExtResource("2")
+pose_id = 11
+display_name = "Daffy"
+style_only = true
+body_compactness = 0.18
+left_hip_rotation = Vector3(-0.62, 0.0, 0.0)
+right_hip_rotation = Vector3(0.44, 0.0, 0.0)
+left_knee_rotation = Vector3(0.24, 0.0, 0.0)
+right_knee_rotation = Vector3(0.08, 0.0, 0.0)
+left_shoulder_rotation = Vector3(-0.04, 0.0, -0.45)
+right_shoulder_rotation = Vector3(-0.04, 0.0, 0.45)
+
+[resource]
+script = ExtResource("1")
+definitions = [SubResource("SafetyLeft"), SubResource("SafetyRight"), SubResource("MuteLeft"), SubResource("MuteRight"), SubResource("JapanLeft"), SubResource("JapanRight"), SubResource("Tail"), SubResource("Nose"), SubResource("Double"), SubResource("SpreadEagle"), SubResource("Daffy")]

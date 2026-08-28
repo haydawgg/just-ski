@@ -99,3 +99,5 @@ extends Resource
 @export var rail_slip_speed_retain: float = 0.55
 @export var rail_slip_lateral_speed: float = 3.5
 @export var rail_slip_upward_speed: float = 1.2
+@export var rail_entry_severity_speed_reference: float = 6.0
+@export var rail_preview_radius: float = 3.2

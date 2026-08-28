@@ -37,7 +37,7 @@ All gameplay input is defined through Godot's InputMap. The HUD switches prompts
 - Slope-relative spring camera with larger skier framing, per-channel smoothing (split horizontal/vertical springs, yaw lag scaled by speed, stabilized pitch), carve-aware travel/heading look blending, filtered terrain up-vector, smoothed air framing, speed look-ahead/FOV, and collision avoidance.
 - Signed world-triplanar CC0 snow PBR with Fast and Premium shader tiers, directional groomer corduroy, distance-faded detail, reflection-driven crystals, and premium SSS/transmittance.
 - Reusable spline-backed rails/boxes/tubes with height/approach validation, blended capture, balance drift / slip-off, bidirectional and reverse travel, grind friction, and pop-off.
-- Detailed layered skier animation with directional setup/release, head spotting, mirrored spin/flip/cork silhouettes, continuous trigger-pressure grabs, two-bone hand-to-ski reach, rail balance, bail motion, and debug telemetry.
+- Detailed layered skier animation with directional setup/release, head spotting, mirrored spin/flip/cork silhouettes, data-driven ski-local grab targets, whole-body/target-leg reach and bounded two-bone arm finishing, staged landing anticipation/compression/recovery, staged rail approach/entry/slide/exit with an arms-led balance hierarchy and intent-driven sideways slide, bail motion, and debug telemetry.
 - Spin/flip/grab/grind recognition, landing quality, centralized timed combo / line-link scoring, combo and rail-balance HUD feedback, surface-aware procedural audio, throttled rumble, and snow spray.
 - Data-driven ~300 m graybox face with six zones and 36 authored features: tables, rollers, hips, side hits, berms, moguls, butter pads, rails, boxes, tubes, wallrides, bonks, gates, and a cannon.
 - Fast session markers plus automatic recovery after leaving the playable course.
@@ -70,6 +70,10 @@ $env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/settings_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/animation_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/jump_animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/landing_animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/rail_animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/trick_animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/grab_animation_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/terrain_suspension_course.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_trick_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_gameplay_acceptance.tscn

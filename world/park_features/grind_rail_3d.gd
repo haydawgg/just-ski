@@ -63,6 +63,21 @@ func capture_candidate(world_position: Vector3, world_velocity: Vector3, require
 		"signed_lateral": signed_lateral,
 	}
 
+func approach_preview(world_position: Vector3, world_velocity: Vector3, preview_radius: float) -> Dictionary:
+	# Geometry-only read used for subtle pre-capture anticipation. Never
+	# attaches or mutates state; capture_candidate remains the sole authority
+	# on whether/when the skier actually locks onto the feature.
+	if path_length <= 0.01 or world_velocity.length() < 0.5:
+		return {"valid": false}
+	var local_offset := path.get_closest_offset(to_local(world_position))
+	var rail_position := to_global(path.sample_baked(local_offset, true) + Vector3.UP * grind_height_offset)
+	var distance := world_position.distance_to(rail_position)
+	if distance > preview_radius:
+		return {"valid": false}
+	var tangent := tangent_at(local_offset)
+	var approach := world_velocity.normalized().dot(tangent)
+	return {"valid": absf(approach) > 0.35, "distance": distance}
+
 func sample_world(offset: float) -> Vector3:
 	return to_global(path.sample_baked(clampf(offset, 0.0, path_length), true) + Vector3.UP * grind_height_offset)
 

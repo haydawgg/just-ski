@@ -56,6 +56,11 @@ func _physics_process(_delta: float) -> void:
 			grind_speed = skier.rail_speed
 			if grind_speed < 3.0:
 				failures.append("Rail capture collapsed speed")
+			if skier.rail_entry_severity < 0.0 or skier.rail_entry_severity > 1.0:
+				failures.append("Rail entry severity out of range")
+			var rail_debug := skier.animation_controller.debug_snapshot()
+			if float(rail_debug.get("rail_influence", 0.0)) < 0.2:
+				failures.append("Rail animation influence did not rise after real capture")
 		_finish()
 
 func _place_on_open_slope() -> void:

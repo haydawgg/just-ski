@@ -698,17 +698,29 @@ func _on_telemetry(data: Dictionary) -> void:
 	if rail_balance_bar != null:
 		rail_balance_bar.value = float(data.get("rail_balance", 0.0))
 		rail_balance_bar.visible = str(data.state) == "GRIND"
-	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f\nAir %s size %.2f anticip %.2f" % [
+	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f prog %.2f toEnd %.1f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f\nAir %s size %.2f anticip %.2f\nLand %s sev %.2f bal %.2f cmp %.2f\nRailAnim %s inf %.2f appr %.2f entrySev %.2f cmp %.2f slide %.2f exit %.2f" % [
 		Engine.get_frames_per_second(), Engine.physics_ticks_per_second, data.state, data.grounded, data.contact_confidence,
 		data.get("surface", "Powder"), data.speed_mps, data.get("slope_angle_degrees", 0.0), data.surface_normal,
 		data.get("steering_raw", 0.0), data.get("steering", 0.0), data.get("effective_steer_rate", 0.0),
 		data.get("heading_travel_angle_degrees", 0.0), data.edge, data.get("carve_ratio", 1.0), data.get("skid_amount", 0.0),
 		data.get("available_grip", 0.0), data.get("centripetal_demand", 0.0), data.get("brake_amount", 0.0), data.get("pressure", 0.0),
 		data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
-		data.get("rail_balance", 0.0),
+		data.get("rail_balance", 0.0), data.get("rail_progress", 0.0), data.get("rail_distance_to_end", 0.0),
 		flick_data.get("kind", "NONE"), flick_data.get("phase", "NEUTRAL"),
 		animation.get("state", "—"), animation.get("pose", "—"), animation.get("blend", 0.0),
-		animation.get("air_phase", "—"), animation.get("air_size", 0.0), animation.get("jump_anticipation", 0.0)]
+		animation.get("air_phase", "—"), animation.get("air_size", 0.0), animation.get("jump_anticipation", 0.0),
+		animation.get("landing_phase", "Idle"), animation.get("landing_severity", 0.0), animation.get("landing_balance_error", 0.0), animation.get("landing_compression", 0.0),
+		animation.get("rail_phase", "Idle"), animation.get("rail_influence", 0.0), animation.get("rail_approach_anticipation", 0.0),
+		animation.get("rail_entry_severity", 0.0), animation.get("rail_entry_compression", 0.0), animation.get("rail_slide_angle", 0.0), animation.get("rail_exit_anticipation", 0.0)]
+	debug_label.text += "\nTrickAnim active %s intent %s dir %.0f pose %.2f prewind %.2f compact %.2f spot %.2f\nRates y/p/r %.2f %.2f %.2f  residual %s  landBlend %.2f" % [
+		animation.get("trick_active", false), animation.get("trick_intent", false), animation.get("spin_direction", 0.0),
+		animation.get("trick_pose_weight", 0.0), animation.get("prewind_weight", 0.0), animation.get("spin_compactness", 0.0),
+		animation.get("spotting_weight", 0.0), animation.get("root_yaw_rate", 0.0), animation.get("root_pitch_rate", 0.0),
+		animation.get("root_roll_rate", 0.0), animation.get("rotation_residual", Vector3.ZERO), animation.get("landing_blend", 0.0)]
+	debug_label.text += "\nGrab %s %s hand %s ski %s pose %.2f contact %.2f reach %.2f hold %.2f" % [
+		animation.get("grab_type", "—"), animation.get("grab_phase", "IDLE"), animation.get("grab_hand", "NONE"),
+		animation.get("grab_target_ski", "NONE"), animation.get("grab_pose_weight", 0.0),
+		animation.get("grab_contact_weight", 0.0), animation.get("grab_reach_error", 0.0), animation.get("grab_hold_time", 0.0)]
 	if camera_rig != null:
 		debug_label.text += "\n" + camera_rig.debug_summary()
 

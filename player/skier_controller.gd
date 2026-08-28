@@ -42,6 +42,7 @@ var rail_speed := 0.0
 var rail_prev_tangent := Vector3.ZERO
 var rail_capture_from_position := Vector3.ZERO
 var rail_capture_blend_remaining := 0.0
+var rail_entry_severity := 0.0
 var bail_time := 0.0
 var bail_recovering := false
 var debug_enabled := false
@@ -63,7 +64,11 @@ var grab_tweak := Vector2.ZERO
 var grab_release_time := 0.0
 var rail_pose := 0
 var predicted_landing_time := -1.0
+var predicted_landing_normal := Vector3.UP
+var predicted_landing_point := Vector3.ZERO
+var predicted_landing_valid := false
 var landing_feedback_armed := false
+var landing_context := {}
 var air_deliberate := false
 var air_takeoff_type := SkierAnimationFrame.TakeoffType.NONE
 var air_takeoff_charge := 0.0
@@ -454,6 +459,7 @@ func _handle_landing() -> void:
 			result.outcome = LandingSolver.Outcome.SKETCHY
 	var should_present_landing := landing_feedback_armed
 	landing_feedback_armed = false
+	_capture_landing_context(result, true)
 	if should_present_landing:
 		AudioManager.landing_feedback(float(result.score), float(result.impact))
 		landed.emit(result)
@@ -465,7 +471,7 @@ func _handle_landing() -> void:
 		landing_event = SkierAnimationController.AnimationEvent.LAND_SKETCHY
 	elif int(result.outcome) == LandingSolver.Outcome.HARD:
 		landing_event = SkierAnimationController.AnimationEvent.LAND_HARD
-	animation_controller.trigger(landing_event, clampf(float(result.impact) / profile.bail_impact_speed + 0.35, 0.35, 1.25), signf(lateral_slip))
+	animation_controller.trigger(landing_event, float(result.impact_severity), signf(float(result.lateral_velocity)))
 	var quality := float(result.score)
 	velocity = velocity.slide(contact.average_normal)
 	if int(result.outcome) == LandingSolver.Outcome.SKETCHY:
@@ -488,6 +494,34 @@ func _handle_landing() -> void:
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	rail_pose = 0
 	state_changed.emit("Ground")
+
+func _capture_landing_context(result: Dictionary, deliberate: bool) -> void:
+	var rotation_error := 0.0
+	var rotation_accumulated := Vector3.ZERO
+	var rotation_residual := Vector3.ZERO
+	if trick != null and trick.had_trick_intent:
+		rotation_accumulated = trick.accumulated_rotation
+		rotation_residual = _animation_rotation_residual(rotation_accumulated)
+		rotation_error = rotation_residual.y / PI
+	var air_scale := 1.0 if deliberate else clampf(air_time / maxf(animation_controller.profile.landing_hop_air_time_reference, 0.01), animation_controller.profile.landing_min_air_time_scale, 1.0)
+	landing_context = {
+		"impact_speed": float(result.impact),
+		"impact_severity": float(result.impact_severity) * air_scale,
+		"balance_error": float(result.balance_error) * air_scale,
+		"ski_alignment_error": float(result.ski_alignment_error),
+		"body_roll_error": float(result.body_roll_error),
+		"body_pitch_error": float(result.body_pitch_error),
+		"rotation_error": rotation_error,
+		"rotation_accumulated": rotation_accumulated,
+		"rotation_residual": rotation_residual,
+		"lateral_velocity": float(result.lateral_velocity),
+		"forward_velocity": float(result.forward_velocity),
+		"air_time": air_time,
+		"surface_normal": contact.average_normal,
+		"outcome": int(result.outcome),
+		"active": true,
+		"deliberate": deliberate,
+	}
 
 func _suppress_into_slope_bounce() -> void:
 	var into := velocity.dot(contact.average_normal)
@@ -513,6 +547,13 @@ func _update_wall_pin(delta: float) -> void:
 	velocity += hop
 
 func _reseat_on_snow() -> void:
+	var result := LandingSolver.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
+	_capture_landing_context(result, false)
+	animation_controller.trigger(
+		SkierAnimationController.AnimationEvent.LAND_CLEAN,
+		float(landing_context.get("impact_severity", 0.12)),
+		signf(float(result.lateral_velocity))
+	)
 	velocity = velocity.slide(contact.average_normal)
 	angular_velocity = Vector3.ZERO
 	var projected_forward := (-global_basis.z).slide(contact.average_normal)
@@ -546,11 +587,43 @@ func _try_capture_rail() -> void:
 		rail_prev_tangent = best.tangent as Vector3
 		rail_capture_from_position = global_position
 		rail_capture_blend_remaining = profile.rail_capture_blend_time
+		# Entry severity scales the sharper, smaller absorption pose from
+		# actual capture-moment physics: how hard the skier drops into the
+		# feature, how misaligned the approach is, and current body tilt.
+		var approach_alignment := absf(velocity.normalized().dot((best.tangent as Vector3).normalized())) if velocity.length_squared() > 0.0001 else 1.0
+		var vertical_impact := maxf(0.0, -velocity.dot(Vector3.UP))
+		var body_alignment_error := 1.0 - clampf(global_basis.y.normalized().dot(Vector3.UP), 0.0, 1.0)
+		rail_entry_severity = clampf(
+			vertical_impact / maxf(profile.rail_entry_severity_speed_reference, 0.01) * 0.55
+			+ (1.0 - approach_alignment) * 0.25
+			+ body_alignment_error * 0.2,
+			0.0,
+			1.0
+		)
 		state = State.GRIND
 		rail_pose = 0
 		motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
-		animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_ENTER, clampf(absf(rail_speed) / 20.0, 0.25, 1.0), rail_direction)
+		animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_ENTER, rail_entry_severity, lateral_bias)
 		state_changed.emit("Grind")
+
+func _rail_distance_to_end() -> float:
+	if active_rail == null:
+		return 0.0
+	return active_rail.path_length - rail_offset if rail_direction > 0.0 else rail_offset
+
+func _scan_rail_approach() -> float:
+	# Read-only proximity/heading score used only for subtle pre-capture
+	# anticipation. Never attaches; capture_candidate remains authoritative.
+	if state == State.GRIND or velocity.length() < 1.0:
+		return 0.0
+	var best_score := 0.0
+	for node: Node in get_tree().get_nodes_in_group("grind_rails"):
+		var rail := node as GrindRail3D
+		var preview := rail.approach_preview(global_position, velocity, profile.rail_preview_radius)
+		if bool(preview.get("valid", false)):
+			var score := 1.0 - clampf(float(preview.distance) / maxf(profile.rail_preview_radius, 0.01), 0.0, 1.0)
+			best_score = maxf(best_score, score)
+	return best_score
 
 func _exit_rail(pop_off: bool) -> void:
 	var tangent := active_rail.tangent_at(rail_offset) * rail_direction if active_rail != null else -global_basis.z
@@ -588,6 +661,7 @@ func _bail() -> void:
 	state = State.BAIL
 	bail_time = profile.bail_tumble_time
 	bail_recovering = true
+	landing_context = {}
 	velocity *= profile.bail_speed_retain
 	angular_velocity = Vector3.ZERO
 	scoring.bail()
@@ -634,8 +708,10 @@ func respawn_at(value: Transform3D) -> void:
 	rail_pose = 0
 	rail_balance = 0.0
 	rail_capture_blend_remaining = 0.0
+	rail_entry_severity = 0.0
 	bail_recovering = false
 	landing_feedback_armed = false
+	landing_context = {}
 	scoring.reset_link()
 	AudioManager.stop_feedback()
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
@@ -678,13 +754,18 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	rail_capture_from_position = Vector3.ZERO
 	rail_capture_blend_remaining = 0.0
 	rail_pose = 0
+	rail_entry_severity = 0.0
 	bail_time = 0.0
 	bail_recovering = false
 	grab_amount = 0.0
 	grab_tweak = Vector2.ZERO
 	grab_release_time = 0.0
 	predicted_landing_time = -1.0
+	predicted_landing_valid = false
+	predicted_landing_normal = Vector3.UP
+	predicted_landing_point = Vector3.ZERO
 	landing_feedback_armed = false
+	landing_context = {}
 	air_deliberate = false
 	air_takeoff_type = SkierAnimationFrame.TakeoffType.NONE
 	air_takeoff_charge = 0.0
@@ -771,8 +852,23 @@ func telemetry() -> Dictionary:
 		"angular_velocity": angular_velocity,
 		"rail": active_rail.name if active_rail != null else "—",
 		"rail_balance": rail_balance,
+		"rail_progress": clampf(rail_offset / maxf(active_rail.path_length, 0.01), 0.0, 1.0) if active_rail != null else 0.0,
+		"rail_distance_to_end": _rail_distance_to_end(),
+		"rail_entry_severity": rail_entry_severity,
+		"rail_pose": rail_pose,
 		"predicted_landing_time": predicted_landing_time,
+		"predicted_landing_valid": predicted_landing_valid,
 		"landing_feedback_armed": landing_feedback_armed,
+		"landing": {
+			"impact_speed": float(landing_context.get("impact_speed", 0.0)),
+			"impact_severity": float(landing_context.get("impact_severity", 0.0)),
+			"balance_error": float(landing_context.get("balance_error", 0.0)),
+			"ski_alignment_error": float(landing_context.get("ski_alignment_error", 0.0)),
+			"body_roll_error": float(landing_context.get("body_roll_error", 0.0)),
+			"body_pitch_error": float(landing_context.get("body_pitch_error", 0.0)),
+			"rotation_error": float(landing_context.get("rotation_error", 0.0)),
+			"active": bool(landing_context.get("active", false)),
+		},
 		"collision_count": get_slide_collision_count(),
 		"collision_colliders": last_collision_colliders,
 		"collision_diagnostics": last_collision_diagnostics,
@@ -883,7 +979,11 @@ func _flick_context() -> int:
 	return FlickTrickInterpreter.Context.BAIL
 
 func _update_animation(delta: float) -> void:
-	predicted_landing_time = _predict_landing_time()
+	var prediction := _predict_landing()
+	predicted_landing_time = float(prediction.time)
+	predicted_landing_valid = bool(prediction.valid)
+	predicted_landing_normal = prediction.normal as Vector3
+	predicted_landing_point = prediction.point as Vector3
 	var predicted_landing := predicted_landing_time
 	var landing_release := 0.0
 	if predicted_landing >= 0.0 and predicted_landing < animation_controller.profile.landing_anticipation_time:
@@ -941,26 +1041,92 @@ func _update_animation(delta: float) -> void:
 	animation_frame.takeoff_upward_speed = air_takeoff_upward_speed if state == State.AIR else 0.0
 	animation_frame.air_upward_velocity = velocity.dot(air_reference_up) if state == State.AIR else 0.0
 	animation_frame.predicted_landing_time = predicted_landing
+	animation_frame.predicted_landing_normal = predicted_landing_normal
+	animation_frame.predicted_landing_point = predicted_landing_point
+	animation_frame.predicted_landing_valid = predicted_landing_valid
+	animation_frame.landing_impact_speed = float(landing_context.get("impact_speed", 0.0))
+	animation_frame.landing_impact_severity = float(landing_context.get("impact_severity", 0.0))
+	animation_frame.landing_balance_error = float(landing_context.get("balance_error", 0.0))
+	animation_frame.landing_ski_alignment_error = float(landing_context.get("ski_alignment_error", 0.0))
+	animation_frame.landing_body_roll_error = float(landing_context.get("body_roll_error", 0.0))
+	animation_frame.landing_body_pitch_error = float(landing_context.get("body_pitch_error", 0.0))
+	animation_frame.landing_rotation_error = float(landing_context.get("rotation_error", 0.0))
+	animation_frame.landing_lateral_velocity = float(landing_context.get("lateral_velocity", 0.0))
+	animation_frame.landing_forward_velocity = float(landing_context.get("forward_velocity", 0.0))
+	animation_frame.landing_air_time = float(landing_context.get("air_time", 0.0))
+	animation_frame.landing_surface_normal = landing_context.get("surface_normal", contact.average_normal) as Vector3
+	animation_frame.landing_outcome = int(landing_context.get("outcome", 0))
+	animation_frame.landing_event_active = bool(landing_context.get("active", false))
 	animation_frame.grab_pose = trick.grab_pose
 	animation_frame.switch_stance = velocity.dot(-global_basis.z) < 0.0
 	animation_frame.rail_speed = absf(rail_speed) if state == State.GRIND else 0.0
 	animation_frame.rail_balance = rail_balance if state == State.GRIND else 0.0
 	animation_frame.rail_type = active_rail.rail_type if active_rail != null else 0
+	animation_frame.rail_pose = rail_pose if state == State.GRIND else 0
+	animation_frame.rail_direction = (active_rail.tangent_at(rail_offset) * rail_direction) if active_rail != null and state == State.GRIND else -global_basis.z
+	animation_frame.rail_up = Vector3.UP
+	animation_frame.rail_progress = clampf(rail_offset / maxf(active_rail.path_length, 0.01), 0.0, 1.0) if active_rail != null and state == State.GRIND else 0.0
+	animation_frame.rail_distance_to_end = _rail_distance_to_end() if state == State.GRIND else 999.0
+	animation_frame.rail_entry_severity = rail_entry_severity if state == State.GRIND else 0.0
+	animation_frame.rail_approach_anticipation = _scan_rail_approach()
 	animation_frame.trick_kind = active_trick_kind
 	animation_frame.trick_phase = TrickCommand.PresentationPhase.LANDING if landing_release > 0.58 else trick_phase
 	animation_frame.gesture_strength = gesture_strength
 	animation_frame.gesture_direction = trick_sample.right_stick
 	animation_frame.left_trigger = trick_sample.left_trigger
 	animation_frame.right_trigger = trick_sample.right_trigger
-	animation_frame.grab_amount = grab_amount * (1.0 - landing_release)
+	animation_frame.grab_amount = grab_amount
+	animation_frame.grab_input_strength = grab_amount
+	animation_frame.grab_hold_time = trick.grab_seconds
+	animation_frame.grab_release_time = grab_release_time
 	animation_frame.grab_tweak = grab_tweak
 	var rotation_amount := maxf(absf(trick.accumulated_rotation.x), maxf(absf(trick.accumulated_rotation.y), absf(trick.accumulated_rotation.z)))
 	animation_frame.rotation_progress = fmod(rotation_amount / TAU, 1.0)
+	animation_frame.trick_active = trick.active
+	animation_frame.trick_intent = (
+		trick.had_trick_intent
+		or trick_phase in [TrickCommand.PresentationPhase.SETUP, TrickCommand.PresentationPhase.RELEASE]
+		or active_trick_kind not in [TrickCommand.Kind.NONE, TrickCommand.Kind.POP]
+	)
+	animation_frame.rotation_accumulated = (
+		trick.accumulated_rotation
+		if trick.active
+		else landing_context.get("rotation_accumulated", Vector3.ZERO) as Vector3
+	)
+	animation_frame.rotation_residual = (
+		_animation_rotation_residual(trick.accumulated_rotation)
+		if trick.active and trick.had_trick_intent
+		else landing_context.get("rotation_residual", Vector3.ZERO) as Vector3
+	)
 	animation_controller.apply_frame(animation_frame, delta)
+	if animation_controller.is_landing_idle() and bool(landing_context.get("active", false)):
+		landing_context["active"] = false
 
 func _predict_landing_time() -> float:
+	return float(_predict_landing().time)
+
+func _animation_rotation_residual(rotation: Vector3) -> Vector3:
+	return Vector3(
+		_axis_rotation_residual(rotation.x, TAU),
+		_axis_rotation_residual(rotation.y, PI),
+		_axis_rotation_residual(rotation.z, PI)
+	)
+
+func _axis_rotation_residual(value: float, step: float) -> float:
+	if absf(value) < deg_to_rad(5.0):
+		return 0.0
+	var completed_steps := maxi(1, roundi(absf(value) / maxf(step, 0.001)))
+	return value - signf(value) * float(completed_steps) * step
+
+func _predict_landing() -> Dictionary:
+	var result := {
+		"time": -1.0,
+		"valid": false,
+		"normal": Vector3.UP,
+		"point": Vector3.ZERO,
+	}
 	if state != State.AIR:
-		return -1.0
+		return result
 	var step := clampf(profile.landing_prediction_step, 0.025, 0.15)
 	var elapsed := 0.0
 	var position := global_position + Vector3.UP * 0.2
@@ -971,12 +1137,17 @@ func _predict_landing_time() -> float:
 		var next_position := position + (predicted_velocity + next_velocity) * 0.5 * step
 		var query := PhysicsRayQueryParameters3D.create(position, next_position, 1)
 		query.exclude = [get_rid()]
-		if not space.intersect_ray(query).is_empty():
-			return elapsed + step
+		var hit := space.intersect_ray(query)
+		if not hit.is_empty():
+			result.time = elapsed + step
+			result.valid = true
+			result.normal = (hit.normal as Vector3).normalized() if (hit.normal as Vector3).length_squared() > 0.0001 else Vector3.UP
+			result.point = hit.position as Vector3
+			return result
 		position = next_position
 		predicted_velocity = next_velocity
 		elapsed += step
-	return -1.0
+	return result
 
 func _surface_drag_multiplier() -> float:
 	match contact.surface_kind:
@@ -1017,7 +1188,18 @@ func _update_debug() -> void:
 	var right_compression := float(animation_debug.get("right_leg_compression", 0.0))
 	_debug_line_world(compression_origin - global_basis.x * 0.18, compression_origin - global_basis.x * 0.18 + global_basis.y * left_compression * 0.45)
 	_debug_line_world(compression_origin + global_basis.x * 0.18, compression_origin + global_basis.x * 0.18 + global_basis.y * right_compression * 0.45)
-	_debug_line_world(global_position + global_basis.y, global_position + global_basis.y + velocity * 0.15)
+	var direction_origin := global_position + global_basis.y
+	_debug_line_world(direction_origin, direction_origin - global_basis.z * 1.8)
+	_debug_line_world(direction_origin, direction_origin + velocity * 0.15)
+	if predicted_landing_valid:
+		_debug_line_world(direction_origin, predicted_landing_point)
+	if int(animation_debug.get("grab_target_count", 0)) > 0:
+		var left_target := animation_debug.get("grab_target_left", Vector3.ZERO) as Vector3
+		var right_target := animation_debug.get("grab_target_right", Vector3.ZERO) as Vector3
+		if str(animation_debug.get("grab_hand", "NONE")) in ["LEFT", "BOTH"]:
+			_debug_line_world(animation_controller.left_hand.global_position, left_target)
+		if str(animation_debug.get("grab_hand", "NONE")) in ["RIGHT", "BOTH"]:
+			_debug_line_world(animation_controller.right_hand.global_position, right_target)
 	debug_mesh.surface_end()
 
 func _debug_line_world(from_world: Vector3, to_world: Vector3) -> void:

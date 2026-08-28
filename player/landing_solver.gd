@@ -32,13 +32,42 @@ static func evaluate(up: Vector3, forward: Vector3, normal: Vector3, velocity: V
 		outcome = Outcome.SKETCHY
 	elif not hard_failure:
 		outcome = Outcome.HARD
+	var lateral_velocity := velocity.dot(safe_forward.cross(safe_normal).normalized()) if safe_forward.cross(safe_normal).length_squared() > 0.0001 else 0.0
+	var forward_velocity := velocity.dot(projected_forward.normalized()) if projected_forward.length_squared() > 0.0001 else 0.0
+	var ski_alignment_error := 1.0 - aligned_forward
+	var body_roll_error := 1.0 - upright
+	var body_pitch_error := clampf(1.0 - absf(safe_forward.dot(projected_forward.normalized() if projected_forward.length_squared() > 0.0001 else travel)), 0.0, 1.0)
+	var flatness := clampf(safe_normal.dot(Vector3.UP), 0.0, 1.0)
+	var flat_bias := smoothstep(0.82, 0.98, flatness) * 0.18
+	var impact_severity := clampf(
+		impact / maxf(profile.bail_impact_speed, 0.01) * 1.25
+		+ body_roll_error * 0.2
+		+ flat_bias,
+		0.0,
+		1.0
+	)
+	var balance_error := clampf(
+		ski_alignment_error * 0.45
+		+ body_roll_error * 0.3
+		+ clampf(angular_ratio, 0.0, 1.0) * 0.25
+		+ clampf(absf(lateral_velocity) / 8.0, 0.0, 1.0) * 0.2,
+		0.0,
+		1.0
+	)
 	return {
 		"score": score,
 		"outcome": outcome,
 		"impact": impact,
+		"impact_severity": impact_severity,
+		"balance_error": balance_error,
+		"ski_alignment_error": ski_alignment_error,
+		"body_roll_error": body_roll_error,
+		"body_pitch_error": body_pitch_error,
 		"alignment": aligned_forward,
 		"upright": upright,
 		"upright_dot": upright_dot,
 		"angular_ratio": angular_ratio,
+		"lateral_velocity": lateral_velocity,
+		"forward_velocity": forward_velocity,
 		"hard_failure": hard_failure,
 	}

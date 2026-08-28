@@ -225,6 +225,7 @@ func _test_grind_and_bail_poses() -> void:
 	frame.locomotion_state = 2
 	frame.rail_speed = 18.0
 	frame.rail_balance = 0.8
+	frame.rail_pose = 1
 	_step(60)
 	_check_pose_contains("Boardslide Right", "Boardslide pose was not selected")
 
