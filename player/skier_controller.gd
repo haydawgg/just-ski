@@ -65,6 +65,10 @@ var rail_pose := 0
 var predicted_landing_time := -1.0
 var landing_feedback_armed := false
 var air_deliberate := false
+var air_takeoff_type := SkierAnimationFrame.TakeoffType.NONE
+var air_takeoff_charge := 0.0
+var air_takeoff_upward_speed := 0.0
+var air_reference_up := Vector3.UP
 var wall_pin_time := 0.0
 var last_collision_diagnostics: Array[Dictionary] = []
 var last_collision_colliders: Array[String] = []
@@ -416,13 +420,19 @@ func _pop(normal: Vector3, requested_strength: float = -1.0, rotation_impulse: V
 	AudioManager.pop_feedback(strength)
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.POP, strength)
 	jump_charge = 0.0
-	_enter_air(takeoff_kind)
+	_enter_air(takeoff_kind, normalized_charge, normal)
 	air_deliberate = true
 	angular_velocity = (angular_velocity + rotation_impulse).limit_length(profile.maximum_angular_speed)
 
-func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE) -> void:
+func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE, normalized_charge: float = 0.0, takeoff_normal: Vector3 = Vector3.ZERO) -> void:
 	if state == State.AIR:
 		return
+	air_reference_up = takeoff_normal.normalized() if takeoff_normal.length_squared() > 0.01 else contact.last_normal.normalized()
+	if air_reference_up.length_squared() < 0.01:
+		air_reference_up = Vector3.UP
+	air_takeoff_type = SkierAnimationFrame.TakeoffType.CHARGED_POP if takeoff_kind != TrickCommand.Kind.NONE else SkierAnimationFrame.TakeoffType.TERRAIN_TAKEOFF
+	air_takeoff_charge = clampf(normalized_charge, 0.0, 1.0)
+	air_takeoff_upward_speed = maxf(0.0, velocity.dot(air_reference_up))
 	state = State.AIR
 	air_deliberate = false
 	landing_feedback_armed = true
@@ -611,6 +621,10 @@ func respawn_at(value: Transform3D) -> void:
 	global_position += Vector3.UP * 0.35
 	state = State.AIR
 	air_deliberate = false
+	air_takeoff_type = SkierAnimationFrame.TakeoffType.NONE
+	air_takeoff_charge = 0.0
+	air_takeoff_upward_speed = 0.0
+	air_reference_up = Vector3.UP
 	wall_pin_time = 0.0
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	trick.reset()
@@ -672,6 +686,10 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	predicted_landing_time = -1.0
 	landing_feedback_armed = false
 	air_deliberate = false
+	air_takeoff_type = SkierAnimationFrame.TakeoffType.NONE
+	air_takeoff_charge = 0.0
+	air_takeoff_upward_speed = 0.0
+	air_reference_up = Vector3.UP
 	wall_pin_time = 0.0
 	last_collision_diagnostics.clear()
 	last_collision_colliders.clear()
@@ -874,16 +892,54 @@ func _update_animation(delta: float) -> void:
 	animation_frame.speed_mps = velocity.length()
 	animation_frame.speed_ratio = clampf(velocity.length() / profile.maximum_speed, 0.0, 1.0)
 	animation_frame.edge = edge_amount
+	animation_frame.turn_input = steering_input
+	animation_frame.turn_rate = -edge_amount * effective_steer_rate * current_carve_ratio
 	animation_frame.skid = lateral_slip
+	animation_frame.skid_ratio = skid_amount
 	animation_frame.carve_force = carve_force
+	animation_frame.lateral_acceleration = -signf(edge_amount) * carve_force
+	animation_frame.carve_ratio = current_carve_ratio
+	animation_frame.heading_velocity_delta = deg_to_rad(heading_travel_angle_degrees)
+	animation_frame.skier_heading = -global_basis.z
+	var travel_heading := velocity.slide(contact.average_normal)
+	animation_frame.velocity_heading = travel_heading.normalized() if travel_heading.length_squared() > 0.001 else -global_basis.z
+	animation_frame.slope_angle = deg_to_rad(slope_angle_degrees)
+	animation_frame.grounded = state == State.GROUND and contact.grounded
 	animation_frame.tuck = tuck_amount
 	animation_frame.braking = braking
 	animation_frame.compression = clampf(jump_charge / maxf(profile.maximum_jump_charge, 0.001), 0.0, 1.0)
 	animation_frame.contact_confidence = contact.confidence
 	animation_frame.ground_normal = contact.average_normal
+	animation_frame.seat_distance = 0.35 + profile.ground_attach_height
+	animation_frame.left_ground_distance = contact.left_distance
+	animation_frame.right_ground_distance = contact.right_distance
+	animation_frame.left_normal = contact.left_normal
+	animation_frame.right_normal = contact.right_normal
+	animation_frame.left_hit_position = contact.left_hit_position
+	animation_frame.right_hit_position = contact.right_hit_position
+	animation_frame.left_grounded = contact.left_grounded
+	animation_frame.right_grounded = contact.right_grounded
+	animation_frame.left_contact_confidence = contact.left_contact_confidence
+	animation_frame.right_contact_confidence = contact.right_contact_confidence
+	animation_frame.left_front_valid = contact.left_front_valid
+	animation_frame.left_rear_valid = contact.left_rear_valid
+	animation_frame.right_front_valid = contact.right_front_valid
+	animation_frame.right_rear_valid = contact.right_rear_valid
+	animation_frame.left_front_position = contact.left_front_position
+	animation_frame.left_rear_position = contact.left_rear_position
+	animation_frame.right_front_position = contact.right_front_position
+	animation_frame.right_rear_position = contact.right_rear_position
+	animation_frame.left_front_normal = contact.left_front_normal
+	animation_frame.left_rear_normal = contact.left_rear_normal
+	animation_frame.right_front_normal = contact.right_front_normal
+	animation_frame.right_rear_normal = contact.right_rear_normal
 	animation_frame.angular_velocity = angular_velocity
 	animation_frame.vertical_velocity = velocity.y
 	animation_frame.air_time = air_time
+	animation_frame.takeoff_type = air_takeoff_type if state == State.AIR else SkierAnimationFrame.TakeoffType.NONE
+	animation_frame.takeoff_charge = air_takeoff_charge if state == State.AIR else 0.0
+	animation_frame.takeoff_upward_speed = air_takeoff_upward_speed if state == State.AIR else 0.0
+	animation_frame.air_upward_velocity = velocity.dot(air_reference_up) if state == State.AIR else 0.0
 	animation_frame.predicted_landing_time = predicted_landing
 	animation_frame.grab_pose = trick.grab_pose
 	animation_frame.switch_stance = velocity.dot(-global_basis.z) < 0.0
@@ -946,12 +1002,27 @@ func _update_debug() -> void:
 		return
 	debug_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	for point: Vector3 in contact.hit_points:
-		var local := to_local(point)
-		debug_mesh.surface_add_vertex(local)
-		debug_mesh.surface_add_vertex(local + contact.average_normal * 1.2)
-	debug_mesh.surface_add_vertex(Vector3.UP)
-	debug_mesh.surface_add_vertex(Vector3.UP + to_local(global_position + velocity * 0.15))
+		_debug_line_world(point, point + contact.average_normal * 1.2)
+	if contact.left_grounded:
+		_debug_line_world(contact.left_hit_position, contact.left_hit_position + contact.left_normal * 0.8)
+		_debug_line_world(animation_controller.left_ski.global_position, contact.left_hit_position)
+	if contact.right_grounded:
+		_debug_line_world(contact.right_hit_position, contact.right_hit_position + contact.right_normal * 0.8)
+		_debug_line_world(animation_controller.right_ski.global_position, contact.right_hit_position)
+	var animation_debug := animation_controller.debug_snapshot()
+	var pelvis_target := animation_debug.get("pelvis_target_world", animation_controller.pelvis.global_position) as Vector3
+	_debug_line_world(animation_controller.pelvis.global_position, pelvis_target)
+	var compression_origin := global_position + global_basis.y * 1.7
+	var left_compression := float(animation_debug.get("left_leg_compression", 0.0))
+	var right_compression := float(animation_debug.get("right_leg_compression", 0.0))
+	_debug_line_world(compression_origin - global_basis.x * 0.18, compression_origin - global_basis.x * 0.18 + global_basis.y * left_compression * 0.45)
+	_debug_line_world(compression_origin + global_basis.x * 0.18, compression_origin + global_basis.x * 0.18 + global_basis.y * right_compression * 0.45)
+	_debug_line_world(global_position + global_basis.y, global_position + global_basis.y + velocity * 0.15)
 	debug_mesh.surface_end()
+
+func _debug_line_world(from_world: Vector3, to_world: Vector3) -> void:
+	debug_mesh.surface_add_vertex(to_local(from_world))
+	debug_mesh.surface_add_vertex(to_local(to_world))
 
 var last_physics_delta: float:
 	get:

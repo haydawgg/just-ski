@@ -34,7 +34,7 @@ All gameplay input is defined through Godot's InputMap. The HUD switches prompts
 
 - Momentum-based slope gravity (steeper ~18° park face), lower air gravity for hang time, powder/packed/groomed grip and drag, bounded lateral edge grip, carving, skidding, stick pressure, tuck, and hockey-stop braking.
 - Skate-inspired Flick-It preload/pop gestures, discrete spin/flip/cork impulses sized for ~360° on the middle kicker, low-authority air trim, ballistic landing prediction, plausibility-gated landing evaluation, and in-place bail recovery.
-- Slope-relative spring camera with speed distance/FOV, air framing, look-ahead, and collision avoidance.
+- Slope-relative spring camera with larger skier framing, per-channel smoothing (split horizontal/vertical springs, yaw lag scaled by speed, stabilized pitch), carve-aware travel/heading look blending, filtered terrain up-vector, smoothed air framing, speed look-ahead/FOV, and collision avoidance.
 - Signed world-triplanar CC0 snow PBR with Fast and Premium shader tiers, directional groomer corduroy, distance-faded detail, reflection-driven crystals, and premium SSS/transmittance.
 - Reusable spline-backed rails/boxes/tubes with height/approach validation, blended capture, balance drift / slip-off, bidirectional and reverse travel, grind friction, and pop-off.
 - Detailed layered skier animation with directional setup/release, head spotting, mirrored spin/flip/cork silhouettes, continuous trigger-pressure grabs, two-bone hand-to-ski reach, rail balance, bail motion, and debug telemetry.
@@ -69,6 +69,8 @@ $env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/physics_collision_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/settings_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/jump_animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/terrain_suspension_course.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_trick_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_gameplay_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/trick_ui_acceptance.tscn

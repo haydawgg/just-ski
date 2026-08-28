@@ -17,11 +17,13 @@ $scenes = @(
 	"res://tests/physics_collision_acceptance.tscn",
 	"res://tests/settings_acceptance.tscn",
 	"res://tests/animation_acceptance.tscn",
+	"res://tests/jump_animation_acceptance.tscn",
 	"res://tests/flick_trick_acceptance.tscn",
 	"res://tests/flick_gameplay_acceptance.tscn",
 	"res://tests/trick_ui_acceptance.tscn",
 	"res://tests/session_flow_acceptance.tscn",
 	"res://tests/ground_hover_probe.tscn",
+	"res://tests/terrain_suspension_course.tscn",
 	"res://tests/gif_encoder_acceptance.tscn"
 )
 

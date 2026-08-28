@@ -2,6 +2,7 @@ class_name GameUI
 extends CanvasLayer
 
 var player: SkierController
+var camera_rig: SkiCameraController
 var hud_overlay: Control
 var speed_label: Label
 var trick_label: Label
@@ -57,6 +58,9 @@ func bind_player(value: SkierController) -> void:
 	player.landed.connect(_on_landed)
 	player.crashed.connect(_on_crashed)
 	_on_score_changed(player.scoring.snapshot())
+
+func bind_camera(value: SkiCameraController) -> void:
+	camera_rig = value
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and get_tree().paused):
@@ -694,7 +698,7 @@ func _on_telemetry(data: Dictionary) -> void:
 	if rail_balance_bar != null:
 		rail_balance_bar.value = float(data.get("rail_balance", 0.0))
 		rail_balance_bar.visible = str(data.state) == "GRIND"
-	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f" % [
+	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f\nAir %s size %.2f anticip %.2f" % [
 		Engine.get_frames_per_second(), Engine.physics_ticks_per_second, data.state, data.grounded, data.contact_confidence,
 		data.get("surface", "Powder"), data.speed_mps, data.get("slope_angle_degrees", 0.0), data.surface_normal,
 		data.get("steering_raw", 0.0), data.get("steering", 0.0), data.get("effective_steer_rate", 0.0),
@@ -703,7 +707,10 @@ func _on_telemetry(data: Dictionary) -> void:
 		data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
 		data.get("rail_balance", 0.0),
 		flick_data.get("kind", "NONE"), flick_data.get("phase", "NEUTRAL"),
-		animation.get("state", "—"), animation.get("pose", "—"), animation.get("blend", 0.0)]
+		animation.get("state", "—"), animation.get("pose", "—"), animation.get("blend", 0.0),
+		animation.get("air_phase", "—"), animation.get("air_size", 0.0), animation.get("jump_anticipation", 0.0)]
+	if camera_rig != null:
+		debug_label.text += "\n" + camera_rig.debug_summary()
 
 func _on_trick_changed(text: String) -> void:
 	trick_label.text = text

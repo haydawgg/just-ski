@@ -1,16 +1,61 @@
 class_name SkiCameraController
 extends Node3D
 
-@export var follow_distance := 5.6
-@export var follow_height := 2.15
+## Phase 4 camera: larger skier framing, carve-aware look blending, and
+## per-channel smoothing (position/yaw/pitch/FOV/look-ahead/surface-up)
+## so terrain suspension stays readable while the camera remains calm.
+
+@export_group("Framing")
+@export var follow_distance := 4.0
+@export var follow_height := 1.45
+@export var speed_distance_gain := 0.04
+@export var speed_distance_cap := 1.4
+@export var speed_height_gain := 0.008
+@export var speed_height_cap := 0.25
+@export var look_height_offset := 0.12
+@export var air_height := 0.82
+@export var air_height_rise_rate := 5.0
+@export var air_height_fall_rate := 7.0
+
+@export_group("Position Spring")
 @export var spring_strength := 14.0
 @export var damping := 8.5
+@export var vertical_spring_strength := 10.0
+@export var vertical_damping := 9.0
+
+@export_group("Orientation")
+@export var yaw_rate_slow := 6.0
+@export var yaw_rate_fast := 3.5
+@export var yaw_speed_reference := 30.0
+@export var pitch_rate := 3.0
+
+@export_group("Carve Look")
+@export var look_heading_weight_min := 0.15
+@export var look_heading_weight_gain := 0.35
+@export var heading_angle_reference := 45.0
+
+@export_group("Look-ahead & FOV")
+@export var look_ahead_min := 3.0
+@export var look_ahead_max := 15.0
+@export var look_ahead_gain := 0.30
+@export var look_ahead_rate := 4.0
 @export var base_fov := 68.0
-@export var speed_fov_gain := 11.0
+@export var speed_fov_gain := 10.0
+@export var fov_speed_reference := 30.0
+@export var fov_rate := 4.0
+
+@export_group("Stabilization")
+@export var surface_up_rate := 3.5
 
 var target: CharacterBody3D
 var camera: Camera3D
-var spring_velocity := Vector3.ZERO
+var spring_velocity_horizontal := Vector3.ZERO
+var spring_velocity_vertical := Vector3.ZERO
+var _filtered_surface_up := Vector3.UP
+var _yaw_dir := Vector3.FORWARD
+var _pitch := 0.0
+var _smoothed_air_height := 0.0
+var _smoothed_look_ahead := look_ahead_min
 
 func _ready() -> void:
 	camera = Camera3D.new()
@@ -26,42 +71,104 @@ func set_target(value: CharacterBody3D) -> void:
 func reset_immediate() -> void:
 	if target == null:
 		return
+	var skier := target as SkierController
+	var up := Vector3.UP
+	if skier != null and skier.state in [SkierController.State.GROUND, SkierController.State.GRIND] and skier.contact.average_normal.length_squared() > 0.01:
+		up = skier.contact.average_normal.normalized()
 	var forward := -target.global_basis.z
-	global_position = target.global_position - forward * follow_distance + Vector3.UP * follow_height
-	spring_velocity = Vector3.ZERO
-	look_at(target.global_position + forward * 4.0 + Vector3.UP, Vector3.UP)
+	var speed := target.velocity.length()
+	_filtered_surface_up = up
+	var horizontal := (forward - up * forward.dot(up))
+	_yaw_dir = horizontal.normalized() if horizontal.length_squared() > 0.001 else Vector3.FORWARD
+	_pitch = atan2(-forward.dot(up), maxf(forward.dot(_yaw_dir), 0.0001))
+	global_position = target.global_position - _yaw_dir * follow_distance + up * follow_height
+	spring_velocity_horizontal = Vector3.ZERO
+	spring_velocity_vertical = Vector3.ZERO
+	_smoothed_air_height = air_height if (skier != null and skier.state == SkierController.State.AIR) else 0.0
+	_smoothed_look_ahead = clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max)
+	camera.fov = base_fov + clampf(speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain
+	look_at(target.global_position + _yaw_dir * _smoothed_look_ahead + up * look_height_offset, Vector3.UP)
 
 func _physics_process(delta: float) -> void:
 	if target == null:
 		return
+	var skier := target as SkierController
 	var speed := target.velocity.length()
-	var surface_up := Vector3.UP
-	var air_height := 0.0
-	if target is SkierController:
-		var skier := target as SkierController
-		if skier.state in [SkierController.State.GROUND, SkierController.State.GRIND] and skier.contact.average_normal.length_squared() > 0.01:
-			surface_up = skier.contact.average_normal.normalized()
-		elif skier.state == SkierController.State.AIR:
-			air_height = 0.82
-	var travel := target.velocity.slide(surface_up).normalized()
+
+	var raw_surface_up := Vector3.UP
+	if skier != null and skier.state in [SkierController.State.GROUND, SkierController.State.GRIND] and skier.contact.average_normal.length_squared() > 0.01:
+		raw_surface_up = skier.contact.average_normal.normalized()
+	_filtered_surface_up = _slerp_direction(_filtered_surface_up, raw_surface_up, 1.0 - exp(-surface_up_rate * delta))
+	var up := _filtered_surface_up
+
+	var travel := target.velocity.slide(up).normalized()
 	if travel.length_squared() < 0.05:
-		travel = (-target.global_basis.z).slide(surface_up).normalized()
+		travel = (-target.global_basis.z).slide(up).normalized()
 	if travel.length_squared() < 0.05:
 		travel = Vector3.FORWARD
-	var distance := follow_distance + clampf(speed * 0.04, 0.0, 1.6)
-	var desired_height := follow_height + clampf(speed * 0.008, 0.0, 0.35) + air_height
-	var desired := target.global_position - travel * distance + surface_up * desired_height
-	var acceleration := (desired - global_position) * spring_strength - spring_velocity * damping
-	spring_velocity += acceleration * delta
-	global_position += spring_velocity * delta
+
+	var air_target := 0.0
+	if skier != null and skier.state == SkierController.State.AIR:
+		air_target = air_height
+	var air_rate := air_height_rise_rate if air_target > _smoothed_air_height else air_height_fall_rate
+	_smoothed_air_height = lerpf(_smoothed_air_height, air_target, 1.0 - exp(-air_rate * delta))
+
+	var distance := follow_distance + clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
+	var desired_height := follow_height + clampf(speed * speed_height_gain, 0.0, speed_height_cap) + _smoothed_air_height
+	var desired := target.global_position - travel * distance + up * desired_height
+	var error := desired - global_position
+	var error_vertical := up * error.dot(up)
+	var error_horizontal := error - error_vertical
+	spring_velocity_horizontal += (error_horizontal * spring_strength - spring_velocity_horizontal * damping) * delta
+	spring_velocity_vertical += (error_vertical * vertical_spring_strength - spring_velocity_vertical * vertical_damping) * delta
+	global_position += (spring_velocity_horizontal + spring_velocity_vertical) * delta
 	global_position = _avoid_collision(target.global_position + Vector3.UP, global_position)
-	var look_ahead := clampf(speed * 0.24, 4.0, 12.0)
-	var look_target := target.global_position + travel * look_ahead + surface_up * 0.42
-	var current_forward := -global_basis.z
+
+	var look_ahead_target := clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max)
+	_smoothed_look_ahead = lerpf(_smoothed_look_ahead, look_ahead_target, 1.0 - exp(-look_ahead_rate * delta))
+	var look_dir := travel
+	if skier != null:
+		var heading := (-target.global_basis.z).slide(up).normalized()
+		if heading.length_squared() > 0.05:
+			var carve_weight := clampf(look_heading_weight_min + look_heading_weight_gain * absf(skier.heading_travel_angle_degrees) / heading_angle_reference, look_heading_weight_min, look_heading_weight_min + look_heading_weight_gain)
+			look_dir = _slerp_direction(travel, heading, carve_weight)
+	var look_target := target.global_position + look_dir * _smoothed_look_ahead + up * look_height_offset
 	var desired_forward := global_position.direction_to(look_target)
-	var blended := current_forward.lerp(desired_forward, 1.0 - exp(-8.0 * delta)).normalized()
-	global_basis = Basis.looking_at(blended, Vector3.UP)
-	camera.fov = lerpf(camera.fov, base_fov + clampf(speed / 45.0, 0.0, 1.0) * speed_fov_gain, 1.0 - exp(-4.0 * delta))
+
+	var reproj := _yaw_dir - up * _yaw_dir.dot(up)
+	_yaw_dir = reproj.normalized() if reproj.length_squared() > 0.001 else travel
+	var desired_yaw := desired_forward - up * desired_forward.dot(up)
+	if desired_yaw.length_squared() > 0.001:
+		desired_yaw = desired_yaw.normalized()
+		if _yaw_dir.dot(desired_yaw) < -0.999:
+			_yaw_dir = desired_yaw
+		else:
+			var yaw_rate := lerpf(yaw_rate_slow, yaw_rate_fast, clampf(speed / yaw_speed_reference, 0.0, 1.0))
+			_yaw_dir = _slerp_direction(_yaw_dir, desired_yaw, 1.0 - exp(-yaw_rate * delta))
+	var desired_pitch := atan2(-desired_forward.dot(up), maxf(desired_forward.dot(_yaw_dir), 0.0001))
+	_pitch = lerpf(_pitch, desired_pitch, 1.0 - exp(-pitch_rate * delta))
+	var blended_forward := _yaw_dir * cos(_pitch) - up * sin(_pitch)
+	global_basis = Basis.looking_at(blended_forward, Vector3.UP)
+
+	var fov_target := base_fov + clampf(speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain
+	camera.fov = lerpf(camera.fov, fov_target, 1.0 - exp(-fov_rate * delta))
+
+func debug_summary() -> String:
+	if target == null:
+		return "Cam no target"
+	var actual_distance := global_position.distance_to(target.global_position)
+	return "Cam d %.1f  fov %.0f  look %.1f\nCam pitch %+.1f°  air %.2f  uperr %.1f°" % [
+		actual_distance, camera.fov, _smoothed_look_ahead,
+		rad_to_deg(_pitch), _smoothed_air_height, rad_to_deg(_filtered_surface_up.angle_to(Vector3.UP))]
+
+func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
+	if from.length_squared() < 0.0001 or to.length_squared() < 0.0001:
+		return to.normalized() if to.length_squared() > 0.0001 else from
+	from = from.normalized()
+	to = to.normalized()
+	if from.dot(to) > 0.9995:
+		return from.lerp(to, weight).normalized()
+	return from.slerp(to, weight).normalized()
 
 func _avoid_collision(from: Vector3, desired: Vector3) -> Vector3:
 	var query := PhysicsRayQueryParameters3D.create(from, desired, 1 | 4)

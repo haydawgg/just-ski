@@ -9,6 +9,7 @@ func _ready() -> void:
 	add_child(rig)
 	_test_rig_structure()
 	_test_ground_poses()
+	_test_basic_skiing_phase_two()
 	_test_air_and_trick_poses()
 	_test_flick_presentation_layers()
 	_test_continuous_grab_reach()
@@ -17,7 +18,7 @@ func _ready() -> void:
 	_test_trick_resolution()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("ANIMATION_PASS: articulated rig, ground, air, grabs, rail, reactions, and bail poses passed")
+		print("ANIMATION_PASS: athletic stance, loaded carves, crossover, linked turns, air, grabs, rail, reactions, and bail poses passed")
 		get_tree().quit(0)
 	else:
 		for failure: String in failures:
@@ -32,6 +33,7 @@ func _test_rig_structure() -> void:
 func _test_ground_poses() -> void:
 	frame.reset()
 	frame.locomotion_state = 0
+	frame.grounded = true
 	frame.speed_ratio = 0.85
 	frame.speed_mps = 30.0
 	frame.edge = 0.9
@@ -55,7 +57,85 @@ func _test_ground_poses() -> void:
 	frame.edge = 0.0
 	frame.compression = 1.0
 	_step(45)
-	_check_pose_contains("Jump Compression", "Jump compression pose was not selected")
+	_check_pose_contains("Jump Anticipation", "Jump anticipation pose was not selected")
+
+func _test_basic_skiing_phase_two() -> void:
+	frame.reset()
+	frame.locomotion_state = 0
+	frame.grounded = true
+	frame.speed_ratio = 0.05
+	frame.speed_mps = 2.0
+	_step(120)
+	var low_speed := rig.debug_snapshot()
+	if float((low_speed.left_knee_rotation as Vector3).x) < deg_to_rad(20.0):
+		failures.append("Low-speed neutral stance did not keep athletic knee flex")
+	if float(low_speed.pelvis_height) >= 0.92:
+		failures.append("Neutral stance did not lower the pelvis")
+
+	frame.speed_ratio = 1.0
+	frame.speed_mps = 18.0
+	_step(120)
+	var high_speed := rig.debug_snapshot()
+	if float(high_speed.pelvis_height) >= float(low_speed.pelvis_height) - 0.035:
+		failures.append("High-speed stance did not become more compact")
+	if float((high_speed.left_knee_rotation as Vector3).x) <= float((low_speed.left_knee_rotation as Vector3).x) + 0.12:
+		failures.append("High-speed stance did not increase knee flex continuously")
+	if absf(float((high_speed.left_pole_rotation as Vector3).x)) <= absf(float((low_speed.left_pole_rotation as Vector3).x)) + 0.2:
+		failures.append("Poles did not trail farther at speed")
+
+	_set_loaded_carve(-1.0)
+	_step(160)
+	var left_carve := rig.debug_snapshot()
+	_check_pose_contains("Carve Left", "Loaded left carve pose was not selected")
+	if float((left_carve.pelvis_position as Vector3).x) >= -0.08:
+		failures.append("Left carve did not displace the pelvis inside the turn")
+	if float((left_carve.left_knee_rotation as Vector3).x) <= float((left_carve.right_knee_rotation as Vector3).x) + 0.08:
+		failures.append("Left inside leg was not more compressed than the right outside leg")
+	if absf(float((left_carve.pelvis_rotation as Vector3).z)) <= absf(float((left_carve.chest_rotation as Vector3).z)) * 2.0:
+		failures.append("Left carve did not separate lower-body lean from chest lean")
+
+	_set_loaded_carve(1.0)
+	_step(7)
+	var crossover := rig.debug_snapshot()
+	_check_pose_contains("Crossover", "Turn reversal did not present a crossover")
+	if float(crossover.ski_carve) <= 0.0:
+		failures.append("Skis did not engage the new edge first during crossover")
+	if float(crossover.pelvis_carve) >= 0.0 or float(crossover.torso_carve) >= 0.0:
+		failures.append("Pelvis/torso did not follow behind the skis during crossover")
+	if float(crossover.pelvis_height) <= float(left_carve.pelvis_height):
+		failures.append("Crossover did not visibly unload and extend the old turn")
+
+	_step(160)
+	var right_carve := rig.debug_snapshot()
+	_check_pose_contains("Carve Right", "Loaded right carve pose was not selected")
+	if float((right_carve.pelvis_position as Vector3).x) <= 0.08:
+		failures.append("Right carve did not displace the pelvis inside the turn")
+	if float((right_carve.right_knee_rotation as Vector3).x) <= float((right_carve.left_knee_rotation as Vector3).x) + 0.08:
+		failures.append("Right inside leg was not more compressed than the left outside leg")
+	if float((left_carve.pelvis_rotation as Vector3).z) * float((right_carve.pelvis_rotation as Vector3).z) >= 0.0:
+		failures.append("Left/right loaded carve pelvis angles were not mirrored")
+
+	for direction: float in [-1.0, 1.0, -1.0, 1.0]:
+		_set_loaded_carve(direction)
+		_step(60)
+	var linked_turns := rig.debug_snapshot()
+	if float(linked_turns.carve_target) <= 0.5 or not is_finite(float(linked_turns.pelvis_carve)):
+		failures.append("Linked S-turns did not remain continuous and finish on the requested edge")
+
+func _set_loaded_carve(direction: float) -> void:
+	frame.edge = direction
+	frame.turn_input = direction
+	frame.turn_rate = -direction * 0.68
+	frame.lateral_acceleration = -direction * 8.5
+	frame.carve_force = 8.5
+	frame.carve_ratio = 0.94
+	frame.skid_ratio = 0.06
+	frame.skid = direction * 0.35
+	frame.heading_velocity_delta = direction * 0.12
+	frame.speed_ratio = 0.86
+	frame.speed_mps = 15.5
+	frame.braking = false
+	frame.compression = 0.0
 
 func _test_air_and_trick_poses() -> void:
 	frame.reset()
@@ -82,9 +162,14 @@ func _test_air_and_trick_poses() -> void:
 	_check_pose_contains("Spread Eagle", "Spread-eagle pose was not selected")
 
 	frame.grab_pose = TrickController.GrabPose.NONE
+	frame.takeoff_type = SkierAnimationFrame.TakeoffType.CHARGED_POP
+	frame.takeoff_charge = 0.7
+	frame.takeoff_upward_speed = 3.0
+	frame.air_time = 0.7
+	frame.air_upward_velocity = -3.0
 	frame.predicted_landing_time = 0.18
 	_step(45)
-	_check_pose_contains("Landing Ready", "Landing anticipation did not activate")
+	_check_pose_contains("Descent", "Physical descent phase did not activate")
 
 func _test_flick_presentation_layers() -> void:
 	frame.reset()

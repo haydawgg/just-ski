@@ -125,6 +125,7 @@ func _build_player() -> void:
 	ui.name = "GameUI"
 	add_child(ui)
 	ui.call_deferred("bind_player", player)
+	ui.call_deferred("bind_camera", camera_rig)
 	course_recovery.recovery_started.connect(ui.notify_course_recovery)
 	_build_finish_trigger()
 
