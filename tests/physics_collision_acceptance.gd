@@ -16,12 +16,15 @@ var grind_speed := 0.0
 func _ready() -> void:
 	skier = resort.get_node("Skier") as SkierController
 	jump = resort.get_node("SmallTable") as Node3D
+	_test_small_table_geometry.call_deferred()
 	if jump == null:
 		failures.append("Named SmallTable jump was not spawned")
 	_test_tree_block.call_deferred()
 
 func _physics_process(_delta: float) -> void:
 	frame += 1
+	if frame == 120:
+		_place_on_open_slope()
 	if frame >= 180 and frame <= 360:
 		if skier.state == SkierController.State.GROUND:
 			grounded_frames += 1
@@ -54,6 +57,17 @@ func _physics_process(_delta: float) -> void:
 			if grind_speed < 3.0:
 				failures.append("Rail capture collapsed speed")
 		_finish()
+
+func _place_on_open_slope() -> void:
+	# Isolate contact stability from the summit rollers, which intentionally unweight the skis.
+	skier.global_position = ParkLayout.snow_at(25.0, 130.0) + ParkLayout.snow_normal() * 1.15
+	skier.velocity = ParkLayout.downhill() * 9.0
+	skier.global_basis = ParkLayout.downhill_basis()
+	skier.motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
+	skier.state = SkierController.State.AIR
+	skier.air_time = 0.2
+	skier.contact.grounded = false
+	skier.contact.last_normal = ParkLayout.snow_normal()
 
 func _place_on_kicker_line() -> void:
 	if jump == null:
@@ -92,6 +106,63 @@ func _test_tree_block() -> void:
 	var hit := skier.get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		failures.append("Tree trunk was not solid")
+
+func _test_small_table_geometry() -> void:
+	if jump == null:
+		return
+	var table := jump.get_node_or_null("Table") as StaticBody3D
+	if table == null:
+		failures.append("SmallTable has no authored Table collision body")
+		return
+	var shape_node: CollisionShape3D
+	var mesh_instance: MeshInstance3D
+	for child: Node in table.get_children():
+		if child is CollisionShape3D:
+			shape_node = child as CollisionShape3D
+		elif child is MeshInstance3D:
+			mesh_instance = child as MeshInstance3D
+	if shape_node == null or not shape_node.shape is ConvexPolygonShape3D:
+		failures.append("SmallTable Table collision is not a convex prism")
+		return
+	if mesh_instance == null or mesh_instance.mesh == null:
+		failures.append("SmallTable Table has no visible mesh to compare against collision")
+		return
+	var convex := shape_node.shape as ConvexPolygonShape3D
+	var collision_aabb := _points_aabb(convex.points)
+	var mesh_aabb := mesh_instance.mesh.get_aabb()
+	if collision_aabb.size.distance_to(mesh_aabb.size) > 0.05 or collision_aabb.position.distance_to(mesh_aabb.position) > 0.05:
+		failures.append("SmallTable Table collision bounds do not match the visible mesh")
+	# Direct overhead approach must hit the visible tabletop body.
+	var center := table.global_position
+	var direct := PhysicsRayQueryParameters3D.create(center + Vector3.UP * 4.0, center - Vector3.UP * 4.0, 1)
+	direct.exclude = [skier.get_rid()]
+	var direct_hit := skier.get_world_3d().direct_space_state.intersect_ray(direct)
+	if direct_hit.is_empty() or direct_hit.get("collider") != table:
+		failures.append("Direct SmallTable approach did not hit the authored Table collider")
+	# A shallow diagonal approach should also meet the side without an oversized wall.
+	var glancing_from := center + Vector3(0.0, 3.0, 8.0)
+	var glancing_to := center + Vector3(0.0, 0.0, 2.0)
+	var glancing := PhysicsRayQueryParameters3D.create(glancing_from, glancing_to, 1)
+	glancing.exclude = [skier.get_rid()]
+	var glancing_hit := skier.get_world_3d().direct_space_state.intersect_ray(glancing)
+	if glancing_hit.is_empty() or glancing_hit.get("collider") != table:
+		failures.append("Glancing SmallTable approach did not meet the authored side collision")
+	print(
+		"SMALLTABLE_GEOMETRY collision_aabb=", collision_aabb,
+		" mesh_aabb=", mesh_aabb,
+		" direct_collider=", direct_hit.get("collider", null),
+		" glancing_collider=", glancing_hit.get("collider", null),
+		" direct_normal=", direct_hit.get("normal", Vector3.ZERO),
+		" glancing_normal=", glancing_hit.get("normal", Vector3.ZERO)
+	)
+
+func _points_aabb(points: PackedVector3Array) -> AABB:
+	if points.is_empty():
+		return AABB()
+	var result := AABB(points[0], Vector3.ZERO)
+	for point: Vector3 in points:
+		result = result.expand(point)
+	return result
 
 func _finish() -> void:
 	print(

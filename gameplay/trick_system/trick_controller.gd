@@ -68,7 +68,11 @@ func update_air(local_angular_velocity: Vector3, delta: float, command: TrickCom
 			had_trick_intent = true
 	else:
 		grab_pose = _resolve_legacy_grab_pose()
-	grab_name = GRAB_NAMES[grab_pose]
+	# The live pose can return to neutral before touchdown, but the completed
+	# trick still owns any grab that was held during the air. Keep the last
+	# non-neutral name for scoring and the landing callout.
+	if grab_pose != GrabPose.NONE:
+		grab_name = GRAB_NAMES[grab_pose]
 	trick_changed.emit(current_name())
 
 func update_grind(delta: float, selected_pose: int = 0) -> void:
@@ -86,7 +90,11 @@ func land(quality: float, switch_landing: bool, link_bonus: int = 0) -> void:
 	var spin_degrees := _spin_degrees()
 	var flip_degrees := _flip_degrees()
 	var cork_degrees := _cork_degrees()
-	var motion_points := spin_degrees * 2 + int(float(flip_degrees) / 360.0 * 500.0) + cork_degrees * 3
+	var motion_points := 0
+	if dominant_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT]:
+		motion_points = cork_degrees * 3
+	else:
+		motion_points = spin_degrees * 2 + int(float(flip_degrees) / 360.0 * 500.0)
 	var points: int = motion_points + int(grind_seconds * 300.0)
 	if not grab_name.is_empty():
 		points += 150 + int(grab_seconds * 120.0) + int(tweak_integral * 80.0)

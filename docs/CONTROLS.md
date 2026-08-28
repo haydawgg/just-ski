@@ -1,4 +1,12 @@
-# Controls and Input
+# Controls
+
+## Keyboard
+
+- A/D steer, W/S pressure, Shift tuck, Ctrl brake, Space pop/tricks.
+- Q/E grab in air, arrows trick flicks, T marker, R return, F3 debug.
+- F9 start/stop a gameplay GIF clip (max 15 s) saved to your Downloads folder as `ski_clip_<timestamp>.gif`; a red REC indicator shows while capturing and encoding finishes in the background.
+
+## Controller and Input
 
 All actions are declared in `project.godot` and use Godot's SDL-compatible input abstraction. Gameplay code never depends on controller button indices.
 
@@ -7,9 +15,9 @@ All actions are declared in `project.godot` and use Godot's SDL-compatible input
 - Left stick X carves on snow, trims yaw in air, and balances on rails.
 - Left stick Y pressures the skis on snow (forward = tip bite / speed, back = unweight) and trims flip in air.
 - Right stick is the Flick-It trick control.
-- LT/L2 brakes on snow and controls the left hand after takeoff.
+- LT/L2 provides analog braking on snow and controls the left hand after takeoff.
 - RT/R2 tucks on snow and controls the right hand after takeoff.
-- B/Circle is an alternate brake; LB/L1 and RB/R1 are alternate hand inputs.
+- B/Circle is a full-brake fallback; LB/L1 and RB/R1 are alternate hand inputs.
 - Y/Triangle or D-pad Down returns to the session marker; D-pad Up saves a grounded marker.
 - Menu/Start pauses.
 

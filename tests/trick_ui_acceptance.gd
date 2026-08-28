@@ -5,9 +5,11 @@ var failures: Array[String] = []
 func _ready() -> void:
 	_test_visualizer_contract()
 	_test_game_ui_teaching_surfaces()
-	_test_pause_menu_actions()
+	_test_scoring_finish_contract()
+	await _test_pause_menu_actions()
+	await _test_run_results_panel()
 	if failures.is_empty():
-		print("TRICK_UI_PASS: visualizer, persisted toggle, controller guide, and pause menu actions passed")
+		print("TRICK_UI_PASS: visualizer, controller guide, pause menu, scoring summary, and results flow passed")
 		get_tree().quit(0)
 	else:
 		for failure: String in failures:
@@ -50,7 +52,30 @@ func _test_game_ui_teaching_surfaces() -> void:
 		failures.append("Options menu is missing anti-aliasing control")
 	if ui.find_child("ShadowQuality", true, false) == null:
 		failures.append("Options menu is missing shadow quality control")
+	if ui.find_child("RunResultsPanel", true, false) == null:
+		failures.append("Gameplay UI is missing the run results panel")
 	ui.queue_free()
+
+func _test_scoring_finish_contract() -> void:
+	var scoring := RunScoring.new()
+	add_child(scoring)
+	var finish_events := [0]
+	scoring.run_finished.connect(func(_snapshot: Dictionary) -> void: finish_events[0] += 1)
+	scoring.accept_trick("Left 360", 1000, 0.8)
+	scoring.bail()
+	scoring.finish_run()
+	scoring.finish_run()
+	var snapshot := scoring.snapshot()
+	if int(finish_events[0]) != 1 or not bool(snapshot.finished):
+		failures.append("Run scoring did not finish exactly once")
+	if int(snapshot.best_trick_points) != 1000 or str(snapshot.best_trick_name) != "Left 360":
+		failures.append("Run scoring did not retain the best trick")
+	if int(snapshot.landed_trick_count) != 1 or int(snapshot.clean_trick_count) != 1 or int(snapshot.bail_count) != 1:
+		failures.append("Run scoring summary counters were incorrect")
+	scoring.reset_run()
+	if bool(scoring.snapshot().finished) or int(scoring.snapshot().total_score) != 0:
+		failures.append("Reset run did not clear the finished score")
+	scoring.queue_free()
 
 func _test_pause_menu_actions() -> void:
 	var ui := GameUI.new()
@@ -117,4 +142,31 @@ func _test_pause_menu_actions() -> void:
 	if get_tree().paused or ui.pause_panel.visible:
 		failures.append("Resume button did not close the pause menu")
 
+	ui.queue_free()
+
+func _test_run_results_panel() -> void:
+	SessionManager.clear_marker()
+	var ui := GameUI.new()
+	add_child(ui)
+	await get_tree().process_frame
+	ui._on_run_finished({
+		"total_score": 0,
+		"best_trick_name": "",
+		"best_trick_points": 0,
+		"landed_trick_count": 0,
+		"clean_trick_count": 0,
+		"bail_count": 0,
+	})
+	if not get_tree().paused or not ui.results_panel.visible:
+		failures.append("Finishing a run did not open a paused results panel")
+	if "NO MEDAL" not in ui.results_score_label.text or "No scored trick" not in ui.results_detail_label.text:
+		failures.append("Run results did not present score, medal, and best-trick feedback")
+	var marker_button := ui.find_child("ResultsMarkerButton", true, false) as Button
+	if marker_button == null or not marker_button.disabled:
+		failures.append("Run results did not disable Return to Marker when no marker exists")
+	var continue_button := ui.find_child("ResultsContinueButton", true, false) as Button
+	if continue_button != null:
+		continue_button.pressed.emit()
+	if get_tree().paused or ui.results_panel.visible:
+		failures.append("Keep Riding did not close the results panel")
 	ui.queue_free()

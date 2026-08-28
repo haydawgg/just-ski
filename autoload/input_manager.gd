@@ -19,7 +19,12 @@ func _input(event: InputEvent) -> void:
 		device_changed.emit(last_device)
 
 func axis(negative_action: StringName, positive_action: StringName) -> float:
-	var raw := Input.get_axis(negative_action, positive_action)
+	return _shape_axis(raw_axis(negative_action, positive_action))
+
+func raw_axis(negative_action: StringName, positive_action: StringName) -> float:
+	return Input.get_action_raw_strength(positive_action) - Input.get_action_raw_strength(negative_action)
+
+func _shape_axis(raw: float) -> float:
 	var inner := float(GameSettings.active.get("stick_deadzone", 0.18))
 	var outer := float(GameSettings.active.get("stick_outer_deadzone", 0.06))
 	var magnitude := absf(raw)

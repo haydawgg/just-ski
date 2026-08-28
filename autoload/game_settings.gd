@@ -12,6 +12,7 @@ const DEFAULTS := {
 	"render_scale": 1.0,
 	"anti_aliasing": 1,
 	"shadow_quality": 2,
+	"snow_quality": 1,
 	"ssao_enabled": true,
 	"ssil_enabled": false,
 	"ssr_enabled": true,
@@ -57,7 +58,7 @@ func set_pending(key: String, value: Variant) -> void:
 	if not DEFAULTS.has(key):
 		return
 	pending[key] = _validated(key, value)
-	if key != "graphics_preset" and key in ["render_scale", "anti_aliasing", "shadow_quality", "ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled"]:
+	if key != "graphics_preset" and key in ["render_scale", "anti_aliasing", "shadow_quality", "snow_quality", "ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled"]:
 		pending["graphics_preset"] = 4
 
 func apply_pending() -> void:
@@ -75,6 +76,7 @@ func apply_preset(preset: int) -> void:
 	pending["render_scale"] = scales[preset]
 	pending["anti_aliasing"] = 0 if preset == 0 else 1
 	pending["shadow_quality"] = preset
+	pending["snow_quality"] = 1 if preset >= 2 else 0
 	pending["ssao_enabled"] = preset >= 1
 	pending["ssil_enabled"] = preset >= 3
 	pending["ssr_enabled"] = preset >= 2
@@ -92,6 +94,7 @@ func _validated(key: String, value: Variant) -> Variant:
 		"render_scale": return clampf(float(value), 0.5, 1.5)
 		"anti_aliasing": return clampi(int(value), 0, 1)
 		"shadow_quality": return clampi(int(value), 0, 3)
+		"snow_quality": return clampi(int(value), 0, 1)
 		"graphics_preset": return clampi(int(value), 0, 4)
 		"controller_rumble", "landing_assist": return clampf(float(value), 0.0, 1.0)
 		"stick_deadzone": return clampf(float(value), 0.0, 0.45)

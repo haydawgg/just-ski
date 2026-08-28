@@ -3,12 +3,9 @@ extends RefCounted
 
 const PITCH_DEG := 18.0
 const FACE_THICKNESS := 1.5
-const FACE_WIDTH := 56.0
+const FACE_WIDTH := 64.0
 const FACE_SLOPE_LENGTH := 315.0
 const SURFACE_Y_AT_ORIGIN := 52.0
-const AIR_GRAVITY := 14.0
-const HALF_POP := 4.1
-const SNOW := Color("#dcecf5")
 const SNOW_SHADOW := Color("#a9c7d8")
 const SnowSurface := preload("res://world/snow_material.gd")
 
@@ -44,15 +41,15 @@ static func spawn_position() -> Vector3:
 static func hub_position() -> Vector3:
 	return Vector3(0.0, 0.2, -168.0)
 
-static func jump_table(design_speed: float, extra_lip_deg: float, drop: float = 0.0, include_half_pop: bool = true) -> Dictionary:
+static func jump_table(physics_profile: SkiPhysicsProfile, design_speed: float, extra_lip_deg: float, drop: float = 0.0, design_pop_strength: float = -1.0) -> Dictionary:
 	var extra := deg_to_rad(extra_lip_deg)
 	var n := snow_normal()
 	var d := downhill()
 	var lip_dir := (d * cos(extra) + n * sin(extra)).normalized()
 	var velocity := lip_dir * design_speed
-	if include_half_pop:
-		velocity += n * HALF_POP
-	var gravity := Vector3(0.0, -AIR_GRAVITY, 0.0)
+	var resolved_pop_strength := design_pop_strength if design_pop_strength >= 0.0 else physics_profile.minimum_pop_strength
+	velocity += n * physics_profile.pop_impulse * clampf(resolved_pop_strength, 0.0, 1.0)
+	var gravity := Vector3(0.0, -physics_profile.air_gravity, 0.0)
 	var position := Vector3.ZERO
 	var dt := 1.0 / 120.0
 	var range_along := 0.0
@@ -74,8 +71,8 @@ static func jump_table(design_speed: float, extra_lip_deg: float, drop: float = 
 		"lip_dir": lip_dir,
 	}
 
-static func add_tabletop(parent: Node3D, label: String, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, width: float = 8.5, drop: float = 0.0, yaw_deg: float = 0.0) -> Node3D:
-	var sizing := jump_table(design_speed, extra_lip_deg, drop)
+static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhysicsProfile, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, width: float = 8.5, drop: float = 0.0, yaw_deg: float = 0.0, design_pop_strength: float = -1.0) -> Node3D:
+	var sizing := jump_table(physics_profile, design_speed, extra_lip_deg, drop, design_pop_strength)
 	var extra := deg_to_rad(extra_lip_deg)
 	var n := snow_normal()
 	var basis := downhill_basis(yaw_deg)
@@ -88,7 +85,6 @@ static func add_tabletop(parent: Node3D, label: String, x: float, lip_z: float, 
 	var lip_tip := lip_start + down * lip_length + n * (lip_length * tan(extra))
 	var root := Node3D.new()
 	root.name = label
-	root.position = lip_start
 	root.add_to_group("park_jumps")
 	parent.add_child(root)
 	_add_deck_prism(root, "Lip", _deck_quad(lip_start, lip_tip, right, width), n, 0.55, SnowSurface.Kind.GROOMED, true)
@@ -111,27 +107,187 @@ static func add_roller(parent: Node3D, label: String, x: float, z: float, length
 	var finish := start + down * length
 	var root := Node3D.new()
 	root.name = label
-	root.position = start
 	parent.add_child(root)
 	_add_deck_prism(root, "RollerUp", _deck_quad(start, peak, right, width), n, 0.55, SnowSurface.Kind.PACKED, true)
 	_add_deck_prism(root, "RollerDown", _deck_quad(peak, finish, right, width), n, 0.55, SnowSurface.Kind.PACKED, true)
 	return root
 
-static func add_hip(parent: Node3D, label: String, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, yaw_deg: float) -> Node3D:
-	return add_tabletop(parent, label, x, lip_z, design_speed, extra_lip_deg, 9.0, 0.0, yaw_deg)
+static func add_hip(parent: Node3D, label: String, physics_profile: SkiPhysicsProfile, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, yaw_deg: float, design_pop_strength: float = -1.0) -> Node3D:
+	return add_tabletop(parent, label, physics_profile, x, lip_z, design_speed, extra_lip_deg, 9.0, 0.0, yaw_deg, design_pop_strength)
 
-static func add_slope_box(parent: Node3D, label: String, x: float, z: float, size: Vector3, yaw_deg: float, color: Color, collision_enabled: bool, extra_height: float = 0.0) -> StaticBody3D:
+static func add_berm(parent: Node3D, label: String, x: float, z: float, length: float, width: float, bank_deg: float, yaw_deg: float = 0.0) -> Node3D:
+	var root := Node3D.new()
+	root.name = label
+	root.add_to_group("park_terrain_features")
+	parent.add_child(root)
+	var basis := downhill_basis(yaw_deg)
+	var right := basis.x.normalized()
+	var down := -basis.z.normalized()
+	var normal := snow_normal()
+	var start := snow_at(x, z)
+	var finish := start + down * length
+	var half_width := width * 0.5
+	var bank_rise := tan(deg_to_rad(bank_deg)) * half_width
+	# Lead-in ramp: the raised side of the bank otherwise ends in a sheer wall
+	# that dead-stops anyone riding the fall line into it.
+	var lead := clampf(bank_rise / tan(deg_to_rad(12.0)), 3.0, 8.0)
+	var lead_end := start + down * lead
+	var ramp := PackedVector3Array([
+		start - right * half_width,
+		start + right * half_width,
+		lead_end - right * half_width - normal * bank_rise,
+		lead_end + right * half_width + normal * bank_rise,
+	])
+	_add_deck_prism(root, "BankLeadIn", ramp, normal, 0.8, SnowSurface.Kind.PACKED, true)
+	# The banked deck starts where the lead-in reaches full bank height, so no
+	# sheer uphill wall is ever exposed.
+	var deck := PackedVector3Array([
+		lead_end - right * half_width - normal * bank_rise,
+		lead_end + right * half_width + normal * bank_rise,
+		finish - right * half_width - normal * bank_rise,
+		finish + right * half_width + normal * bank_rise,
+	])
+	_add_deck_prism(root, "BankedDeck", deck, normal, 0.8, SnowSurface.Kind.PACKED, true)
+	return root
+
+static func add_mogul_field(parent: Node3D, label: String, x: float, z: float, rows: int, spacing: float, height: float, width: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = label
+	root.add_to_group("park_terrain_features")
+	parent.add_child(root)
+	for row: int in range(maxi(rows, 1)):
+		var row_x := x + (-1.0 if row % 2 == 0 else 1.0) * width * 0.28
+		add_roller(root, "Mogul%02d" % row, row_x, z - float(row) * spacing, spacing * 0.72, height, width)
+	return root
+
+static func add_butter_pad(parent: Node3D, label: String, x: float, z: float, length: float, width: float, height: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = label
+	root.add_to_group("park_terrain_features")
+	parent.add_child(root)
+	add_slope_box(root, "ButterDeck", x, z, Vector3(width, maxf(height, 0.08), length), 0.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true, height)
+	return root
+
+static func add_side_hit(parent: Node3D, label: String, x: float, z: float, length: float, height: float, width: float, yaw_deg: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = label
+	root.add_to_group("park_jumps")
+	parent.add_child(root)
+	var basis := downhill_basis(yaw_deg)
+	var right := basis.x.normalized()
+	var down := -basis.z.normalized()
+	var normal := snow_normal()
+	var start := snow_at(x, z)
+	var tip := start + down * length + normal * height
+	_add_deck_prism(root, "SideHitDeck", _deck_quad(start, tip, right, width), normal, 0.7, SnowSurface.Kind.GROOMED, true)
+	return root
+
+static func add_wallride(parent: Node3D, label: String, x: float, z: float, length: float, height: float, yaw_deg: float, color: Color) -> Node3D:
+	var root := Node3D.new()
+	root.name = label
+	root.add_to_group("park_wallrides")
+	parent.add_child(root)
+	var body := StaticBody3D.new()
+	body.name = "RideSurface"
+	body.collision_layer = 1
+	body.collision_mask = 2
+	body.set_meta("ski_surface_kind", SnowSurface.Kind.GROOMED)
+	body.transform = Transform3D(downhill_basis(yaw_deg), snow_at(x, z) + snow_normal() * (height * 0.5))
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.42, height, length)
+	mesh_instance.mesh = mesh
+	var wall_direction_3d := -downhill_basis(yaw_deg).z
+	mesh_instance.material_override = material_for_surface(color, -1, Vector2(wall_direction_3d.x, wall_direction_3d.z))
+	body.add_child(mesh_instance)
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = mesh.size
+	shape_node.shape = shape
+	body.add_child(shape_node)
+	root.add_child(body)
+	return root
+
+static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: float, radius: float, color: Color) -> Node3D:
+	var root := Node3D.new()
+	root.name = label
+	root.add_to_group("park_bonks")
+	parent.add_child(root)
+	var body := StaticBody3D.new()
+	body.name = "BonkBody"
+	body.collision_layer = 4
+	body.collision_mask = 2
+	body.transform = Transform3D(downhill_basis(), snow_at(x, z) + snow_normal() * (height * 0.5))
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = height
+	mesh_instance.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.metallic = 0.55
+	material.roughness = 0.28
+	mesh_instance.material_override = material
+	body.add_child(mesh_instance)
+	var shape_node := CollisionShape3D.new()
+	var shape := CylinderShape3D.new()
+	shape.radius = radius
+	shape.height = height
+	shape_node.shape = shape
+	body.add_child(shape_node)
+	root.add_child(body)
+	return root
+
+static func add_cannon(parent: Node3D, label: String, x: float, z: float, length: float, width: float, height: float) -> Node3D:
+	var root := add_side_hit(parent, label, x, z, length, height, width, 0.0)
+	root.add_to_group("park_cannons")
+	return root
+
+static func add_gate(parent: Node3D, label: String, x: float, z: float, width: float, color: Color) -> Node3D:
+	var root := Node3D.new()
+	root.name = label
+	root.add_to_group("park_gates")
+	parent.add_child(root)
+	var normal := snow_normal()
+	var center := snow_at(x, z)
+	var destination_gate := width >= 30.0
+	var post_height := 5.4 if destination_gate else 3.6
+	var beam_thickness := 0.64 if destination_gate else 0.28
+	var post_thickness := 0.52 if destination_gate else 0.22
+	_add_gate_mesh(root, center + Vector3.LEFT * width * 0.5 + normal * (post_height * 0.5), Vector3(post_thickness, post_height, post_thickness), color)
+	_add_gate_mesh(root, center + Vector3.RIGHT * width * 0.5 + normal * (post_height * 0.5), Vector3(post_thickness, post_height, post_thickness), color)
+	_add_gate_mesh(root, center + normal * (post_height - beam_thickness * 0.5), Vector3(width + post_thickness, beam_thickness, beam_thickness), color)
+	return root
+
+static func _add_gate_mesh(parent: Node3D, position: Vector3, size: Vector3, color: Color) -> void:
+	var instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	instance.mesh = mesh
+	instance.position = position
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.emission_enabled = true
+	material.emission = color
+	material.emission_energy_multiplier = 0.42
+	instance.material_override = material
+	parent.add_child(instance)
+
+static func add_slope_box(parent: Node3D, label: String, x: float, z: float, size: Vector3, yaw_deg: float, color: Color, surface_kind: int, collision_enabled: bool, extra_height: float = 0.0) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = label
 	var n := snow_normal()
 	body.transform = Transform3D(downhill_basis(yaw_deg), snow_at(x, z) + n * (extra_height - size.y * 0.5))
 	body.collision_layer = 1 if collision_enabled else 0
 	body.collision_mask = 2
+	body.set_meta("ski_surface_kind", surface_kind)
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = material_for_color(color)
+	var groom_direction_3d := -downhill_basis(yaw_deg).z
+	mesh_instance.material_override = material_for_surface(color, surface_kind, Vector2(groom_direction_3d.x, groom_direction_3d.z))
 	body.add_child(mesh_instance)
 	if collision_enabled:
 		var shape_node := CollisionShape3D.new()
@@ -157,11 +313,9 @@ static func add_rail(parent: Node3D, label: String, points: Array, type: GrindRa
 static func rail_point(x: float, z: float, extra_height: float = 0.18) -> Vector3:
 	return snow_at(x, z) + snow_normal() * extra_height
 
-static func material_for_color(color: Color) -> Material:
-	if color.is_equal_approx(SNOW):
-		return SnowSurface.create(SnowSurface.Kind.POWDER)
-	if color.is_equal_approx(SNOW_SHADOW):
-		return SnowSurface.create(SnowSurface.Kind.PACKED)
+static func material_for_surface(color: Color, surface_kind: int, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0)) -> Material:
+	if surface_kind >= 0:
+		return SnowSurface.create(surface_kind, groom_direction_world_xz)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = 0.5
@@ -192,6 +346,7 @@ static func _add_deck_prism(parent: Node3D, label: String, deck: PackedVector3Ar
 	body.position = origin
 	body.collision_layer = 1 if collision_enabled else 0
 	body.collision_mask = 2
+	body.set_meta("ski_surface_kind", kind)
 	var shape_node := CollisionShape3D.new()
 	var convex := ConvexPolygonShape3D.new()
 	convex.points = points
@@ -199,7 +354,10 @@ static func _add_deck_prism(parent: Node3D, label: String, deck: PackedVector3Ar
 	body.add_child(shape_node)
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = _wedge_mesh(points)
-	mesh_instance.material_override = SnowSurface.create(kind)
+	var uphill_center := (deck[0] + deck[1]) * 0.5
+	var downhill_center := (deck[2] + deck[3]) * 0.5
+	var deck_direction := downhill_center - uphill_center
+	mesh_instance.material_override = SnowSurface.create(kind, Vector2(deck_direction.x, deck_direction.z))
 	body.add_child(mesh_instance)
 	parent.add_child(body)
 	return body

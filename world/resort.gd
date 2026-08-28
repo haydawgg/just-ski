@@ -2,14 +2,21 @@ extends Node3D
 
 const SNOW := Color("#dcecf5")
 const SNOW_SHADOW := Color("#a9c7d8")
-const FEATURE := Color("#ff9f43")
 const SnowSurface := preload("res://world/snow_material.gd")
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
+const ParkCourseBuilderModule := preload("res://world/course/park_course_builder.gd")
+const CourseRecoveryModule := preload("res://world/course/course_recovery.gd")
+
+@export var course_profile: ParkCourseProfile = preload("res://resources/course/default_course_profile.tres")
+@export var physics_profile: SkiPhysicsProfile = preload("res://resources/physics/default_ski_profile.tres")
 
 var player: SkierController
 var camera_rig: SkiCameraController
 var environment: WorldEnvironment
 var sun: DirectionalLight3D
+var course_features: Dictionary = {}
+var course_recovery: CourseRecovery
+var finish_trigger: Area3D
 
 func _ready() -> void:
 	_build_environment()
@@ -75,58 +82,38 @@ func _build_environment() -> void:
 
 func _build_resort() -> void:
 	var face_len := ParkLayout.FACE_SLOPE_LENGTH
-	ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, true)
-	_add_box("BottomHub", Vector3(80.0, 1.5, 52.0), Vector3(0.0, 2.4, -165.0), Vector3.ZERO, SNOW, true)
-	ParkLayout.add_slope_box(self, "LeftBank", -36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), -10.0, SNOW_SHADOW, true)
-	ParkLayout.add_slope_box(self, "RightBank", 36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), 10.0, SNOW_SHADOW, true)
-	_build_jump_line()
-	_build_rail_line()
-	_build_transfers()
+	ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, SnowSurface.Kind.POWDER, true)
+	_add_box("BottomHub", Vector3(92.0, 1.5, 92.0), Vector3(0.0, 2.4, -181.0), Vector3.ZERO, SNOW, true, SnowSurface.Kind.POWDER)
+	ParkLayout.add_slope_box(self, "LeftBank", -36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), -10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
+	ParkLayout.add_slope_box(self, "RightBank", 36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), 10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
+	course_features = ParkCourseBuilderModule.build(self, course_profile, physics_profile)
 	var lodge_pos := ParkLayout.snow_at(-18.0, 145.0) + Vector3(0.0, 2.6, 0.0)
 	_add_lodge(lodge_pos)
-	for z: float in [130.0, 95.0, 55.0, 15.0, -25.0, -70.0, -115.0]:
+	for z: float in [142.0, 126.0, 106.0, 88.0, 68.0, 48.0, 26.0, 4.0, -18.0, -42.0, -66.0, -92.0, -118.0, -145.0]:
 		_add_tree(ParkLayout.snow_at(-40.0, z))
 		_add_tree(ParkLayout.snow_at(40.0, z + 6.0))
-	_add_sign(ParkLayout.snow_at(0.0, 142.0) + Vector3(0.0, 1.2, 0.0), "PARK ↓   RAILS →   JUMPS ←")
-	_add_sign(Vector3(0.0, 4.2, -158.0), "BASE HUB   •   PRESS R TO RETURN")
+	_add_sign(ParkLayout.snow_at(-12.0, 133.0) + Vector3(0.0, 1.55, 0.0), "AIR LINE", Color("#4cc9f0"))
+	_add_sign(ParkLayout.snow_at(0.0, 133.0) + Vector3(0.0, 1.55, 0.0), "FLOW LINE", Color("#55d6be"))
+	_add_sign(ParkLayout.snow_at(12.0, 133.0) + Vector3(0.0, 1.55, 0.0), "JIB LINE", Color("#ffc857"))
+	_add_sign(ParkLayout.snow_at(0.0, 74.0) + Vector3(0.0, 2.0, 0.0), "UPPER PARK")
+	_add_sign(ParkLayout.snow_at(0.0, 18.0) + Vector3(0.0, 2.0, 0.0), "TRANSFER ZONE")
+	_add_sign(ParkLayout.snow_at(0.0, -76.0) + Vector3(0.0, 2.0, 0.0), "FINAL FEATURES")
+	_add_sign(ParkLayout.snow_at(0.0, -151.0) + ParkLayout.snow_normal() * 6.2, "FINISH", Color("#ff9f1c"))
+	_add_sign(Vector3(0.0, 4.2, -166.0), "BASE HUB")
 	_add_distant_ridges()
-
-func _build_jump_line() -> void:
-	ParkLayout.add_tabletop(self, "SmallTable", -12.0, 110.0, 14.0, 7.0)
-	ParkLayout.add_roller(self, "UpperRoller", -12.0, 82.0, 8.0, 0.8)
-	ParkLayout.add_tabletop(self, "MediumTable", -12.0, 52.0, 18.0, 9.0)
-	ParkLayout.add_hip(self, "HipTransfer", -12.0, 12.0, 16.0, 8.0, 28.0)
-	ParkLayout.add_tabletop(self, "LargeTable", -12.0, -32.0, 22.0, 11.0)
-	ParkLayout.add_tabletop(self, "StepDownTable", -12.0, -88.0, 18.0, 8.0, 8.5, 3.0)
-
-func _build_rail_line() -> void:
-	ParkLayout.add_rail(self, "SummitFlatBox", [ParkLayout.rail_point(10.0, 124.0, 0.22), ParkLayout.rail_point(10.0, 110.0, 0.22)], GrindRail3D.RailType.BOX, 1.35, 1.15)
-	ParkLayout.add_rail(self, "DownRail", [ParkLayout.rail_point(14.0, 98.0, 0.16), ParkLayout.rail_point(14.0, 80.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.55)
-	ParkLayout.add_rail(self, "KinkRail", [ParkLayout.rail_point(10.0, 68.0, 0.16), ParkLayout.rail_point(10.0, 58.0, 0.16), ParkLayout.rail_point(15.0, 46.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.7)
-	var dfd_start := ParkLayout.rail_point(10.0, 40.0, 0.22)
-	var dfd_end := ParkLayout.rail_point(10.0, 16.0, 0.22)
-	var dfd_flat := dfd_start.lerp(dfd_end, 0.5)
-	dfd_flat.y = dfd_start.y - 0.9
-	ParkLayout.add_rail(self, "DFDBox", [dfd_start, dfd_flat, dfd_end], GrindRail3D.RailType.BOX, 1.35, 1.05)
-	ParkLayout.add_rail(self, "LongTube", [ParkLayout.rail_point(18.0, 8.0, 0.14), ParkLayout.rail_point(18.0, -18.0, 0.14)], GrindRail3D.RailType.PIPE, 0.9, 0.45)
-	ParkLayout.add_rail(self, "SRail", [ParkLayout.rail_point(16.0, -24.0, 0.16), ParkLayout.rail_point(9.0, -36.0, 0.16), ParkLayout.rail_point(16.0, -48.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.7)
-	var rainbow_crest := ParkLayout.snow_at(16.0, -58.0) + ParkLayout.snow_normal() * 0.18 + Vector3(0.0, 3.2, 0.0)
-	ParkLayout.add_rail(self, "Rainbow", [ParkLayout.rail_point(16.0, -50.0, 0.16), rainbow_crest, ParkLayout.rail_point(16.0, -70.0, 0.16)], GrindRail3D.RailType.RAIL, 1.0, 0.6)
-	ParkLayout.add_rail(self, "TransferBox", [ParkLayout.rail_point(14.0, 4.0, 0.22), ParkLayout.rail_point(2.0, -22.0, 0.22)], GrindRail3D.RailType.BOX, 1.35, 0.95)
-	ParkLayout.add_rail(self, "FinalBox", [ParkLayout.rail_point(8.0, -96.0, 0.22), ParkLayout.rail_point(8.0, -118.0, 0.22)], GrindRail3D.RailType.BOX, 1.35, 1.1)
-
-func _build_transfers() -> void:
-	ParkLayout.add_slope_box(self, "SpineBank", 0.0, 38.0, Vector3(14.0, 2.0, 16.0), -16.0, SNOW_SHADOW, true, 0.35)
-	ParkLayout.add_slope_box(self, "QuarterBank", 21.0, -72.0, Vector3(12.0, 2.2, 14.0), -32.0, SNOW_SHADOW, true, 0.45)
-	ParkLayout.add_roller(self, "MidRoller", 0.0, -8.0, 9.0, 0.7, 12.0)
 
 func _build_player() -> void:
 	player = SkierController.new()
 	player.name = "Skier"
+	player.profile = physics_profile
 	player.position = ParkLayout.spawn_position()
-	player.rotation.y = 0.0
+	player.basis = ParkLayout.downhill_basis()
 	add_child(player)
 	SessionManager.set_default_spawn(player.global_transform)
+	course_recovery = CourseRecoveryModule.new()
+	course_recovery.name = "CourseRecovery"
+	add_child(course_recovery)
+	course_recovery.set_target(player)
 
 	camera_rig = SkiCameraController.new()
 	camera_rig.name = "CameraRig"
@@ -138,19 +125,42 @@ func _build_player() -> void:
 	ui.name = "GameUI"
 	add_child(ui)
 	ui.call_deferred("bind_player", player)
+	course_recovery.recovery_started.connect(ui.notify_course_recovery)
+	_build_finish_trigger()
 
-func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees: Vector3, color: Color, collision_enabled: bool) -> StaticBody3D:
+func _build_finish_trigger() -> void:
+	finish_trigger = Area3D.new()
+	finish_trigger.name = "FinishTrigger"
+	finish_trigger.collision_layer = 0
+	finish_trigger.collision_mask = 2
+	finish_trigger.monitoring = true
+	finish_trigger.position = ParkLayout.snow_at(0.0, -155.0) + ParkLayout.snow_normal() * 1.5
+	finish_trigger.basis = ParkLayout.downhill_basis()
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(ParkLayout.FACE_WIDTH - 2.0, 5.0, 6.0)
+	shape_node.shape = shape
+	finish_trigger.add_child(shape_node)
+	add_child(finish_trigger)
+	finish_trigger.body_entered.connect(func(body: Node3D) -> void:
+		if body == player and player.scoring != null:
+			player.scoring.finish_run()
+	)
+
+func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees: Vector3, color: Color, collision_enabled: bool, surface_kind: int = -1) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = label
 	body.position = position
 	body.rotation_degrees = rotation_degrees
-	body.collision_layer = 1
+	body.collision_layer = 1 if surface_kind >= 0 else 4
 	body.collision_mask = 2
+	if surface_kind >= 0:
+		body.set_meta("ski_surface_kind", surface_kind)
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _material_for_color(color)
+	mesh_instance.material_override = _material_for_surface(color, surface_kind)
 	body.add_child(mesh_instance)
 	if collision_enabled:
 		var shape_node := CollisionShape3D.new()
@@ -209,17 +219,50 @@ func _add_tree(position: Vector3) -> void:
 	add_child(root)
 
 func _add_distant_ridges() -> void:
-	_add_box("NorthRidge", Vector3(280.0, 48.0, 90.0), Vector3(0.0, 42.0, 210.0), Vector3(-18.0, 0.0, 0.0), SNOW, false)
-	_add_box("WestRidge", Vector3(80.0, 40.0, 280.0), Vector3(-110.0, 30.0, 10.0), Vector3(-8.0, 12.0, -16.0), SNOW_SHADOW, false)
-	_add_box("EastRidge", Vector3(80.0, 38.0, 280.0), Vector3(112.0, 28.0, 8.0), Vector3(-8.0, -14.0, 14.0), SNOW_SHADOW, false)
+	# Layered low-poly peaks give the downhill view a destination and a useful
+	# sense of scale without adding collision or expensive terrain geometry.
+	_add_mountain_peak("FarPeakWest", Vector3(-150.0, 13.0, -300.0), 82.0, 112.0, Color("#6887a0"), -11.0)
+	_add_mountain_peak("FarPeakMidWest", Vector3(-67.0, 4.0, -342.0), 65.0, 92.0, Color("#7897ad"), 17.0)
+	_add_mountain_peak("FarPeakCenter", Vector3(13.0, 2.0, -375.0), 78.0, 108.0, Color("#6f8fa8"), 2.0)
+	_add_mountain_peak("FarPeakMidEast", Vector3(85.0, 5.0, -340.0), 68.0, 96.0, Color("#7897ad"), -18.0)
+	_add_mountain_peak("FarPeakEast", Vector3(158.0, 14.0, -292.0), 86.0, 118.0, Color("#66859e"), 9.0)
+	_add_mountain_peak("WestShoulder", Vector3(-125.0, 22.0, -80.0), 48.0, 72.0, Color("#718fa5"), 24.0)
+	_add_mountain_peak("EastShoulder", Vector3(128.0, 20.0, -70.0), 50.0, 75.0, Color("#6b899f"), -21.0)
 
-func _material_for_color(color: Color) -> Material:
-	if color.is_equal_approx(SNOW):
-		return SnowSurface.create(SnowSurface.Kind.POWDER)
-	if color.is_equal_approx(SNOW_SHADOW):
-		return SnowSurface.create(SnowSurface.Kind.PACKED)
-	if color.is_equal_approx(FEATURE):
-		return SnowSurface.create(SnowSurface.Kind.GROOMED)
+func _add_mountain_peak(label: String, position: Vector3, radius: float, height: float, color: Color, yaw_degrees: float) -> void:
+	var root := Node3D.new()
+	root.name = label
+	root.position = position
+	root.rotation_degrees.y = yaw_degrees
+	var mountain := MeshInstance3D.new()
+	var mountain_mesh := CylinderMesh.new()
+	mountain_mesh.top_radius = 0.0
+	mountain_mesh.bottom_radius = radius
+	mountain_mesh.height = height
+	mountain_mesh.radial_segments = 5
+	mountain_mesh.rings = 1
+	mountain.mesh = mountain_mesh
+	var rock_material := StandardMaterial3D.new()
+	rock_material.albedo_color = color
+	rock_material.roughness = 0.96
+	mountain.material_override = rock_material
+	root.add_child(mountain)
+	var cap := MeshInstance3D.new()
+	var cap_mesh := CylinderMesh.new()
+	cap_mesh.top_radius = 0.0
+	cap_mesh.bottom_radius = radius * 0.42
+	cap_mesh.height = height * 0.43
+	cap_mesh.radial_segments = 5
+	cap_mesh.rings = 1
+	cap.mesh = cap_mesh
+	cap.position.y = height * 0.285
+	cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER)
+	root.add_child(cap)
+	add_child(root)
+
+func _material_for_surface(color: Color, surface_kind: int) -> Material:
+	if surface_kind >= 0:
+		return SnowSurface.create(surface_kind)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = 0.5
@@ -230,15 +273,17 @@ func _add_lodge(position: Vector3) -> void:
 	var roof := _add_box("LodgeRoof", Vector3(16, 1.2, 11), position + Vector3(0, 3.1, 0), Vector3(0, 0, 8), Color("#233849"), false)
 	roof.collision_layer = 0
 
-func _add_sign(position: Vector3, text: String) -> void:
+func _add_sign(position: Vector3, text: String, color: Color = Color("#172a3a")) -> void:
 	var label := Label3D.new()
 	label.text = text
 	label.font_size = 64
-	label.outline_size = 10
-	label.modulate = Color("#172a3a")
+	label.outline_size = 8
+	label.modulate = color
 	label.position = position
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	label.fixed_size = true
+	label.fixed_size = false
+	label.pixel_size = 0.0065
+	label.no_depth_test = false
 	add_child(label)
 
 func _apply_graphics_settings() -> void:

@@ -191,10 +191,14 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 	command.grab_amount = 1.0
 	command.grab_tweak = Vector2(0.0, 0.8)
 	tricks.update_air(Vector3.ZERO, 0.6, command)
+	command.reset()
+	tricks.update_air(Vector3.ZERO, 0.2, command)
+	if "Safety Grab Left" not in tricks.current_name():
+		failures.append("Releasing a grab before touchdown erased it from the active trick")
 	tricks.land(1.0, false)
 	if landed_count[0] != 1:
 		failures.append("Completed spin and grab did not emit a landed trick")
 	if "Left 360" not in landed_name[0] or "Safety Grab Left" not in landed_name[0]:
 		failures.append("Completed physical trick was named incorrectly: %s" % landed_name[0])
 	if landed_points[0] <= 870:
-		failures.append("Grab duration and tweak did not add to the completed trick score")
+		failures.append("Released grab duration and tweak did not add to the completed trick score")

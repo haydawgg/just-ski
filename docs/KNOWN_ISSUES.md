@@ -1,11 +1,15 @@
 # Known Issues
 
-- Automated smoke testing covers launch, scene construction, slope contact, and downhill acceleration. Camera comfort and fine rail-balance difficulty still benefit from controller play-tuning.
+- Fixed this pass: the skier no longer glides ~1.1 m above the snow. Real contact changes some reference measurements: the flat-pop airtime is shorter because landings fire at true proximity, and reference carves that cross a roller crest rotate further now that the skier grips through it (the carve heading band was widened to 70-135 degrees with the steering code untouched). Feel re-verification on a controller is still wanted.
+- The tip-load unweighting was calibrated while the skier hovered; at the real seat height the probe spread undersamples roller crests, so crest unweighting reads weaker than designed. If crest feel needs tuning, `tip_grip_gain` and the probe offsets are the knobs.
+
+- Runtime coverage now checks launch, shader compilation, scene construction, isolated slope contact, downhill acceleration, carve displacement/heading/speed-retention bands, charged-pop height/airtime bands, kicker contact, rail capture, and the finish/results flow. Controller feel, long-session camera comfort, landing thresholds, and rail drift still need broader human play-tuning.
+- Fast and Premium triplanar snow now compile in the runtime quality gate and have received a live Forward+ visual check. Near/far blending, crystal response, SSS strength, and representative GPU cost still need a dedicated profiling pass.
 - Xbox, PlayStation, and generic mappings use Godot/SDL abstraction, but no physical controllers were available to verify glyph family detection, hot-plug behavior, or rumble strength.
 - The current character is a detailed articulated procedural rig rather than a skinned production humanoid. Its hierarchy and small animation interface are intentionally replaceable by a retargeted Skeleton3D adapter later.
 - Leg flex, boot/ski attachment, and procedural two-bone hand reach provide terrain- and trick-aware posing, but a production Skeleton3D/AnimationTree rig and PhysicalBoneSimulator3D ragdoll remain future art-pipeline work. Bail recovers in place with a procedural tumble; ragdoll is still future work.
 - Graphics settings apply render scale and high-level environment effects. The menu does not yet expose every advanced Godot 4.7 renderer option listed in the long-term plan (FSR2, HDR, GI mode, reflection quality, and risky-resolution confirmation).
-- Audio currently uses a lightweight procedural speed/skid/rail layer. Authored powder, ice, wind, impact, ambience, and spatial feature recordings are not yet included.
-- The graybox provides multiple connected lines but has not received the final art, vegetation density, resort expansion, LOD, or profiler-driven 1080p High optimization pass.
+- Audio currently uses lightweight procedural speed/skid/rail/pop/impact layers. Authored powder, ice, wind, ambience, and spatial feature recordings are not yet included.
+- The graybox now provides six dense, connected feature zones but has not received final environment art, handcrafted terrain, LOD, or a profiler-driven 1080p High optimization pass.
 - Thin-feature grind capture at maximum speed for a 20-minute session is still a human playtest item; automated checks cover a live rail capture and a kicker ride, not a full park stress pass.
-- Surface kinds (powder / packed / groomed) are visual only so far; they do not yet change grip or drag.
+- Course recovery is deliberately abrupt: it displays a HUD notice and respawns after a short grace period, but a production fade/wipe and rewind presentation are still future polish.

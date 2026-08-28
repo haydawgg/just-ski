@@ -2,51 +2,86 @@ class_name SkiPhysicsProfile
 extends Resource
 
 @export_category("Snow")
-@export var gravity: float = 24.0
-@export var air_gravity: float = 14.0
-@export var base_drag: float = 0.024
-@export var tuck_drag_multiplier: float = 0.42
-@export var longitudinal_friction: float = 0.35
-@export var lateral_friction: float = 9.5
-@export var maximum_edge_grip: float = 28.0
-@export var low_speed_steering: float = 2.2
-@export var high_speed_steering: float = 1.35
-@export var edge_response: float = 6.8
-@export var edge_release: float = 3.4
-@export var steering_speed_reference: float = 18.0
-@export var full_steer_speed: float = 7.0
-@export var sidecut: float = 0.022
-@export var weathervane_rate: float = 2.8
+@export var gravity: float = 9.81
+@export var air_gravity: float = 9.81
+@export var base_drag: float = 0.009
+@export var tuck_drag_multiplier: float = 0.55
+@export var longitudinal_friction: float = 0.18
+@export var lateral_friction: float = 4.8
+@export var maximum_edge_grip: float = 12.5
+@export var low_speed_steering: float = 0.85
+@export var high_speed_steering: float = 0.62
+@export var edge_response: float = 4.5
+@export var edge_release: float = 3.0
+@export var steering_speed_reference: float = 20.0
+@export var full_steer_speed: float = 10.0
+@export var minimum_steer_speed_gate: float = 0.16
+@export var sidecut: float = 0.01
+@export var weathervane_rate: float = 1.8
 @export var weathervane_edge: float = 0.22
-@export var glide_acceleration: float = 2.0
-@export var tip_grip_gain: float = 0.4
-@export var pressure_grip_gain: float = 0.28
-@export var pressure_glide_gain: float = 1.6
+@export var brake_steer_multiplier: float = 1.25
+@export var brake_speed_scrub_multiplier: float = 0.65
+@export var tuck_steering_multiplier: float = 0.8
+@export var low_speed_heading_travel_limit_degrees: float = 50.0
+@export var high_speed_heading_travel_limit_degrees: float = 24.0
+@export var heading_travel_limit_response: float = 5.5
+@export var glide_acceleration: float = 0.35
+@export var tip_grip_gain: float = 0.3
+@export var pressure_grip_gain: float = 0.2
+@export var pressure_glide_gain: float = 0.6
 @export var ground_align_rate: float = 10.0
-@export var skid_friction: float = 5.5
+@export var skid_friction: float = 3.2
 @export var brake_friction: float = 16.0
-@export var maximum_speed: float = 48.0
+@export var maximum_speed: float = 38.0
+
+@export_category("Ground Contact")
+@export var ground_probe_reach: float = 1.15
+@export var ground_attach_height: float = 0.19
+@export var ground_attach_stiffness: float = 55.0
+@export var ground_attach_max_accel: float = 24.0
+@export var seat_approach_speed: float = 2.0
+
+@export_category("Surface Response")
+@export var powder_drag_multiplier: float = 1.32
+@export var powder_grip_multiplier: float = 0.78
+@export var packed_drag_multiplier: float = 1.0
+@export var packed_grip_multiplier: float = 1.0
+@export var groomed_drag_multiplier: float = 0.82
+@export var groomed_grip_multiplier: float = 1.12
 
 @export_category("Jump and Air")
-@export var pop_impulse: float = 8.2
+@export var pop_impulse: float = 4.6
+@export var maximum_jump_charge: float = 0.32
+@export var minimum_pop_strength: float = 0.72
 @export var coyote_time: float = 0.14
 @export var min_air_time: float = 0.1
-@export var air_yaw_acceleration: float = 8.0
-@export var air_flip_acceleration: float = 6.5
-@export var air_roll_acceleration: float = 4.0
-@export var air_angular_damping: float = 0.22
-@export var air_landing_damping: float = 3.5
-@export var air_landing_window: float = 0.22
-@export var maximum_angular_speed: float = 9.0
-@export var air_flip_trim_acceleration: float = 1.8
+@export var air_angular_damping: float = 0.32
+@export var air_landing_damping: float = 2.8
+@export var air_landing_window: float = 0.28
+@export var maximum_angular_speed: float = 7.5
+@export var air_flip_trim_acceleration: float = 1.0
+@export var air_terminal_speed: float = 45.0
+@export var landing_prediction_seconds: float = 2.2
+@export var landing_prediction_step: float = 0.06
 
 @export_category("Landing")
 @export var clean_threshold: float = 0.72
 @export var sketchy_threshold: float = 0.42
-@export var bail_impact_speed: float = 18.0
-@export var landing_assist_distance: float = 2.2
+@export var bail_impact_speed: float = 15.0
+@export var clean_upright_dot: float = 0.78
+@export var sketchy_upright_dot: float = 0.5
+@export var recoverable_upright_dot: float = 0.22
+@export var clean_impact_ratio: float = 0.62
+@export var sketchy_impact_ratio: float = 0.82
+@export var bail_angular_ratio: float = 0.85
 @export var bail_tumble_time: float = 1.05
 @export var bail_speed_retain: float = 0.28
+@export var sketchy_landing_speed_retain: float = 0.78
+@export var hard_landing_speed_retain: float = 0.48
+@export var bail_ground_damping: float = 2.8
+@export var bail_ground_align_rate: float = 6.0
+@export var bail_air_tumble_rate: float = 2.8
+@export var bail_recovery_speed_retain: float = 0.55
 
 @export_category("Rails")
 @export var rail_capture_radius: float = 1.1
@@ -57,3 +92,10 @@ extends Resource
 @export var rail_balance_fail: float = 1.0
 @export var rail_kink_instability: float = 0.85
 @export var rail_boardslide_instability: float = 0.35
+@export var rail_capture_blend_time: float = 0.11
+@export var rail_capture_max_snap: float = 1.15
+@export var rail_alignment_rate: float = 12.0
+@export var rail_pop_strength: float = 0.72
+@export var rail_slip_speed_retain: float = 0.55
+@export var rail_slip_lateral_speed: float = 3.5
+@export var rail_slip_upward_speed: float = 1.2

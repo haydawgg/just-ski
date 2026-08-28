@@ -10,6 +10,9 @@ enum RailType { RAIL, BOX, PIPE, COPING, LOG, OTHER }
 @export var base_friction: float = 0.75
 @export var rail_type := RailType.RAIL
 @export var allow_both_directions := true
+@export var maximum_capture_height := 0.95
+@export var maximum_capture_depth := 0.32
+@export_range(-1.0, 1.0) var drift_bias := 0.0
 
 var path_length := 0.0
 
@@ -30,10 +33,21 @@ func capture_candidate(world_position: Vector3, world_velocity: Vector3, require
 	var local_offset := path.get_closest_offset(local_position)
 	var rail_position := to_global(path.sample_baked(local_offset, true) + Vector3.UP * grind_height_offset)
 	var tangent := tangent_at(local_offset)
-	var distance := world_position.distance_to(rail_position)
+	var offset_from_rail := world_position - rail_position
+	var vertical_gap := offset_from_rail.dot(Vector3.UP)
+	var lateral_axis := Vector3.UP.cross(tangent).normalized()
+	if lateral_axis.length_squared() < 0.01:
+		lateral_axis = global_basis.x.normalized()
+	var signed_lateral := offset_from_rail.dot(lateral_axis)
+	var distance := offset_from_rail.length()
 	var approach := absf(world_velocity.normalized().dot(tangent))
 	var minimum_alignment := cos(deg_to_rad(approach_angle_degrees))
-	if distance > minf(capture_radius, required_radius) or approach < minimum_alignment:
+	if (
+		distance > minf(capture_radius, required_radius)
+		or approach < minimum_alignment
+		or vertical_gap > maximum_capture_height
+		or vertical_gap < -maximum_capture_depth
+	):
 		return {"valid": false}
 	var direction := 1.0 if world_velocity.dot(tangent) >= 0.0 else -1.0
 	if not allow_both_directions and direction < 0.0:
@@ -46,6 +60,7 @@ func capture_candidate(world_position: Vector3, world_velocity: Vector3, require
 		"tangent": tangent * direction,
 		"speed": maxf(minimum_speed, absf(world_velocity.dot(tangent))),
 		"distance": distance,
+		"signed_lateral": signed_lateral,
 	}
 
 func sample_world(offset: float) -> Vector3:

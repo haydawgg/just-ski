@@ -32,17 +32,34 @@ All gameplay input is defined through Godot's InputMap. The HUD switches prompts
 
 ## Implemented prototype slice
 
-- Momentum-based slope gravity (steeper ~18° park face), lower air gravity for hang time, low longitudinal drag, bounded lateral edge grip, carving, skidding, stick pressure, tuck, and hockey-stop braking.
-- Skate-inspired Flick-It preload/pop gestures, discrete spin/flip/cork impulses sized for ~360° on the middle kicker, low-authority air trim, weighted landing evaluation, and in-place bail recovery.
-- Spring third-person camera with speed distance/FOV, look-ahead, slope-readable horizon, and collision avoidance.
-- Reusable spline-backed rails/boxes/tubes with balance drift / slip-off, approach validation, bidirectional and reverse travel, grind friction, and pop-off.
+- Momentum-based slope gravity (steeper ~18° park face), lower air gravity for hang time, powder/packed/groomed grip and drag, bounded lateral edge grip, carving, skidding, stick pressure, tuck, and hockey-stop braking.
+- Skate-inspired Flick-It preload/pop gestures, discrete spin/flip/cork impulses sized for ~360° on the middle kicker, low-authority air trim, ballistic landing prediction, plausibility-gated landing evaluation, and in-place bail recovery.
+- Slope-relative spring camera with speed distance/FOV, air framing, look-ahead, and collision avoidance.
+- Signed world-triplanar CC0 snow PBR with Fast and Premium shader tiers, directional groomer corduroy, distance-faded detail, reflection-driven crystals, and premium SSS/transmittance.
+- Reusable spline-backed rails/boxes/tubes with height/approach validation, blended capture, balance drift / slip-off, bidirectional and reverse travel, grind friction, and pop-off.
 - Detailed layered skier animation with directional setup/release, head spotting, mirrored spin/flip/cork silhouettes, continuous trigger-pressure grabs, two-bone hand-to-ski reach, rail balance, bail motion, and debug telemetry.
-- Spin/flip/grab/grind recognition, landing quality, combo / line-link scoring, minimal HUD, speed/skid/rail procedural audio, rumble feedback, and snow spray.
-- Seamless ~300 m graybox face with a progressive jump line (tables, roller, hip, step-down), a longer technical rail line (flat / down / kink / DFD / pipe / S / rainbow / transfer / final), and authored lane transfers.
-- Fast session markers and respawn.
+- Spin/flip/grab/grind recognition, landing quality, centralized timed combo / line-link scoring, combo and rail-balance HUD feedback, surface-aware procedural audio, throttled rumble, and snow spray.
+- Data-driven ~300 m graybox face with six zones and 36 authored features: tables, rollers, hips, side hits, berms, moguls, butter pads, rails, boxes, tubes, wallrides, bonks, gates, and a cannon.
+- Fast session markers plus automatic recovery after leaving the playable course.
+- A finish trigger with medal targets, best-trick and clean/bail summaries, persisted personal bests, and immediate summit/marker/free-ride follow-up actions.
 - Controller-navigable pause/options menu with staged pending settings, explicit Apply, Cancel, Reset Defaults, and persistence.
 
 ## Verification
+
+The physics/handling and snow upgrades have no-launch static verification paths:
+
+```powershell
+.\tests\physics_static_acceptance.ps1
+.\tests\shader_static_acceptance.ps1
+```
+
+The runtime quality gate launches every gameplay suite and rejects engine, shader, script, and acceptance errors:
+
+```powershell
+.\tests\runtime_quality_gate.ps1
+```
+
+Individual gameplay suites can also be launched during a controlled play/test session:
 
 ```powershell
 $env:APPDATA=(Resolve-Path '.godot_user\roaming').Path
@@ -55,6 +72,7 @@ $env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_trick_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_gameplay_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/trick_ui_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/session_flow_acceptance.tscn
 ```
 
 See `docs/KNOWN_ISSUES.md` for the honest boundary between exercised automated behavior and hardware/visual checks that still require a human play session.

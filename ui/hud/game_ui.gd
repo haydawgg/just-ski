@@ -2,17 +2,26 @@ class_name GameUI
 extends CanvasLayer
 
 var player: SkierController
+var hud_overlay: Control
 var speed_label: Label
 var trick_label: Label
 var score_label: Label
 var hint_label: Label
+var landing_cue_label: Label
 var debug_label: Label
 var notice_label: Label
 var menu_backdrop: ColorRect
 var pause_panel: PanelContainer
 var options_panel: PanelContainer
 var trick_guide_panel: PanelContainer
+var results_panel: PanelContainer
+var results_score_label: Label
+var results_detail_label: Label
 var trick_visualizer: FlickVisualizer
+var rail_balance_bar: ProgressBar
+var combo_timer_bar: ProgressBar
+var recording_label: Label
+var recording_pulse := 0.0
 var total_score := 0
 var combo_count := 0
 var combo_multiplier := 1.0
@@ -24,21 +33,30 @@ func _ready() -> void:
 	_build_hud()
 	_build_menu_backdrop()
 	_build_pause_menu()
+	_build_results_panel()
 	_build_trick_guide()
 	_build_options_menu()
 	_build_notice_overlay()
 	InputManager.device_changed.connect(_on_device_changed)
 	SessionManager.marker_changed.connect(_on_marker_changed)
 	InputManager.controller_connection_changed.connect(_on_controller_connection)
+	GifRecorder.recording_changed.connect(_on_recording_changed)
+	GifRecorder.encoding_changed.connect(_on_gif_encoding_changed)
+	GifRecorder.clip_saved.connect(_on_gif_saved)
+	GifRecorder.clip_failed.connect(_on_gif_failed)
+	GifRecorder.clip_info.connect(_show_notice)
 	_update_hint()
 
 func bind_player(value: SkierController) -> void:
 	player = value
 	player.telemetry_updated.connect(_on_telemetry)
 	player.trick.trick_changed.connect(_on_trick_changed)
-	player.trick.trick_landed.connect(_on_trick_landed)
+	player.scoring.score_awarded.connect(_on_score_awarded)
+	player.scoring.score_changed.connect(_on_score_changed)
+	player.scoring.run_finished.connect(_on_run_finished)
 	player.landed.connect(_on_landed)
 	player.crashed.connect(_on_crashed)
+	_on_score_changed(player.scoring.snapshot())
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and get_tree().paused):
@@ -56,6 +74,9 @@ func _process(delta: float) -> void:
 	if notice_time > 0.0:
 		notice_time -= delta
 		notice_label.modulate.a = clampf(notice_time, 0.0, 1.0)
+	if recording_label != null and recording_label.visible:
+		recording_pulse += delta * 3.2
+		recording_label.modulate.a = 0.55 + 0.45 * sin(recording_pulse)
 	if player != null and player.debug_enabled:
 		debug_label.visible = true
 	else:
@@ -70,38 +91,74 @@ func _build_hud() -> void:
 	safe.add_theme_constant_override("margin_right", 26)
 	safe.add_theme_constant_override("margin_bottom", 22)
 	add_child(safe)
-	var overlay := Control.new()
-	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	safe.add_child(overlay)
+	hud_overlay = Control.new()
+	hud_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	safe.add_child(hud_overlay)
 
 	speed_label = _label("0 km/h", 28)
 	speed_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	speed_label.position = Vector2(0, 0)
-	overlay.add_child(speed_label)
+	hud_overlay.add_child(speed_label)
 	trick_label = _label("", 30)
 	trick_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	trick_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	trick_label.position = Vector2(360, 36)
 	trick_label.size = Vector2(800, 54)
-	overlay.add_child(trick_label)
+	hud_overlay.add_child(trick_label)
+	landing_cue_label = _label("", 24)
+	landing_cue_label.name = "LandingCue"
+	landing_cue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	landing_cue_label.position = Vector2(560, 650)
+	landing_cue_label.size = Vector2(480, 44)
+	landing_cue_label.visible = false
+	hud_overlay.add_child(landing_cue_label)
 	score_label = _label("SCORE 000000", 20)
 	score_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	score_label.position = Vector2(0, 42)
-	overlay.add_child(score_label)
+	hud_overlay.add_child(score_label)
+	combo_timer_bar = ProgressBar.new()
+	combo_timer_bar.name = "ComboTimer"
+	combo_timer_bar.show_percentage = false
+	combo_timer_bar.min_value = 0.0
+	combo_timer_bar.max_value = 1.0
+	combo_timer_bar.position = Vector2(0, 72)
+	combo_timer_bar.size = Vector2(220, 7)
+	combo_timer_bar.visible = false
+	combo_timer_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_overlay.add_child(combo_timer_bar)
 	hint_label = _label("", 17)
 	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_label.position = Vector2(0, 780)
 	hint_label.size = Vector2(900, 40)
-	overlay.add_child(hint_label)
+	hud_overlay.add_child(hint_label)
 	debug_label = _label("", 14)
 	debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	debug_label.position = Vector2(1120, 0)
-	debug_label.size = Vector2(410, 360)
-	overlay.add_child(debug_label)
+	debug_label.size = Vector2(430, 480)
+	hud_overlay.add_child(debug_label)
 	trick_visualizer = FlickVisualizer.new()
 	trick_visualizer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	trick_visualizer.position = Vector2(1240, 585)
-	overlay.add_child(trick_visualizer)
+	hud_overlay.add_child(trick_visualizer)
+	rail_balance_bar = ProgressBar.new()
+	rail_balance_bar.name = "RailBalance"
+	rail_balance_bar.show_percentage = false
+	rail_balance_bar.min_value = -1.0
+	rail_balance_bar.max_value = 1.0
+	rail_balance_bar.position = Vector2(560, 730)
+	rail_balance_bar.size = Vector2(400, 16)
+	rail_balance_bar.visible = false
+	rail_balance_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_overlay.add_child(rail_balance_bar)
+	recording_label = _label("● REC", 24)
+	recording_label.name = "RecordingLight"
+	recording_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	recording_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	recording_label.position = Vector2(1400, 848)
+	recording_label.size = Vector2(160, 40)
+	recording_label.add_theme_color_override("font_color", Color("#ff3b30"))
+	recording_label.visible = false
+	hud_overlay.add_child(recording_label)
 
 func _build_notice_overlay() -> void:
 	notice_label = _label("", 22)
@@ -147,6 +204,35 @@ func _build_pause_menu() -> void:
 	box.add_child(_named_button("OptionsButton", "Options", _open_options))
 	box.add_child(_named_button("RestartButton", "Restart from Summit", _restart_summit))
 	box.add_child(_named_button("QuitButton", "Quit to Desktop", _quit_game))
+
+func _build_results_panel() -> void:
+	results_panel = PanelContainer.new()
+	results_panel.name = "RunResultsPanel"
+	results_panel.visible = false
+	results_panel.process_mode = Node.PROCESS_MODE_ALWAYS
+	results_panel.position = Vector2(470, 125)
+	results_panel.size = Vector2(660, 650)
+	add_child(results_panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 16)
+	results_panel.add_child(box)
+	var title := _label("RUN COMPLETE", 38)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	results_score_label = _label("SCORE 000000", 32)
+	results_score_label.name = "ResultsScore"
+	results_score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	results_score_label.add_theme_color_override("font_color", Color("#ffc857"))
+	box.add_child(results_score_label)
+	results_detail_label = _label("", 20)
+	results_detail_label.name = "ResultsDetails"
+	results_detail_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	results_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	results_detail_label.custom_minimum_size = Vector2(610, 220)
+	box.add_child(results_detail_label)
+	box.add_child(_named_button("ResultsRetryButton", "Retry from Summit", _restart_summit))
+	box.add_child(_named_button("ResultsMarkerButton", "Return to Marker", _results_return_marker))
+	box.add_child(_named_button("ResultsContinueButton", "Keep Riding", _results_continue))
 
 func _build_trick_guide() -> void:
 	trick_guide_panel = PanelContainer.new()
@@ -285,6 +371,12 @@ func _build_options_menu() -> void:
 		shadow_quality.add_item(text)
 	graphics_tab.add_child(_row("Shadow quality", shadow_quality))
 	shadow_quality.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("shadow_quality", index))
+	var snow_quality := OptionButton.new()
+	snow_quality.name = "SnowQuality"
+	for text: String in ["Fast", "Premium"]:
+		snow_quality.add_item(text)
+	graphics_tab.add_child(_row("Snow quality", snow_quality))
+	snow_quality.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("snow_quality", index))
 	var ssao := CheckButton.new()
 	ssao.name = "SSAO"
 	ssao.text = "Enabled"
@@ -441,6 +533,7 @@ func _focus_first_pause_button() -> void:
 func _set_menu_visible(panel: Control) -> void:
 	menu_backdrop.visible = true
 	pause_panel.visible = panel == pause_panel
+	results_panel.visible = panel == results_panel
 	trick_guide_panel.visible = panel == trick_guide_panel
 	options_panel.visible = panel == options_panel
 
@@ -456,7 +549,9 @@ func _resume() -> void:
 	options_panel.visible = false
 	trick_guide_panel.visible = false
 	pause_panel.visible = false
+	results_panel.visible = false
 	menu_backdrop.visible = false
+	hud_overlay.visible = true
 	get_tree().paused = false
 	Input.mouse_mode = _stored_mouse_mode
 
@@ -479,11 +574,30 @@ func _set_marker_from_menu() -> void:
 
 func _restart_summit() -> void:
 	SessionManager.clear_marker()
-	total_score = 0
-	_reset_combo()
-	score_label.text = "SCORE 000000"
+	if player != null and player.scoring != null:
+		player.scoring.reset_run()
+	else:
+		total_score = 0
+		_reset_combo()
+		score_label.text = "SCORE 000000"
 	SessionManager.request_respawn()
 	_show_notice("RESTART FROM SUMMIT")
+	_resume()
+
+func _results_return_marker() -> void:
+	if not SessionManager.has_marker:
+		_show_notice("NO MARKER SET")
+		return
+	if player != null and player.scoring != null:
+		player.scoring.reset_run()
+	SessionManager.request_respawn()
+	_show_notice("NEW RUN FROM MARKER")
+	_resume()
+
+func _results_continue() -> void:
+	if player != null and player.scoring != null:
+		player.scoring.reset_run()
+	_show_notice("FREE RIDE")
 	_resume()
 
 func _quit_game() -> void:
@@ -519,6 +633,7 @@ func _sync_options() -> void:
 	(options_panel.find_child("RenderScale", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["render_scale"]))
 	(options_panel.find_child("AntiAliasing", true, false) as OptionButton).select(clampi(int(GameSettings.pending["anti_aliasing"]), 0, 1))
 	(options_panel.find_child("ShadowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["shadow_quality"]), 0, 3))
+	(options_panel.find_child("SnowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["snow_quality"]), 0, 1))
 	(options_panel.find_child("SSAO", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssao_enabled"]))
 	(options_panel.find_child("SSIL", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssil_enabled"]))
 	(options_panel.find_child("SSR", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssr_enabled"]))
@@ -560,13 +675,32 @@ func _on_telemetry(data: Dictionary) -> void:
 	speed_label.text = "%d %s" % [roundi(speed), "mph" if bool(GameSettings.active["units_mph"]) else "km/h"]
 	var animation: Dictionary = data.get("animation", {})
 	var flick_data: Dictionary = data.get("flick", {})
+	var landing_time := float(data.get("predicted_landing_time", -1.0))
+	var landing_imminent := bool(data.get("landing_feedback_armed", false)) and str(data.get("state", "")) == "AIR" and landing_time >= 0.0 and landing_time < 0.7
+	landing_cue_label.visible = landing_imminent
+	if landing_imminent:
+		var upright := float(data.get("upright_dot", 0.0))
+		var angular_speed := (data.get("angular_velocity", Vector3.ZERO) as Vector3).length()
+		var ready := upright > 0.62 and angular_speed < 2.2
+		landing_cue_label.text = "LANDING READY" if ready else "OPEN UP FOR LANDING"
+		landing_cue_label.add_theme_color_override("font_color", Color("#55d6be") if ready else Color("#ffc857"))
 	if trick_visualizer != null:
 		trick_visualizer.apply_snapshot(flick_data)
-	var combo_text := "" if combo_count <= 1 else "  x%.1f (%d)" % [combo_multiplier, combo_count]
-	score_label.text = "SCORE %06d%s" % [total_score, combo_text]
-	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSpeed %.2f m/s\nNormal %s\nEdge %.2f\nPressure %.2f\nLateral slip %.2f\nCarve force %.2f\nAngular %s\nRail %s (bal %.2f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f" % [
+	var score_data: Dictionary = data.get("scoring", {})
+	if combo_timer_bar != null:
+		var combo_window := maxf(float(score_data.get("combo_window", 1.0)), 0.01)
+		combo_timer_bar.value = float(score_data.get("combo_remaining", 0.0)) / combo_window
+		combo_timer_bar.visible = combo_count > 0
+	if rail_balance_bar != null:
+		rail_balance_bar.value = float(data.get("rail_balance", 0.0))
+		rail_balance_bar.visible = str(data.state) == "GRIND"
+	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f" % [
 		Engine.get_frames_per_second(), Engine.physics_ticks_per_second, data.state, data.grounded, data.contact_confidence,
-		data.speed_mps, data.surface_normal, data.edge, data.get("pressure", 0.0), data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
+		data.get("surface", "Powder"), data.speed_mps, data.get("slope_angle_degrees", 0.0), data.surface_normal,
+		data.get("steering_raw", 0.0), data.get("steering", 0.0), data.get("effective_steer_rate", 0.0),
+		data.get("heading_travel_angle_degrees", 0.0), data.edge, data.get("carve_ratio", 1.0), data.get("skid_amount", 0.0),
+		data.get("available_grip", 0.0), data.get("centripetal_demand", 0.0), data.get("brake_amount", 0.0), data.get("pressure", 0.0),
+		data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
 		data.get("rail_balance", 0.0),
 		flick_data.get("kind", "NONE"), flick_data.get("phase", "NEUTRAL"),
 		animation.get("state", "—"), animation.get("pose", "—"), animation.get("blend", 0.0)]
@@ -574,33 +708,99 @@ func _on_telemetry(data: Dictionary) -> void:
 func _on_trick_changed(text: String) -> void:
 	trick_label.text = text
 
-func _on_trick_landed(text: String, points: int, quality: float) -> void:
-	combo_count += 1
-	combo_multiplier = minf(4.0, 1.0 + float(combo_count - 1) * 0.25)
-	var awarded := int(round(float(points) * combo_multiplier))
-	total_score += awarded
-	score_label.text = "SCORE %06d  x%.1f (%d)" % [total_score, combo_multiplier, combo_count]
+func _on_score_awarded(text: String, awarded: int, quality: float, snapshot: Dictionary) -> void:
+	_on_score_changed(snapshot)
 	var link_note := "  LINE" if text.begins_with("Line Link") else ""
 	_show_notice("%s  +%d  [%s]%s" % [text, awarded, _quality_name(quality), link_note])
 
+func _on_score_changed(snapshot: Dictionary) -> void:
+	total_score = int(snapshot.get("total_score", 0))
+	combo_count = int(snapshot.get("combo_count", 0))
+	combo_multiplier = float(snapshot.get("combo_multiplier", 1.0))
+	var combo_text := "" if combo_count <= 1 else "  x%.1f (%d)" % [combo_multiplier, combo_count]
+	score_label.text = "SCORE %06d%s" % [total_score, combo_text]
+
+func _on_run_finished(snapshot: Dictionary) -> void:
+	var score := int(snapshot.get("total_score", 0))
+	var previous_best := SessionManager.best_score
+	var personal_best := SessionManager.submit_score(score)
+	var medal := _medal_for_score(score)
+	var next_target := _next_medal_target(score)
+	var best_name := str(snapshot.get("best_trick_name", ""))
+	var best_points := int(snapshot.get("best_trick_points", 0))
+	if best_name.is_empty():
+		best_name = "No scored trick"
+	results_score_label.text = "SCORE %06d  •  %s" % [score, medal]
+	var record_line := "NEW PERSONAL BEST" if personal_best else "PERSONAL BEST %06d" % maxi(previous_best, SessionManager.best_score)
+	var target_line := "All medal targets cleared" if next_target <= 0 else "%d points to the next medal" % maxi(0, next_target - score)
+	results_detail_label.text = "%s\n\nBest trick: %s  (+%d)\nLanded tricks: %d  •  Clean: %d  •  Bails: %d\n\n%s" % [
+		record_line,
+		best_name,
+		best_points,
+		int(snapshot.get("landed_trick_count", 0)),
+		int(snapshot.get("clean_trick_count", 0)),
+		int(snapshot.get("bail_count", 0)),
+		target_line,
+	]
+	var marker_button := results_panel.find_child("ResultsMarkerButton", true, false) as Button
+	if marker_button != null:
+		marker_button.disabled = not SessionManager.has_marker
+	_stored_mouse_mode = Input.mouse_mode
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	get_tree().paused = true
+	AudioManager.stop_feedback()
+	hud_overlay.visible = false
+	_set_menu_visible(results_panel)
+	var retry := results_panel.find_child("ResultsRetryButton", true, false) as Button
+	if retry != null:
+		retry.grab_focus()
+
 func _on_landed(result: Dictionary) -> void:
-	if float(result.score) < 0.72:
-		_show_notice(_quality_name(float(result.score)) + " LANDING")
+	_show_notice(_quality_name(float(result.score)) + " LANDING")
 
 func _on_crashed() -> void:
-	_reset_combo()
 	_show_notice("BAIL — recover on snow")
 
 func _reset_combo() -> void:
-	combo_count = 0
-	combo_multiplier = 1.0
-	score_label.text = "SCORE %06d" % total_score
+	if player != null and player.scoring != null:
+		player.scoring.reset_combo()
+	else:
+		combo_count = 0
+		combo_multiplier = 1.0
+		score_label.text = "SCORE %06d" % total_score
 
 func _on_marker_changed(_position: Vector3) -> void:
 	_show_notice("SESSION MARKER SAVED")
 
 func _on_controller_connection(connected: bool) -> void:
 	_show_notice("CONTROLLER CONNECTED" if connected else "CONTROLLER DISCONNECTED — KEYBOARD ACTIVE")
+
+func notify_course_recovery() -> void:
+	_show_notice("RETURNING TO THE SLOPE")
+
+func _on_recording_changed(active: bool) -> void:
+	if recording_label != null:
+		recording_label.visible = active
+		recording_label.text = "● REC"
+		recording_label.add_theme_color_override("font_color", Color("#ff3b30"))
+	recording_pulse = 0.0
+	if active:
+		_show_notice("GIF RECORDING — F9 TO STOP")
+
+func _on_gif_encoding_changed(active: bool) -> void:
+	if recording_label != null:
+		recording_label.visible = active
+		recording_label.text = "● ENC"
+		recording_label.add_theme_color_override("font_color", Color("#ffc857"))
+	recording_pulse = 0.0
+	if active:
+		_show_notice("ENCODING GIF — SAVES TO DOWNLOADS WHEN DONE")
+
+func _on_gif_saved(path: String) -> void:
+	_show_notice("GIF SAVED — %s" % path.get_file())
+
+func _on_gif_failed(reason: String) -> void:
+	_show_notice("GIF CAPTURE FAILED — %s" % reason)
 
 func _on_device_changed(_device: String) -> void:
 	_update_hint()
@@ -618,3 +818,21 @@ func _quality_name(quality: float) -> String:
 	if quality >= 0.42: return "SKETCHY"
 	if quality >= 0.25: return "HARD"
 	return "BAIL"
+
+func _medal_for_score(score: int) -> String:
+	if score >= 6000:
+		return "GOLD"
+	if score >= 3000:
+		return "SILVER"
+	if score >= 1000:
+		return "BRONZE"
+	return "NO MEDAL"
+
+func _next_medal_target(score: int) -> int:
+	if score < 1000:
+		return 1000
+	if score < 3000:
+		return 3000
+	if score < 6000:
+		return 6000
+	return 0
