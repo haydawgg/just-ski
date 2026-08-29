@@ -24,6 +24,7 @@ func _ready() -> void:
 	_test_safety_left_sequence()
 	_test_mirrored_and_cross_body_targets()
 	_test_supported_definition_coverage()
+	_test_leg_and_body_lead_hand_contact()
 	_test_spin_grab_layering()
 	_test_release_and_landing_handoff()
 	_test_short_air_and_late_hold()
@@ -138,10 +139,32 @@ func _test_supported_definition_coverage() -> void:
 			failures.append("Supported ski grab %d did not build pose weight" % pose)
 		if float(snapshot.get("grab_contact_weight", 0.0)) < 0.35:
 			failures.append("Supported ski grab %d never reached stable visual contact" % pose)
-	for pose: int in [TrickController.GrabPose.SPREAD_EAGLE, TrickController.GrabPose.DAFFY]:
-		var style := _sample_grab(pose)
+	for pose: int in range(TrickController.StylePose.SPREAD_EAGLE, TrickController.StylePose.SHIFTY_RIGHT + 1):
+		var style := _sample_style(pose)
 		if int(style.get("grab_target_count", -1)) != 0:
 			failures.append("Style pose %d incorrectly invented a hand-to-ski target" % pose)
+		if float(style.get("style_pose_weight", 0.0)) < 0.5:
+			failures.append("Style pose %d did not build pose weight" % pose)
+
+func _test_leg_and_body_lead_hand_contact() -> void:
+	var baseline_rig := _new_rig()
+	var baseline_frame := _air_frame()
+	_step(baseline_rig, baseline_frame, 6)
+	var baseline := baseline_rig.debug_snapshot()
+	var rig := _new_rig()
+	var frame := _grab_frame(TrickController.GrabPose.SAFETY_LEFT)
+	_step(rig, frame, 6)
+	var early := rig.debug_snapshot()
+	var knee_change := absf(float((early.left_knee_rotation as Vector3).x) - float((baseline.left_knee_rotation as Vector3).x))
+	var shoulder_change := (early.left_shoulder_rotation as Vector3).distance_to(baseline.left_shoulder_rotation as Vector3)
+	if knee_change < 0.16:
+		failures.append("Grab target leg did not move before the reach")
+	if shoulder_change >= knee_change:
+		failures.append("Grab arm led the target knee instead of finishing the body-led reach")
+	if float(early.get("grab_contact_weight", 0.0)) > 0.12:
+		failures.append("Grab hand contacted the ski before the body committed")
+	_dispose_rig(baseline_rig)
+	_dispose_rig(rig)
 
 func _test_spin_grab_layering() -> void:
 	for spin_rate: float in [-4.2, 4.2, 6.4]:
@@ -265,6 +288,17 @@ func _sample_grab(pose: int) -> Dictionary:
 	_step(rig, frame, 110)
 	var snapshot := rig.debug_snapshot()
 	_assert_root_unchanged(rig, "Grab pose %d" % pose)
+	_dispose_rig(rig)
+	return snapshot
+
+func _sample_style(pose: int) -> Dictionary:
+	var rig := _new_rig()
+	var frame := _air_frame()
+	frame.style_pose = pose
+	frame.style_amount = 1.0
+	_step(rig, frame, 110)
+	var snapshot := rig.debug_snapshot()
+	_assert_root_unchanged(rig, "Style pose %d" % pose)
 	_dispose_rig(rig)
 	return snapshot
 

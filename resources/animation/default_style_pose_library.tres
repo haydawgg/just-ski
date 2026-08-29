@@ -1,0 +1,99 @@
+[gd_resource type="Resource" script_class="StylePoseLibrary" load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://player/animation/style_pose_library.gd" id="1"]
+[ext_resource type="Script" path="res://player/animation/style_pose_definition.gd" id="2"]
+
+[sub_resource type="Resource" id="SpreadEagle"]
+script = ExtResource("2")
+pose_id = 1
+display_name = "Spread Eagle"
+body_compactness = 0.08
+pelvis_offset = Vector3(0.0, 0.04, 0.0)
+spine_rotation = Vector3(0.08, 0.0, 0.0)
+left_hip_rotation = Vector3(0.42, -0.28, -0.72)
+right_hip_rotation = Vector3(0.42, 0.28, 0.72)
+left_knee_rotation = Vector3(0.08, 0.0, 0.0)
+right_knee_rotation = Vector3(0.08, 0.0, 0.0)
+left_ski_rotation = Vector3(0.0, -0.18, -0.25)
+right_ski_rotation = Vector3(0.0, 0.18, 0.25)
+left_shoulder_rotation = Vector3(0.06, -0.08, -1.3)
+right_shoulder_rotation = Vector3(0.06, 0.08, 1.3)
+left_pole_rotation = Vector3(-0.2, -0.12, 0.38)
+right_pole_rotation = Vector3(-0.2, 0.12, -0.38)
+pose_response_scale = 1.12
+
+[sub_resource type="Resource" id="Daffy"]
+script = ExtResource("2")
+pose_id = 2
+display_name = "Daffy"
+body_compactness = 0.1
+pelvis_offset = Vector3(-0.035, 0.02, 0.0)
+pelvis_rotation = Vector3(0.04, -0.08, -0.06)
+spine_rotation = Vector3(-0.08, 0.12, 0.1)
+chest_rotation = Vector3(-0.04, 0.14, 0.12)
+left_hip_rotation = Vector3(-0.9, 0.0, -0.08)
+right_hip_rotation = Vector3(0.68, 0.0, 0.08)
+left_knee_rotation = Vector3(0.36, 0.0, 0.0)
+right_knee_rotation = Vector3(-0.1, 0.0, 0.0)
+left_ski_rotation = Vector3(0.22, 0.0, -0.06)
+right_ski_rotation = Vector3(-0.2, 0.0, 0.06)
+left_shoulder_rotation = Vector3(-0.2, 0.08, -0.68)
+right_shoulder_rotation = Vector3(0.12, 0.04, 0.4)
+left_pole_rotation = Vector3(-0.28, -0.1, 0.24)
+right_pole_rotation = Vector3(-0.1, 0.08, -0.18)
+
+[sub_resource type="Resource" id="ShiftyLeft"]
+script = ExtResource("2")
+pose_id = 3
+display_name = "Shifty Left"
+body_compactness = 0.42
+pelvis_offset = Vector3(-0.04, -0.035, 0.035)
+pelvis_rotation = Vector3(-0.08, -0.48, -0.08)
+spine_rotation = Vector3(-0.12, 0.24, 0.07)
+chest_rotation = Vector3(-0.06, 0.34, 0.08)
+head_rotation = Vector3(0.04, 0.18, -0.03)
+left_hip_rotation = Vector3(-0.22, -0.16, -0.12)
+right_hip_rotation = Vector3(-0.08, -0.12, -0.05)
+left_knee_rotation = Vector3(0.52, 0.0, 0.0)
+right_knee_rotation = Vector3(0.28, 0.0, 0.0)
+left_boot_rotation = Vector3(-0.08, -0.16, -0.08)
+right_boot_rotation = Vector3(-0.05, -0.16, 0.05)
+left_ski_rotation = Vector3(0.04, -0.58, -0.08)
+right_ski_rotation = Vector3(-0.02, -0.58, 0.06)
+left_shoulder_rotation = Vector3(-0.22, 0.12, -0.58)
+right_shoulder_rotation = Vector3(0.02, 0.1, 0.28)
+left_elbow_rotation = Vector3(0.18, 0.0, -0.08)
+right_elbow_rotation = Vector3(0.34, 0.0, 0.05)
+left_pole_rotation = Vector3(-0.34, -0.22, 0.3)
+right_pole_rotation = Vector3(-0.18, -0.12, -0.16)
+pose_response_scale = 1.16
+
+[sub_resource type="Resource" id="ShiftyRight"]
+script = ExtResource("2")
+pose_id = 4
+display_name = "Shifty Right"
+body_compactness = 0.42
+pelvis_offset = Vector3(0.04, -0.035, 0.035)
+pelvis_rotation = Vector3(-0.08, 0.48, 0.08)
+spine_rotation = Vector3(-0.12, -0.24, -0.07)
+chest_rotation = Vector3(-0.06, -0.34, -0.08)
+head_rotation = Vector3(0.04, -0.18, 0.03)
+left_hip_rotation = Vector3(-0.08, 0.12, 0.05)
+right_hip_rotation = Vector3(-0.22, 0.16, 0.12)
+left_knee_rotation = Vector3(0.28, 0.0, 0.0)
+right_knee_rotation = Vector3(0.52, 0.0, 0.0)
+left_boot_rotation = Vector3(-0.05, 0.16, -0.05)
+right_boot_rotation = Vector3(-0.08, 0.16, 0.08)
+left_ski_rotation = Vector3(-0.02, 0.58, -0.06)
+right_ski_rotation = Vector3(0.04, 0.58, 0.08)
+left_shoulder_rotation = Vector3(0.02, -0.1, -0.28)
+right_shoulder_rotation = Vector3(-0.22, -0.12, 0.58)
+left_elbow_rotation = Vector3(0.34, 0.0, -0.05)
+right_elbow_rotation = Vector3(0.18, 0.0, 0.08)
+left_pole_rotation = Vector3(-0.18, 0.12, 0.16)
+right_pole_rotation = Vector3(-0.34, 0.22, -0.3)
+pose_response_scale = 1.16
+
+[resource]
+script = ExtResource("1")
+definitions = [SubResource("SpreadEagle"), SubResource("Daffy"), SubResource("ShiftyLeft"), SubResource("ShiftyRight")]

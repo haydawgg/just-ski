@@ -13,6 +13,7 @@ func _ready() -> void:
 	_test_air_and_trick_poses()
 	_test_flick_presentation_layers()
 	_test_continuous_grab_reach()
+	_test_pre_bail_balance_response()
 	_test_grind_and_bail_poses()
 	_test_reactions()
 	_test_trick_resolution()
@@ -157,11 +158,14 @@ func _test_air_and_trick_poses() -> void:
 	_step(45)
 	_check_pose_contains("Japan Grab Left", "Japan grab pose was not selected")
 
-	frame.grab_pose = TrickController.GrabPose.SPREAD_EAGLE
+	frame.grab_pose = TrickController.GrabPose.NONE
+	frame.style_pose = TrickController.StylePose.SPREAD_EAGLE
+	frame.style_amount = 1.0
 	_step(45)
 	_check_pose_contains("Spread Eagle", "Spread-eagle pose was not selected")
 
-	frame.grab_pose = TrickController.GrabPose.NONE
+	frame.style_pose = TrickController.StylePose.NONE
+	frame.style_amount = 0.0
 	frame.takeoff_type = SkierAnimationFrame.TakeoffType.CHARGED_POP
 	frame.takeoff_charge = 0.7
 	frame.takeoff_upward_speed = 3.0
@@ -220,6 +224,24 @@ func _test_continuous_grab_reach() -> void:
 	if full_reach > 0.62:
 		failures.append("Full grab reach remained visibly detached from the ski (light %.3f, full %.3f)" % [light_reach, full_reach])
 
+func _test_pre_bail_balance_response() -> void:
+	frame.reset()
+	frame.locomotion_state = 1
+	frame.speed_mps = 16.0
+	frame.speed_ratio = 0.65
+	frame.pre_bail_weight = 0.82
+	frame.pre_bail_side = 1.0
+	_step(36)
+	var response := rig.debug_snapshot()
+	if float(response.pre_bail_weight) < 0.65:
+		failures.append("Near-failure balance data did not reach the presentation layer")
+	if str(response.pose).find("Loss of Control") < 0:
+		failures.append("Near-failure pose did not read as controlled loss of balance")
+	if float((response.chest_rotation as Vector3).z) >= -0.04:
+		failures.append("Near-failure torso did not counter-lean against the imbalance")
+	if absf(float((response.left_shoulder_rotation as Vector3).z) - float((response.right_shoulder_rotation as Vector3).z)) < 0.35:
+		failures.append("Near-failure arms did not widen asymmetrically")
+
 func _test_grind_and_bail_poses() -> void:
 	frame.reset()
 	frame.locomotion_state = 2
@@ -231,8 +253,44 @@ func _test_grind_and_bail_poses() -> void:
 
 	frame.reset()
 	frame.locomotion_state = 3
-	_step(30)
-	_check_pose_contains("Bail Tumble", "Bail pose was not selected")
+	frame.crash_reason = CrashContext.Reason.FEATURE_IMPACT
+	frame.crash_impact_normal = Vector3.LEFT
+	frame.crash_incoming_velocity = Vector3(8.0, -2.0, -12.0)
+	frame.crash_current_velocity = Vector3(4.0, -1.0, -8.0)
+	frame.crash_impact_speed = 8.0
+	frame.crash_lateral_bias = 1.0
+	frame.crash_angular_speed = 3.0
+	frame.crash_stage = CrashContext.Stage.RELEASE
+	frame.crash_elapsed = 0.08
+	_step(12)
+	_check_pose_contains("Crash Release", "Crash release pose was not selected")
+	var release := rig.debug_snapshot()
+	if str(release.crash_stage) != "Release":
+		failures.append("Crash release stage was not exposed through animation telemetry")
+
+	frame.crash_stage = CrashContext.Stage.IMPACT
+	frame.crash_elapsed = 0.24
+	_step(18)
+	_check_pose_contains("Crash Impact", "Directional impact pose was not selected")
+	var impact := rig.debug_snapshot()
+	if float((impact.chest_rotation as Vector3).z) <= 0.04:
+		failures.append("Side impact did not bias the torso in the impact direction")
+
+	frame.crash_stage = CrashContext.Stage.FALL
+	frame.crash_elapsed = 0.58
+	_step(24)
+	_check_pose_contains("Crash Fall", "Crash fall pose was not selected")
+
+	frame.crash_stage = CrashContext.Stage.REST
+	frame.crash_rest_detected = true
+	frame.crash_elapsed = 1.25
+	_step(72)
+	_check_pose_contains("Crash Rest", "Crash rest pose was not selected")
+	var rest := rig.debug_snapshot()
+	if rig.rotation.length() > 0.0001 or rig.position.length() > 0.0001:
+		failures.append("Crash presentation modified the gameplay visual root")
+	if absf(float((rest.left_knee_rotation as Vector3).x)) > 2.35 or absf(float((rest.right_knee_rotation as Vector3).x)) > 2.35:
+		failures.append("Crash rest pose exceeded knee limits")
 
 func _test_reactions() -> void:
 	frame.reset()
@@ -259,7 +317,7 @@ func _test_trick_resolution() -> void:
 	Input.action_press("grab_right", 1.0)
 	Input.action_press("trick_up", 1.0)
 	tricks.update_air(Vector3.ZERO, 0.016)
-	if tricks.grab_pose != TrickController.GrabPose.SPREAD_EAGLE:
+	if tricks.style_pose != TrickController.StylePose.SPREAD_EAGLE:
 		failures.append("Dual grab plus up input did not resolve to Spread Eagle")
 	Input.action_release("grab_left")
 	Input.action_release("grab_right")

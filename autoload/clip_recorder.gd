@@ -1,8 +1,9 @@
 extends Node
 
-## F9 start/stop gameplay GIF capture. Recordings cap at 15 seconds and save
-## to the user's Downloads folder (user:// fallback). Encoding runs on a
-## background thread so play continues while the GIF is written.
+## F9 start/stop gameplay clip capture. Recordings cap at 15 seconds and
+## save to the user's Downloads folder (user:// fallback) as an
+## MJPEG-in-MP4 file. Frames are JPEG-encoded during capture and the MP4
+## is muxed on a background thread so play continues.
 
 signal recording_changed(active: bool)
 signal encoding_changed(active: bool)
@@ -10,16 +11,16 @@ signal clip_saved(path: String)
 signal clip_failed(reason: String)
 signal clip_info(message: String)
 
-const CAPTURE_FPS := 20.0
-const MAX_CLIP_FRAMES := 300
-const CAPTURE_WIDTH := 640
-const CAPTURE_HEIGHT := 360
-const DELAY_CENTISECONDS := 5
+const CAPTURE_FPS := 30.0
+const MAX_CLIP_FRAMES := 450          # = 15 s at 30 fps
+const CAPTURE_WIDTH := 960
+const CAPTURE_HEIGHT := 540
+const JPEG_QUALITY := 0.75
+const MIN_CLIP_FRAMES := 18           # ~0.6 s
 
 var _recording := false
 var _encoding := false
 var _frames: Array[PackedByteArray] = []
-var _delays: Array[int] = []
 var _capture_accum := 0.0
 var _encode_thread: Thread = null
 
@@ -27,7 +28,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("save_gif"):
+	if event.is_action_pressed("save_clip"):
 		get_viewport().set_input_as_handled()
 		if _recording:
 			_stop_recording()
@@ -48,8 +49,7 @@ func _process(delta: float) -> void:
 	image.resize(CAPTURE_WIDTH, CAPTURE_HEIGHT, Image.INTERPOLATE_BILINEAR)
 	if image.get_format() != Image.FORMAT_RGB8:
 		image.convert(Image.FORMAT_RGB8)
-	_frames.append(image.get_data())
-	_delays.append(DELAY_CENTISECONDS)
+	_frames.append(image.save_jpg_to_buffer(JPEG_QUALITY))
 	if _frames.size() >= MAX_CLIP_FRAMES:
 		_stop_recording()
 
@@ -61,7 +61,6 @@ func _start_recording() -> void:
 		return
 	_recording = true
 	_frames.clear()
-	_delays.clear()
 	_capture_accum = 1.0 / CAPTURE_FPS
 	recording_changed.emit(true)
 
@@ -70,27 +69,20 @@ func _stop_recording() -> void:
 		return
 	_recording = false
 	recording_changed.emit(false)
-	if _frames.size() < 12:
+	if _frames.size() < MIN_CLIP_FRAMES:
 		clip_info.emit("CLIP TOO SHORT — RIDE A MOMENT BEFORE SAVING")
 		_frames.clear()
-		_delays.clear()
 		return
 	var frames := _frames.duplicate()
-	var delays := _delays.duplicate()
 	_frames.clear()
-	_delays.clear()
 	_encoding = true
 	encoding_changed.emit(true)
 	_encode_thread = Thread.new()
-	_encode_thread.start(_encode_clip.bind(frames, delays, CAPTURE_WIDTH, CAPTURE_HEIGHT))
+	_encode_thread.start(_encode_clip.bind(frames, CAPTURE_WIDTH, CAPTURE_HEIGHT))
 
-func _encode_clip(frames: Array, delays: Array, width: int, height: int) -> void:
-	# Quantize on the worker thread so the main thread never hitches per pixel.
-	var palettized: Array = []
-	palettized.resize(frames.size())
-	for i: int in range(frames.size()):
-		palettized[i] = GifEncoder.quantize_rgb8(frames[i] as PackedByteArray)
-	var bytes := GifEncoder.encode(palettized, delays, width, height)
+func _encode_clip(frames: Array, width: int, height: int) -> void:
+	# Frames arrive pre-encoded as JPEG; muxing is pure byte assembly.
+	var bytes := Mp4Encoder.encode(frames, int(CAPTURE_FPS), width, height)
 	_on_encoded.call_deferred(bytes)
 
 func _on_encoded(bytes: PackedByteArray) -> void:
@@ -100,13 +92,13 @@ func _on_encoded(bytes: PackedByteArray) -> void:
 	_encoding = false
 	encoding_changed.emit(false)
 	if bytes.is_empty():
-		_fail("GIF encoding produced no data")
+		_fail("MP4 encoding produced no data")
 		return
 	var directory := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
 	if directory.is_empty():
 		directory = OS.get_user_data_dir()
 	var stamp := Time.get_datetime_string_from_system().replace(":", "-").replace("T", "_")
-	var path := directory.path_join("ski_clip_%s.gif" % stamp)
+	var path := directory.path_join("ski_clip_%s.mp4" % stamp)
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		_fail("Could not write %s (%s)" % [path, error_string(FileAccess.get_open_error())])
@@ -116,5 +108,5 @@ func _on_encoded(bytes: PackedByteArray) -> void:
 	clip_saved.emit(path)
 
 func _fail(reason: String) -> void:
-	push_warning("GIF capture failed: %s" % reason)
+	push_warning("Clip capture failed: %s" % reason)
 	clip_failed.emit(reason)

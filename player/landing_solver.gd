@@ -2,6 +2,7 @@ class_name LandingSolver
 extends RefCounted
 
 enum Outcome { CLEAN, SKETCHY, HARD, BAIL }
+enum FailureReason { NONE, UPRIGHT, IMPACT, ANGULAR }
 
 static func evaluate(up: Vector3, forward: Vector3, normal: Vector3, velocity: Vector3, angular_velocity: Vector3, profile: SkiPhysicsProfile) -> Dictionary:
 	var safe_normal := normal.normalized() if normal.length_squared() > 0.0001 else Vector3.UP
@@ -21,6 +22,13 @@ static func evaluate(up: Vector3, forward: Vector3, normal: Vector3, velocity: V
 	var spin_score := 1.0 - clampf(angular_ratio, 0.0, 1.0)
 	var score := aligned_forward * 0.32 + upright * 0.36 + impact_score * 0.22 + spin_score * 0.1
 	var outcome := Outcome.BAIL
+	var failure_reason := FailureReason.NONE
+	if upright_dot < profile.recoverable_upright_dot:
+		failure_reason = FailureReason.UPRIGHT
+	elif impact >= profile.bail_impact_speed:
+		failure_reason = FailureReason.IMPACT
+	elif angular_ratio >= profile.bail_angular_ratio:
+		failure_reason = FailureReason.ANGULAR
 	var hard_failure := (
 		upright_dot < profile.recoverable_upright_dot
 		or impact >= profile.bail_impact_speed
@@ -57,6 +65,7 @@ static func evaluate(up: Vector3, forward: Vector3, normal: Vector3, velocity: V
 	return {
 		"score": score,
 		"outcome": outcome,
+		"failure_reason": failure_reason,
 		"impact": impact,
 		"impact_severity": impact_severity,
 		"balance_error": balance_error,

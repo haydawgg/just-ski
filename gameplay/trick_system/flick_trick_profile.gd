@@ -14,4 +14,4 @@ extends Resource
 @export var flip_impulse := 6.5
 @export var cork_yaw_impulse := 4.8
 @export var cork_roll_impulse := 5.2
-@export var air_yaw_trim_acceleration := 1.4
+@export var air_yaw_trim_acceleration := 1.9

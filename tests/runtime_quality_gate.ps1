@@ -14,6 +14,7 @@ $env:LOCALAPPDATA = (Resolve-Path (Join-Path $RepoRoot ".godot_user/local")).Pat
 $scenes = @(
 	"res://tests/runtime_smoke.tscn",
 	"res://tests/gameplay_acceptance.tscn",
+	"res://tests/physics_benchmark.tscn",
 	"res://tests/physics_collision_acceptance.tscn",
 	"res://tests/settings_acceptance.tscn",
 	"res://tests/animation_acceptance.tscn",
@@ -22,13 +23,17 @@ $scenes = @(
 	"res://tests/rail_animation_acceptance.tscn",
 	"res://tests/trick_animation_acceptance.tscn",
 	"res://tests/grab_animation_acceptance.tscn",
+	"res://tests/animation_silhouette_acceptance.tscn",
+	"res://tests/animation_polish_acceptance.tscn",
+	"res://tests/crash_recovery_acceptance.tscn",
+	"res://tests/ski_feel_acceptance.tscn",
 	"res://tests/flick_trick_acceptance.tscn",
 	"res://tests/flick_gameplay_acceptance.tscn",
 	"res://tests/trick_ui_acceptance.tscn",
 	"res://tests/session_flow_acceptance.tscn",
 	"res://tests/ground_hover_probe.tscn",
 	"res://tests/terrain_suspension_course.tscn",
-	"res://tests/gif_encoder_acceptance.tscn"
+	"res://tests/mp4_encoder_acceptance.tscn"
 )
 
 $failures = [System.Collections.Generic.List[string]]::new()

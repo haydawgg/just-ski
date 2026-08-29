@@ -139,10 +139,28 @@ func _test_contextual_trigger_grabs() -> void:
 	sample.right_trigger = 1.0
 	sample.right_stick = Vector2.UP
 	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	if command.grab_pose != TrickController.GrabPose.SPREAD_EAGLE:
+	if command.style_pose != TrickController.StylePose.SPREAD_EAGLE:
 		failures.append("Dual triggers plus up did not resolve Spread Eagle")
+	if command.grab_pose != TrickController.GrabPose.NONE:
+		failures.append("Style input also selected a hand-to-ski grab")
 	if command.kind != TrickCommand.Kind.NONE:
 		failures.append("Grab tweak also committed a rotation gesture")
+	sample.right_stick = Vector2.LEFT
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.style_pose != TrickController.StylePose.SHIFTY_LEFT:
+		failures.append("Dual triggers plus left did not resolve Shifty Left")
+	sample.right_stick = Vector2(0.8, 0.6)
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.style_pose != TrickController.StylePose.SHIFTY_RIGHT:
+		failures.append("Horizontal-dominant diagonal did not resolve Shifty Right")
+	sample.right_stick = Vector2(0.6, -0.8)
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.style_pose != TrickController.StylePose.SPREAD_EAGLE:
+		failures.append("Vertical-dominant diagonal did not preserve Spread Eagle")
+	sample.right_stick = Vector2.ZERO
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.grab_pose != TrickController.GrabPose.DOUBLE or command.style_pose != TrickController.StylePose.NONE:
+		failures.append("Centered dual triggers did not preserve Double Grab")
 
 func _test_grind_gestures() -> void:
 	var interpreter := FlickTrickInterpreter.new()
@@ -202,3 +220,20 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 		failures.append("Completed physical trick was named incorrectly: %s" % landed_name[0])
 	if landed_points[0] <= 870:
 		failures.append("Released grab duration and tweak did not add to the completed trick score")
+
+	tricks.begin_air(false, TrickCommand.Kind.POP)
+	command.reset()
+	command.phase = TrickCommand.PresentationPhase.GRAB
+	command.style_pose = TrickController.StylePose.SHIFTY_LEFT
+	command.style_amount = 1.0
+	command.grab_tweak = Vector2.LEFT
+	tricks.update_air(Vector3.ZERO, 0.6, command)
+	command.reset()
+	tricks.update_air(Vector3.ZERO, 0.1, command)
+	if "Shifty Left" not in tricks.current_name() or tricks.grab_pose != TrickController.GrabPose.NONE:
+		failures.append("Releasing a shifty erased its name or contaminated the grab channel")
+	tricks.land(1.0, false)
+	if landed_count[0] != 2 or "Shifty Left" not in landed_name[0]:
+		failures.append("Shifty did not produce a separately recognized landed style")
+	if landed_points[0] < 220:
+		failures.append("Shifty did not preserve the existing style scoring path")

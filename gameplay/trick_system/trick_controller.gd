@@ -15,24 +15,28 @@ enum GrabPose {
 	TAIL,
 	NOSE,
 	DOUBLE,
-	SPREAD_EAGLE,
-	DAFFY,
 }
+
+enum StylePose { NONE, SPREAD_EAGLE, DAFFY, SHIFTY_LEFT, SHIFTY_RIGHT }
 
 const GRAB_NAMES: Array[String] = [
 	"", "Safety Grab Left", "Safety Grab Right", "Mute Grab Left", "Mute Grab Right",
 	"Japan Grab Left", "Japan Grab Right", "Tail Grab", "Nose Grab", "Double Grab",
-	"Spread Eagle", "Daffy",
 ]
+
+const STYLE_NAMES: Array[String] = ["", "Spread Eagle", "Daffy", "Shifty Left", "Shifty Right"]
 
 var active := false
 var accumulated_rotation := Vector3.ZERO
 var grab_name := ""
 var grab_pose := GrabPose.NONE
+var style_name := ""
+var style_pose := StylePose.NONE
 var grind_seconds := 0.0
 var switch_takeoff := false
 var air_seconds := 0.0
 var grab_seconds := 0.0
+var style_seconds := 0.0
 var tweak_integral := 0.0
 var dominant_kind := TrickCommand.Kind.NONE
 var rail_pose := 0
@@ -43,10 +47,13 @@ func begin_air(is_switch: bool, takeoff_kind: int = TrickCommand.Kind.POP) -> vo
 	accumulated_rotation = Vector3.ZERO
 	grab_name = ""
 	grab_pose = GrabPose.NONE
+	style_name = ""
+	style_pose = StylePose.NONE
 	grind_seconds = 0.0
 	switch_takeoff = is_switch
 	air_seconds = 0.0
 	grab_seconds = 0.0
+	style_seconds = 0.0
 	tweak_integral = 0.0
 	dominant_kind = takeoff_kind
 	rail_pose = 0
@@ -62,17 +69,25 @@ func update_air(local_angular_velocity: Vector3, delta: float, command: TrickCom
 			dominant_kind = command.kind
 			had_trick_intent = true
 		grab_pose = command.grab_pose
+		style_pose = command.style_pose
 		if grab_pose != GrabPose.NONE:
 			grab_seconds += delta * command.grab_amount
 			tweak_integral += command.grab_tweak.length() * delta
 			had_trick_intent = true
+		if style_pose != StylePose.NONE:
+			style_seconds += delta * command.style_amount
+			tweak_integral += command.grab_tweak.length() * delta
+			had_trick_intent = true
 	else:
 		grab_pose = _resolve_legacy_grab_pose()
+		style_pose = _resolve_legacy_style_pose()
 	# The live pose can return to neutral before touchdown, but the completed
 	# trick still owns any grab that was held during the air. Keep the last
 	# non-neutral name for scoring and the landing callout.
 	if grab_pose != GrabPose.NONE:
 		grab_name = GRAB_NAMES[grab_pose]
+	if style_pose != StylePose.NONE:
+		style_name = STYLE_NAMES[style_pose]
 	trick_changed.emit(current_name())
 
 func update_grind(delta: float, selected_pose: int = 0) -> void:
@@ -98,6 +113,8 @@ func land(quality: float, switch_landing: bool, link_bonus: int = 0) -> void:
 	var points: int = motion_points + int(grind_seconds * 300.0)
 	if not grab_name.is_empty():
 		points += 150 + int(grab_seconds * 120.0) + int(tweak_integral * 80.0)
+	if not style_name.is_empty():
+		points += 150 + int(style_seconds * 120.0) + int(tweak_integral * 80.0)
 	if switch_landing != switch_takeoff:
 		name += " to Switch"
 		points += 120
@@ -131,6 +148,8 @@ func current_name() -> String:
 			parts.append("%s%s" % ["Frontflip" if accumulated_rotation.x > 0.0 else "Backflip", " x%d" % int(flip_degrees / 360) if flip_degrees >= 720 else ""])
 	if not grab_name.is_empty():
 		parts.append(grab_name)
+	if not style_name.is_empty():
+		parts.append(style_name)
 	return "Straight Air" if parts.is_empty() else " + ".join(parts)
 
 func reset() -> void:
@@ -138,9 +157,12 @@ func reset() -> void:
 	accumulated_rotation = Vector3.ZERO
 	grab_name = ""
 	grab_pose = GrabPose.NONE
+	style_name = ""
+	style_pose = StylePose.NONE
 	grind_seconds = 0.0
 	air_seconds = 0.0
 	grab_seconds = 0.0
+	style_seconds = 0.0
 	tweak_integral = 0.0
 	dominant_kind = TrickCommand.Kind.NONE
 	rail_pose = 0
@@ -168,10 +190,8 @@ func _resolve_legacy_grab_pose() -> GrabPose:
 	var right := Input.is_action_pressed("grab_right")
 	var style := InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down")
 	if left and right:
-		if style.y < -0.45:
-			return GrabPose.SPREAD_EAGLE
-		if style.y > 0.45:
-			return GrabPose.DAFFY
+		if _style_pose_from_vector(style) != StylePose.NONE:
+			return GrabPose.NONE
 		return GrabPose.DOUBLE
 	if left:
 		if style.x > 0.45:
@@ -190,3 +210,17 @@ func _resolve_legacy_grab_pose() -> GrabPose:
 			return GrabPose.NOSE
 		return GrabPose.SAFETY_RIGHT
 	return GrabPose.NONE
+
+func _resolve_legacy_style_pose() -> StylePose:
+	if not Input.is_action_pressed("grab_left") or not Input.is_action_pressed("grab_right"):
+		return StylePose.NONE
+	return _style_pose_from_vector(InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down"))
+
+func _style_pose_from_vector(style: Vector2) -> StylePose:
+	if absf(style.x) > 0.45 and absf(style.x) >= absf(style.y):
+		return StylePose.SHIFTY_LEFT if style.x < 0.0 else StylePose.SHIFTY_RIGHT
+	if style.y < -0.45:
+		return StylePose.SPREAD_EAGLE
+	if style.y > 0.45:
+		return StylePose.DAFFY
+	return StylePose.NONE

@@ -19,6 +19,8 @@ func _ready() -> void:
 	_test_air_to_rail_handoff()
 	_test_rail_exit_spin_handoff()
 	_test_supported_multi_axis_rotation()
+	_test_spin_visual_phase_vocabulary()
+	_test_flip_family_shape_separation()
 	_test_clean_360_frame_sequence()
 	AudioManager.shutdown_audio()
 	print("TRICK_ANIMATION_RESULT knee_delta=%.4f pelvis_delta=%.4f ski_delta=%.4f shoulder_delta=%.4f" % [
@@ -208,6 +210,68 @@ func _test_supported_multi_axis_rotation() -> void:
 		failures.append("Existing pitch flip support was not preserved")
 	_assert_root_unchanged(rig, "Multi-axis trick animation")
 	_dispose_rig(rig)
+
+func _test_spin_visual_phase_vocabulary() -> void:
+	var rig := _new_rig()
+	var setup := _ground_frame()
+	setup.trick_phase = TrickCommand.PresentationPhase.SETUP
+	setup.trick_intent = true
+	setup.gesture_strength = 1.0
+	setup.gesture_direction = Vector2.RIGHT
+	_step(rig, setup, 40, true)
+	if str(rig.debug_snapshot().spin_visual_phase) != "SETUP":
+		failures.append("Spin vocabulary did not expose setup/prewind")
+	var spin := _spin_frame(1.0, 82.0, 5.0)
+	spin.rotation_residual.y = deg_to_rad(-98.0)
+	_step(rig, spin, 35, true)
+	if str(rig.debug_snapshot().spin_visual_phase) != "COMPACT":
+		failures.append("Spin vocabulary did not enter compact rotation")
+	spin.rotation_accumulated.y = PI
+	spin.rotation_residual.y = 0.0
+	_step(rig, spin, 30, true)
+	if str(rig.debug_snapshot().spin_visual_phase) != "SPOT":
+		failures.append("Spin vocabulary did not spot near half-turn alignment")
+	spin.rotation_accumulated.y = deg_to_rad(351.0)
+	spin.rotation_residual.y = deg_to_rad(-9.0)
+	spin.predicted_landing_time = 0.08
+	spin.trick_phase = TrickCommand.PresentationPhase.LANDING
+	_step(rig, spin, 35, true)
+	if str(rig.debug_snapshot().spin_visual_phase) != "OPEN":
+		failures.append("Spin vocabulary did not delay opening until final landing readiness")
+	_assert_root_unchanged(rig, "Spin visual phases")
+	_dispose_rig(rig)
+
+func _test_flip_family_shape_separation() -> void:
+	var front_rig := _new_rig()
+	var front := _air_frame()
+	front.trick_active = true
+	front.trick_intent = true
+	front.trick_kind = TrickCommand.Kind.FRONTFLIP
+	front.trick_phase = TrickCommand.PresentationPhase.ROTATE
+	front.angular_velocity.x = 4.8
+	front.rotation_accumulated.x = deg_to_rad(60.0)
+	_step(front_rig, front, 55, true)
+	var front_pose := front_rig.debug_snapshot()
+	var back_rig := _new_rig()
+	var back := _air_frame()
+	back.trick_active = true
+	back.trick_intent = true
+	back.trick_kind = TrickCommand.Kind.BACKFLIP
+	back.trick_phase = TrickCommand.PresentationPhase.ROTATE
+	back.angular_velocity.x = -4.8
+	back.rotation_accumulated.x = deg_to_rad(-60.0)
+	_step(back_rig, back, 55, true)
+	var back_pose := back_rig.debug_snapshot()
+	var torso_difference := (front_pose.spine_rotation as Vector3).distance_to(back_pose.spine_rotation as Vector3)
+	var arm_difference := (front_pose.left_shoulder_rotation as Vector3).distance_to(back_pose.left_shoulder_rotation as Vector3)
+	if torso_difference < 0.22 or arm_difference < 0.22:
+		failures.append("Frontflip and backflip body shapes remained visually interchangeable")
+	if str(front_pose.pose).find("Frontflip") < 0 or str(back_pose.pose).find("Backflip") < 0:
+		failures.append("Flip-family pose labels were not distinct")
+	_assert_root_unchanged(front_rig, "Frontflip family")
+	_assert_root_unchanged(back_rig, "Backflip family")
+	_dispose_rig(front_rig)
+	_dispose_rig(back_rig)
 
 func _test_clean_360_frame_sequence() -> void:
 	var rig := _new_rig()

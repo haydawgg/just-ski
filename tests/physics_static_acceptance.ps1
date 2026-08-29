@@ -29,6 +29,9 @@ function Reject-Match([string]$Text, [string]$Pattern, [string]$Message) {
 $inputManager = Read-RequiredFile "autoload/input_manager.gd"
 $profile = Read-RequiredFile "resources/physics/ski_physics_profile.gd"
 $controller = Read-RequiredFile "player/skier_controller.gd"
+$crashContext = Read-RequiredFile "player/crash_context.gd"
+$animationController = Read-RequiredFile "player/animation/skier_animation_controller.gd"
+$animationFrame = Read-RequiredFile "player/animation/skier_animation_frame.gd"
 $contact = Read-RequiredFile "player/ski_contact_solver.gd"
 $camera = Read-RequiredFile "player/camera_controller.gd"
 $resort = Read-RequiredFile "world/resort.gd"
@@ -97,11 +100,32 @@ Require-Match $controller '_constrain_heading_to_travel' "Ground handling must c
 
 foreach ($telemetryKey in @(
 	"steering_raw", "steering", "effective_steer_rate", "brake_amount", "skid_amount",
-	"carve_ratio", "available_grip", "centripetal_demand", "heading_travel_angle_degrees", "slope_angle_degrees"
+	"carve_ratio", "available_grip", "centripetal_demand", "heading_travel_angle_degrees", "slope_angle_degrees",
+	"landing_control_multiplier"
 )) {
 	Require-Match $controller ('"' + [regex]::Escape($telemetryKey) + '"\s*:') "Missing handling telemetry: $telemetryKey"
 	Require-Match $ui ([regex]::Escape($telemetryKey)) "Debug HUD does not display handling telemetry: $telemetryKey"
 }
+
+Require-Match $profile 'landing_control_penalty_max' "Landing steering softness must remain profile-owned."
+Require-Match $controller '_begin_landing_control_recovery' "Successful landings must seed severity-scaled control recovery."
+Require-Match $camera 'turn_bank_share' "Camera must retain restrained turn banking."
+Require-Match $camera 'speed_fov_gain\s*:=\s*7\.0' "Camera speed FOV must stay within the approved restrained range."
+
+Require-Match $crashContext 'enum Stage\s*\{[\s\S]*RELEASE[\s\S]*IMPACT[\s\S]*FALL[\s\S]*REST' "CrashContext must own the controlled-fall stages."
+Require-Match $controller 'func enter_crash\(context:\s*CrashContext\)\s*->\s*bool' "Crash entry must use one guarded controller seam."
+Require-Match $controller 'if state == State\.BAIL[\s\S]*?return false' "Duplicate crash entry must be rejected."
+Require-Match $controller '_evaluate_feature_crash_after_motion' "Feature impacts must reuse post-motion collision diagnostics."
+Require-Match $controller 'feature_collision_min_normal_speed' "Feature-impact thresholds must be profile-owned."
+Require-Match $controller 'crash_context\.reset\(\)' "Respawn and recovery must clear transient crash context."
+Reject-Match $controller 'velocity\s*\*=\s*profile\.bail_speed_retain' "Crash entry cannot discard momentum with an immediate velocity multiplier."
+Require-Match $animationFrame 'var crash_stage:\s*int' "Animation frames must carry immutable crash-stage data."
+Require-Match $animationController 'CrashContext\.Stage\.RELEASE' "Animation must present the crash release stage."
+Require-Match $animationController 'CrashContext\.Stage\.IMPACT' "Animation must present the crash impact stage."
+Require-Match $animationController 'CrashContext\.Stage\.FALL' "Animation must present the crash fall stage."
+Require-Match $animationController 'CrashContext\.Stage\.REST' "Animation must present the crash rest stage."
+Reject-Match "$controller`n$animationController" 'PhysicalBone|RigidBody3D|Skeleton3D|PhysicalBoneSimulator3D' "The primitive rig must use controlled fall rather than a new ragdoll framework."
+Require-Match $ui 'crash_reason' "Development HUD must expose crash telemetry."
 
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"

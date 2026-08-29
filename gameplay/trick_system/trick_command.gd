@@ -24,6 +24,8 @@ var rotation_impulse := Vector3.ZERO
 var gesture_strength := 0.0
 var grab_pose := 0
 var grab_amount := 0.0
+var style_pose := 0
+var style_amount := 0.0
 var grab_tweak := Vector2.ZERO
 var left_trigger := 0.0
 var right_trigger := 0.0
@@ -37,6 +39,8 @@ func reset() -> void:
 	gesture_strength = 0.0
 	grab_pose = 0
 	grab_amount = 0.0
+	style_pose = 0
+	style_amount = 0.0
 	grab_tweak = Vector2.ZERO
 	left_trigger = 0.0
 	right_trigger = 0.0

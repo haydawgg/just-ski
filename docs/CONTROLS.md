@@ -4,7 +4,7 @@
 
 - A/D steer, W/S pressure, Shift tuck, Ctrl brake, Space pop/tricks.
 - Q/E grab in air, arrows trick flicks, T marker, R return, F3 debug.
-- F9 start/stop a gameplay GIF clip (max 15 s) saved to your Downloads folder as `ski_clip_<timestamp>.gif`; a red REC indicator shows while capturing and encoding finishes in the background.
+- F9 start/stop a gameplay clip (max 15 s, 960x540 @ 30 fps) saved to your Downloads folder as `ski_clip_<timestamp>.mp4` (MJPEG-in-MP4; plays in VLC, Windows Media Player, and QuickTime); a red REC indicator shows while capturing and encoding finishes in the background.
 
 ## Controller and Input
 
@@ -49,10 +49,11 @@ Fresh airborne trigger presses combine with right-stick style direction:
 - Left hand + stick right or right hand + stick left: mute.
 - Either hand + stick up: Japan.
 - Left hand + stick down: tail; right hand + stick down: nose.
-- Both triggers: double grab.
-- Both + up: spread eagle; both + down: daffy.
+- Both triggers + centered right stick: double grab.
+- Both + dominant horizontal right-stick input: mirrored left/right shifty.
+- Both + dominant vertical input: spread eagle up, daffy down. On diagonals, the larger axis wins.
 
-Trigger pressure controls reach. Right-stick magnitude controls tweak intensity. While a grab is active, right-stick movement tweaks the pose and cannot also commit a rotation gesture. The animation and scoring systems consume the same resolved grab command.
+Trigger pressure controls reach. Right-stick magnitude controls grab tweak or style intensity. While a grab/style is active, right-stick movement cannot also commit a rotation gesture. Physical grabs and style-only poses are resolved separately, but both feed the existing style scoring path.
 
 ## Rails and keyboard fallback
 

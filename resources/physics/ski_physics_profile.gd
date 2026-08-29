@@ -59,7 +59,7 @@ extends Resource
 @export var air_landing_damping: float = 2.8
 @export var air_landing_window: float = 0.28
 @export var maximum_angular_speed: float = 7.5
-@export var air_flip_trim_acceleration: float = 1.0
+@export var air_flip_trim_acceleration: float = 1.7
 @export var air_terminal_speed: float = 45.0
 @export var landing_prediction_seconds: float = 2.2
 @export var landing_prediction_step: float = 0.06
@@ -74,14 +74,27 @@ extends Resource
 @export var clean_impact_ratio: float = 0.62
 @export var sketchy_impact_ratio: float = 0.82
 @export var bail_angular_ratio: float = 0.85
-@export var bail_tumble_time: float = 1.05
-@export var bail_speed_retain: float = 0.28
 @export var sketchy_landing_speed_retain: float = 0.78
 @export var hard_landing_speed_retain: float = 0.48
+@export var landing_control_penalty_max: float = 0.32
+@export var landing_control_recovery_time_soft: float = 0.25
+@export var landing_control_recovery_time_hard: float = 0.45
 @export var bail_ground_damping: float = 2.8
 @export var bail_ground_align_rate: float = 6.0
-@export var bail_air_tumble_rate: float = 2.8
 @export var bail_recovery_speed_retain: float = 0.55
+
+@export_category("Crash")
+@export var feature_collision_min_speed: float = 6.0
+@export var feature_collision_min_normal_speed: float = 4.5
+@export_range(0.0, 1.0) var feature_collision_max_speed_retention: float = 0.65
+@export var crash_min_duration: float = 0.35
+@export var crash_rest_confirm_time: float = 0.12
+@export var crash_rest_hold_time: float = 0.32
+@export var crash_rest_speed: float = 1.25
+@export var crash_rest_angular_speed: float = 0.45
+@export var crash_max_duration: float = 2.4
+@export var crash_air_angular_damping: float = 1.1
+@export var crash_ground_angular_damping: float = 4.0
 
 @export_category("Rails")
 @export var rail_capture_radius: float = 1.1

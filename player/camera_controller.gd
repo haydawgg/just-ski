@@ -46,9 +46,15 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var look_ahead_gain := 0.30
 @export var look_ahead_rate := 4.0
 @export var base_fov := 68.0
-@export var speed_fov_gain := 10.0
+@export var speed_fov_gain := 7.0
 @export var fov_speed_reference := 30.0
 @export var fov_rate := 4.0
+
+@export_group("Turn Bank")
+@export_range(0.0, 0.3) var turn_bank_share := 0.15
+@export var skier_bank_reference_degrees := 28.0
+@export var turn_bank_limit_degrees := 5.0
+@export var turn_bank_response := 3.2
 
 @export_group("Stabilization")
 @export var surface_up_rate := 3.5
@@ -93,6 +99,7 @@ var _profile_fov := 0.0
 var _profile_yaw_scale := 1.0
 var _profile_look_ahead := 0.0
 var _smoothed_heading_weight := 0.0
+var _smoothed_bank := 0.0
 
 func _ready() -> void:
 	camera = Camera3D.new()
@@ -127,6 +134,7 @@ func reset_immediate() -> void:
 	_trajectory_dir = planar.normalized() if planar.length() > 0.5 else _yaw_dir
 	_air_time = 0.0
 	_landing_timer = 0.0
+	_smoothed_bank = 0.0
 	if skier != null:
 		match skier.state:
 			SkierController.State.AIR:
@@ -206,8 +214,15 @@ func _physics_process(delta: float) -> void:
 			_yaw_dir = _slerp_direction(_yaw_dir, desired_yaw, 1.0 - exp(-yaw_rate * delta))
 	var desired_pitch := atan2(-desired_forward.dot(up), maxf(desired_forward.dot(_yaw_dir), 0.0001))
 	_pitch = lerpf(_pitch, desired_pitch, 1.0 - exp(-pitch_rate * delta))
-	var blended_forward := _yaw_dir * cos(_pitch) - up * sin(_pitch)
-	global_basis = Basis.looking_at(blended_forward, Vector3.UP)
+	var bank_target := 0.0
+	if skier != null and camera_state in [CameraState.GROUND, CameraState.LANDING]:
+		var bank_speed := clampf(speed / maxf(fov_speed_reference, 1.0), 0.0, 1.0)
+		bank_target = -skier.edge_amount * bank_speed * deg_to_rad(skier_bank_reference_degrees) * turn_bank_share
+		bank_target = clampf(bank_target, -deg_to_rad(turn_bank_limit_degrees), deg_to_rad(turn_bank_limit_degrees))
+	_smoothed_bank = lerpf(_smoothed_bank, bank_target, 1.0 - exp(-turn_bank_response * delta))
+	var blended_forward := (_yaw_dir * cos(_pitch) - up * sin(_pitch)).normalized()
+	var banked_up := Vector3.UP.rotated(blended_forward, _smoothed_bank)
+	global_basis = Basis.looking_at(blended_forward, banked_up)
 
 	var fov_target := base_fov + clampf(speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain + _profile_fov
 	camera.fov = lerpf(camera.fov, fov_target, 1.0 - exp(-fov_rate * delta))
@@ -278,10 +293,20 @@ func debug_summary() -> String:
 	if target == null:
 		return "Cam no target"
 	var actual_distance := global_position.distance_to(target.global_position)
-	return "Cam %s d %.1f  fov %.0f  look %.1f\nCam pitch %+.1f°  air %.2f  uperr %.1f°  yawx%.2f hw%.2f" % [
+	return "Cam %s d %.1f  fov %.0f  look %.1f\nCam pitch %+.1f° bank %+.1f° air %.2f  uperr %.1f°  yawx%.2f hw%.2f" % [
 		CameraState.keys()[camera_state], actual_distance, camera.fov, _smoothed_look_ahead,
-		rad_to_deg(_pitch), _smoothed_air_height, rad_to_deg(_filtered_surface_up.angle_to(Vector3.UP)),
+		rad_to_deg(_pitch), rad_to_deg(_smoothed_bank), _smoothed_air_height, rad_to_deg(_filtered_surface_up.angle_to(Vector3.UP)),
 		_profile_yaw_scale, _smoothed_heading_weight]
+
+func debug_snapshot() -> Dictionary:
+	return {
+		"state": CameraState.keys()[camera_state],
+		"fov": camera.fov if camera != null else base_fov,
+		"look_ahead": _smoothed_look_ahead,
+		"bank_degrees": rad_to_deg(_smoothed_bank),
+		"yaw_scale": _profile_yaw_scale,
+		"heading_weight": _smoothed_heading_weight,
+	}
 
 func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
 	if from.length_squared() < 0.0001 or to.length_squared() < 0.0001:

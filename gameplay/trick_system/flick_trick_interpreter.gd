@@ -166,15 +166,18 @@ func _update_trigger_grabs(sample: TrickInputSample) -> void:
 
 func _apply_grab_command(sample: TrickInputSample) -> void:
 	_command.phase = TrickCommand.PresentationPhase.GRAB
-	_command.grab_amount = maxf(sample.left_trigger if _left_grab_active else 0.0, sample.right_trigger if _right_grab_active else 0.0)
+	var amount := maxf(sample.left_trigger if _left_grab_active else 0.0, sample.right_trigger if _right_grab_active else 0.0)
 	_command.grab_tweak = sample.right_stick
-	_command.grab_pose = _resolve_grab_pose(_left_grab_active, _right_grab_active, sample.right_stick)
+	_command.style_pose = _resolve_style_pose(_left_grab_active, _right_grab_active, sample.right_stick)
+	if _command.style_pose != TrickController.StylePose.NONE:
+		_command.style_amount = amount
+	else:
+		_command.grab_amount = amount
+		_command.grab_pose = _resolve_grab_pose(_left_grab_active, _right_grab_active, sample.right_stick)
 	_gesture_armed = false
 
 func _resolve_grab_pose(left: bool, right: bool, style: Vector2) -> int:
 	if left and right:
-		if style.y < -0.45: return TrickController.GrabPose.SPREAD_EAGLE
-		if style.y > 0.45: return TrickController.GrabPose.DAFFY
 		return TrickController.GrabPose.DOUBLE
 	if left:
 		if style.x > 0.45: return TrickController.GrabPose.MUTE_LEFT
@@ -187,3 +190,14 @@ func _resolve_grab_pose(left: bool, right: bool, style: Vector2) -> int:
 		if style.y > 0.45: return TrickController.GrabPose.NOSE
 		return TrickController.GrabPose.SAFETY_RIGHT
 	return TrickController.GrabPose.NONE
+
+func _resolve_style_pose(left: bool, right: bool, style: Vector2) -> int:
+	if not left or not right:
+		return TrickController.StylePose.NONE
+	if absf(style.x) > 0.45 and absf(style.x) >= absf(style.y):
+		return TrickController.StylePose.SHIFTY_LEFT if style.x < 0.0 else TrickController.StylePose.SHIFTY_RIGHT
+	if style.y < -0.45:
+		return TrickController.StylePose.SPREAD_EAGLE
+	if style.y > 0.45:
+		return TrickController.StylePose.DAFFY
+	return TrickController.StylePose.NONE

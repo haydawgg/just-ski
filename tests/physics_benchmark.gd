@@ -53,6 +53,17 @@ var air_trick_name := ""
 var grab_armed_press_pending := false
 var grab_released_before_landing := false
 var completed_tricks: Array = []
+var failures: Array[String] = []
+var high_speed_start_speed := 0.0
+var high_speed_min_speed := INF
+var high_speed_start_heading := 0.0
+var high_speed_quarter_heading := 0.0
+var high_speed_end_heading := 0.0
+var high_speed_quarter_captured := false
+var high_speed_max_heading_travel := 0.0
+var high_speed_min_carve_ratio := 1.0
+var high_speed_max_skid := 0.0
+var high_speed_max_edge := 0.0
 
 func _ready() -> void:
 	skier = resort.get_node("Skier") as SkierController
@@ -159,6 +170,36 @@ func _physics_process(delta: float) -> void:
 			link_min_speed = minf(link_min_speed, skier.velocity.length())
 			if phase_timer >= LINK_TURN_SECONDS:
 				Input.action_release("steer_right")
+				_reset_scenario("HIGH_SPEED_CARVE")
+				_begin("HIGH_SPEED_SETTLE")
+		"HIGH_SPEED_SETTLE":
+			if phase_timer >= SETTLE_SECONDS and skier.state == SkierController.State.GROUND:
+				skier.velocity = ParkLayout.downhill() * 22.0
+				skier.global_basis = ParkLayout.downhill_basis()
+				high_speed_start_speed = skier.velocity.length()
+				high_speed_min_speed = high_speed_start_speed
+				high_speed_start_heading = _heading_degrees()
+				high_speed_quarter_heading = high_speed_start_heading
+				high_speed_end_heading = high_speed_start_heading
+				high_speed_quarter_captured = false
+				high_speed_max_heading_travel = 0.0
+				high_speed_min_carve_ratio = 1.0
+				high_speed_max_skid = 0.0
+				high_speed_max_edge = 0.0
+				_begin("HIGH_SPEED_CARVE")
+				Input.action_press("steer_left", 1.0)
+		"HIGH_SPEED_CARVE":
+			high_speed_min_speed = minf(high_speed_min_speed, skier.velocity.length())
+			high_speed_end_heading = _heading_degrees()
+			high_speed_max_heading_travel = maxf(high_speed_max_heading_travel, absf(skier.heading_travel_angle_degrees))
+			high_speed_min_carve_ratio = minf(high_speed_min_carve_ratio, skier.current_carve_ratio)
+			high_speed_max_skid = maxf(high_speed_max_skid, skier.skid_amount)
+			high_speed_max_edge = maxf(high_speed_max_edge, absf(skier.edge_amount))
+			if not high_speed_quarter_captured and phase_timer >= 0.25:
+				high_speed_quarter_heading = high_speed_end_heading
+				high_speed_quarter_captured = true
+			if phase_timer >= 1.0:
+				Input.action_release("steer_left")
 				_reset_scenario("GROUND_ACCELERATION_TEST")
 				_begin("ACCEL_SETTLE")
 		"ACCEL_SETTLE":
@@ -351,20 +392,34 @@ func _sample() -> void:
 func _finish() -> void:
 	_release_inputs()
 	var carve_heading_delta := absf(rad_to_deg(angle_difference(deg_to_rad(carve_start_heading), deg_to_rad(carve_end_heading))))
+	var high_speed_quarter_delta := absf(rad_to_deg(angle_difference(deg_to_rad(high_speed_start_heading), deg_to_rad(high_speed_quarter_heading))))
+	var high_speed_total_delta := absf(rad_to_deg(angle_difference(deg_to_rad(high_speed_start_heading), deg_to_rad(high_speed_end_heading))))
 	var grab_completed := false
 	for trick_result: Dictionary in completed_tricks:
 		if "Safety Grab Left" in str(trick_result.get("text", "")):
 			grab_completed = true
 	if collision_events.size() > 0:
-		push_error("BENCH_CARVE_FAIL: feature collision occurred on the pure carve route")
+		failures.append("Feature collision occurred on the pure carve route")
 	if carve_heading_delta < 120.0:
-		push_error("BENCH_CARVE_FAIL: pure carve only rotated %.1f degrees" % carve_heading_delta)
+		failures.append("Pure carve only rotated %.1f degrees" % carve_heading_delta)
 	if acceleration_air_frames > 0:
-		push_error("BENCH_ACCEL_FAIL: ground acceleration test left the snow for %d frames" % acceleration_air_frames)
+		failures.append("Ground acceleration test left the snow for %d frames" % acceleration_air_frames)
 	if link_collision_count > 0:
-		push_error("BENCH_LINK_FAIL: linked S-turn encountered %d feature collisions" % link_collision_count)
+		failures.append("Linked S-turn encountered %d feature collisions" % link_collision_count)
 	if not grab_released_before_landing or not grab_completed:
-		push_error("BENCH_GRAB_FAIL: released grab was not completed and scored")
+		failures.append("Released grab was not completed and scored")
+	if high_speed_quarter_delta > 12.0:
+		failures.append("High-speed steering rotated %.1f degrees in 0.25 s instead of loading the edge progressively" % high_speed_quarter_delta)
+	if high_speed_total_delta < 18.0 or high_speed_total_delta > 55.0:
+		failures.append("High-speed one-second carve rotated %.1f degrees outside the approved 18-55 degree band" % high_speed_total_delta)
+	if high_speed_max_heading_travel > skier.profile.high_speed_heading_travel_limit_degrees + 6.0:
+		failures.append("High-speed heading/travel separation reached %.1f degrees" % high_speed_max_heading_travel)
+	if high_speed_max_edge < 0.9:
+		failures.append("High-speed steering never established a full edge")
+	if high_speed_min_carve_ratio > 0.97 or high_speed_max_skid < 0.02:
+		failures.append("High-speed full input did not transition measurably from carve toward skid")
+	if high_speed_min_speed < high_speed_start_speed * 0.6:
+		failures.append("High-speed carve destroyed too much momentum")
 	var report := {
 		"physics_ticks_per_second": Engine.physics_ticks_per_second,
 		"benchmark_start_transform": benchmark_start_transform,
@@ -383,6 +438,13 @@ func _finish() -> void:
 			"pure_carve_grounded_frames": carve_grounded_frames,
 			"linked_turn_min_speed": snappedf(link_min_speed, 0.01),
 			"linked_turn_feature_collisions": link_collision_count,
+			"high_speed_start_speed": snappedf(high_speed_start_speed, 0.01),
+			"high_speed_min_speed": snappedf(high_speed_min_speed, 0.01),
+			"high_speed_quarter_heading_delta_deg": snappedf(high_speed_quarter_delta, 0.1),
+			"high_speed_total_heading_delta_deg": snappedf(high_speed_total_delta, 0.1),
+			"high_speed_max_heading_travel_deg": snappedf(high_speed_max_heading_travel, 0.1),
+			"high_speed_min_carve_ratio": snappedf(high_speed_min_carve_ratio, 0.001),
+			"high_speed_max_skid": snappedf(high_speed_max_skid, 0.001),
 			"ground_acceleration_start_speed": snappedf(acceleration_start_speed, 0.01),
 			"ground_acceleration_end_speed": snappedf(acceleration_end_speed, 0.01),
 			"ground_acceleration_air_frames": acceleration_air_frames,
@@ -391,11 +453,12 @@ func _finish() -> void:
 		},
 		"samples": samples,
 	}
-	var file := FileAccess.open("res://tests/physics_benchmark_results.json", FileAccess.WRITE)
+	var report_path := "user://physics_benchmark_results.json"
+	var file := FileAccess.open(report_path, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(report))
 		file.close()
-		print("BENCH_JSON_WRITTEN samples=", samples.size(), " phases=", phase_names.size())
+		print("BENCH_JSON_WRITTEN path=", ProjectSettings.globalize_path(report_path), " samples=", samples.size(), " phases=", phase_names.size())
 	else:
 		print("BENCH_JSON_FAILED error=", FileAccess.get_open_error())
 	for landing in landings:
@@ -403,8 +466,15 @@ func _finish() -> void:
 	for window in air_windows:
 		print("BENCH_AIR ", JSON.stringify(window))
 	print("BENCH_CARVE_SUMMARY start=", carve_start_speed, " min=", carve_min_speed, " collisions=", collision_events.size())
+	print("BENCH_HIGH_SPEED_SUMMARY start=", high_speed_start_speed, " min=", high_speed_min_speed, " quarter_deg=", high_speed_quarter_delta, " total_deg=", high_speed_total_delta, " separation_deg=", high_speed_max_heading_travel, " carve_min=", high_speed_min_carve_ratio, " skid_max=", high_speed_max_skid)
 	print("BENCH_ACCEL_SUMMARY start=", acceleration_start_speed, " end=", acceleration_end_speed, " air_frames=", acceleration_air_frames)
 	print("BENCH_BRAKE_SUMMARY start=", brake_start_speed, " end=", brake_end_speed)
 	print("BENCH_DONE")
 	AudioManager.shutdown_audio()
-	get_tree().quit(0)
+	if failures.is_empty():
+		print("BENCH_PASS: turn inertia, high-speed carve/skid transition, air, landing, grab, and braking passed")
+		get_tree().quit(0)
+		return
+	for failure: String in failures:
+		push_error("BENCH_FAIL: " + failure)
+	get_tree().quit(1)

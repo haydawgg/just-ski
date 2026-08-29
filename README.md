@@ -33,11 +33,11 @@ All gameplay input is defined through Godot's InputMap. The HUD switches prompts
 ## Implemented prototype slice
 
 - Momentum-based slope gravity (steeper ~18° park face), lower air gravity for hang time, powder/packed/groomed grip and drag, bounded lateral edge grip, carving, skidding, stick pressure, tuck, and hockey-stop braking.
-- Skate-inspired Flick-It preload/pop gestures, discrete spin/flip/cork impulses sized for ~360° on the middle kicker, low-authority air trim, ballistic landing prediction, plausibility-gated landing evaluation, and in-place bail recovery.
-- Slope-relative spring camera with larger skier framing, per-channel smoothing (split horizontal/vertical springs, yaw lag scaled by speed, stabilized pitch), carve-aware travel/heading look blending, filtered terrain up-vector, smoothed air framing, speed look-ahead/FOV, and collision avoidance.
+- Skate-inspired Flick-It preload/pop gestures, discrete spin/flip/cork impulses sized for ~360° on the middle kicker, low-authority air trim, ballistic landing prediction, plausibility-gated landing evaluation, and momentum-preserving controlled crash/recovery.
+- Slope-relative spring camera with larger skier framing, per-channel smoothing (split horizontal/vertical springs, yaw lag scaled by speed, stabilized pitch), carve-aware travel/heading look blending, restrained turn bank, filtered terrain up-vector, smoothed air framing, speed look-ahead/FOV, and collision avoidance.
 - Signed world-triplanar CC0 snow PBR with Fast and Premium shader tiers, directional groomer corduroy, distance-faded detail, reflection-driven crystals, and premium SSS/transmittance.
 - Reusable spline-backed rails/boxes/tubes with height/approach validation, blended capture, balance drift / slip-off, bidirectional and reverse travel, grind friction, and pop-off.
-- Detailed layered skier animation with directional setup/release, head spotting, mirrored spin/flip/cork silhouettes, data-driven ski-local grab targets, whole-body/target-leg reach and bounded two-bone arm finishing, staged landing anticipation/compression/recovery, staged rail approach/entry/slide/exit with an arms-led balance hierarchy and intent-driven sideways slide, bail motion, and debug telemetry.
+- Gameplay-readable layered skier animation with athletic carve/slarve/switch silhouettes, trailing poles, setup→compact→spot→open spin phases, distinct flip/cork shapes, data-driven physical grabs and independent spread/daffy/shifty styles, contrasted rail stances, clean-landing stomp, delta-filtered inertia, predictive pre-bail, and directional crash poses.
 - Spin/flip/grab/grind recognition, landing quality, centralized timed combo / line-link scoring, combo and rail-balance HUD feedback, surface-aware procedural audio, throttled rumble, and snow spray.
 - Data-driven ~300 m graybox face with six zones and 36 authored features: tables, rollers, hips, side hits, berms, moguls, butter pads, rails, boxes, tubes, wallrides, bonks, gates, and a cannon.
 - Fast session markers plus automatic recovery after leaving the playable course.
@@ -66,6 +66,7 @@ $env:APPDATA=(Resolve-Path '.godot_user\roaming').Path
 $env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/runtime_smoke.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/gameplay_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/physics_benchmark.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/physics_collision_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/settings_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/animation_acceptance.tscn
@@ -74,11 +75,23 @@ $env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/rail_animation_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/trick_animation_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/grab_animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/animation_silhouette_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/animation_polish_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/crash_recovery_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/ski_feel_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/terrain_suspension_course.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_trick_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/flick_gameplay_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/trick_ui_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/session_flow_acceptance.tscn
 ```
+
+Generate the deterministic 21.6-second actual-follow-camera animation comparison (MP4 plus 18 review frames):
+
+```powershell
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-silhouette-showcase
+```
+
+The comparison is written to `.godot_user/captures/animation_silhouette_comparison.mp4`.
 
 See `docs/KNOWN_ISSUES.md` for the honest boundary between exercised automated behavior and hardware/visual checks that still require a human play session.

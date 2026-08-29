@@ -41,11 +41,11 @@ func _ready() -> void:
 	InputManager.device_changed.connect(_on_device_changed)
 	SessionManager.marker_changed.connect(_on_marker_changed)
 	InputManager.controller_connection_changed.connect(_on_controller_connection)
-	GifRecorder.recording_changed.connect(_on_recording_changed)
-	GifRecorder.encoding_changed.connect(_on_gif_encoding_changed)
-	GifRecorder.clip_saved.connect(_on_gif_saved)
-	GifRecorder.clip_failed.connect(_on_gif_failed)
-	GifRecorder.clip_info.connect(_show_notice)
+	ClipRecorder.recording_changed.connect(_on_recording_changed)
+	ClipRecorder.encoding_changed.connect(_on_clip_encoding_changed)
+	ClipRecorder.clip_saved.connect(_on_clip_saved)
+	ClipRecorder.clip_failed.connect(_on_clip_failed)
+	ClipRecorder.clip_info.connect(_show_notice)
 	_update_hint()
 
 func bind_player(value: SkierController) -> void:
@@ -679,6 +679,7 @@ func _on_telemetry(data: Dictionary) -> void:
 	speed_label.text = "%d %s" % [roundi(speed), "mph" if bool(GameSettings.active["units_mph"]) else "km/h"]
 	var animation: Dictionary = data.get("animation", {})
 	var flick_data: Dictionary = data.get("flick", {})
+	var crash_data: Dictionary = data.get("crash", {})
 	var landing_time := float(data.get("predicted_landing_time", -1.0))
 	var landing_imminent := bool(data.get("landing_feedback_armed", false)) and str(data.get("state", "")) == "AIR" and landing_time >= 0.0 and landing_time < 0.7
 	landing_cue_label.visible = landing_imminent
@@ -698,12 +699,12 @@ func _on_telemetry(data: Dictionary) -> void:
 	if rail_balance_bar != null:
 		rail_balance_bar.value = float(data.get("rail_balance", 0.0))
 		rail_balance_bar.visible = str(data.state) == "GRIND"
-	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f prog %.2f toEnd %.1f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f\nAir %s size %.2f anticip %.2f\nLand %s sev %.2f bal %.2f cmp %.2f\nRailAnim %s inf %.2f appr %.2f entrySev %.2f cmp %.2f slide %.2f exit %.2f" % [
+	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f  landing ctrl %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f prog %.2f toEnd %.1f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f\nAir %s size %.2f anticip %.2f\nLand %s sev %.2f bal %.2f cmp %.2f\nRailAnim %s inf %.2f appr %.2f entrySev %.2f cmp %.2f slide %.2f exit %.2f" % [
 		Engine.get_frames_per_second(), Engine.physics_ticks_per_second, data.state, data.grounded, data.contact_confidence,
 		data.get("surface", "Powder"), data.speed_mps, data.get("slope_angle_degrees", 0.0), data.surface_normal,
 		data.get("steering_raw", 0.0), data.get("steering", 0.0), data.get("effective_steer_rate", 0.0),
 		data.get("heading_travel_angle_degrees", 0.0), data.edge, data.get("carve_ratio", 1.0), data.get("skid_amount", 0.0),
-		data.get("available_grip", 0.0), data.get("centripetal_demand", 0.0), data.get("brake_amount", 0.0), data.get("pressure", 0.0),
+		data.get("available_grip", 0.0), data.get("centripetal_demand", 0.0), data.get("brake_amount", 0.0), data.get("pressure", 0.0), data.get("landing_control_multiplier", 1.0),
 		data.lateral_slip, data.carve_force, data.angular_velocity, data.rail,
 		data.get("rail_balance", 0.0), data.get("rail_progress", 0.0), data.get("rail_distance_to_end", 0.0),
 		flick_data.get("kind", "NONE"), flick_data.get("phase", "NEUTRAL"),
@@ -721,6 +722,28 @@ func _on_telemetry(data: Dictionary) -> void:
 		animation.get("grab_type", "—"), animation.get("grab_phase", "IDLE"), animation.get("grab_hand", "NONE"),
 		animation.get("grab_target_ski", "NONE"), animation.get("grab_pose_weight", 0.0),
 		animation.get("grab_contact_weight", 0.0), animation.get("grab_reach_error", 0.0), animation.get("grab_hold_time", 0.0)]
+	var torso_follow := animation.get("torso_follow_through", Vector3.ZERO) as Vector3
+	var left_arm_inertia := animation.get("left_arm_inertia", Vector3.ZERO) as Vector3
+	var right_arm_inertia := animation.get("right_arm_inertia", Vector3.ZERO) as Vector3
+	var left_pole_inertia := animation.get("left_pole_inertia", Vector3.ZERO) as Vector3
+	var right_pole_inertia := animation.get("right_pole_inertia", Vector3.ZERO) as Vector3
+	debug_label.text += "\nPolish accel lat %.2f vert %.2f yaw %.2f  lag torso %.3f arm %.3f pole %.3f  weight %.2f" % [
+		animation.get("lateral_accel_filtered", 0.0), animation.get("vertical_accel_filtered", 0.0),
+		animation.get("yaw_accel_filtered", 0.0), torso_follow.length(),
+		maxf(left_arm_inertia.length(), right_arm_inertia.length()),
+		maxf(left_pole_inertia.length(), right_pole_inertia.length()),
+		animation.get("secondary_motion_weight", 0.0)]
+	var crash_reason := str(crash_data.get("reason", "NONE"))
+	var crash_stage := str(crash_data.get("stage", "NONE"))
+	debug_label.text += "\nCrash %s / %s src %s impact %.2f angular %.2f balance %.2f rest %s t %.2f" % [
+		crash_reason,
+		crash_stage,
+		crash_data.get("source", "NONE"),
+		crash_data.get("impact_speed", 0.0),
+		crash_data.get("angular_speed", 0.0),
+		crash_data.get("balance_error", 0.0),
+		crash_data.get("rest_detected", false),
+		crash_data.get("elapsed", 0.0)]
 	if camera_rig != null:
 		debug_label.text += "\n" + camera_rig.debug_summary()
 
@@ -804,22 +827,22 @@ func _on_recording_changed(active: bool) -> void:
 		recording_label.add_theme_color_override("font_color", Color("#ff3b30"))
 	recording_pulse = 0.0
 	if active:
-		_show_notice("GIF RECORDING — F9 TO STOP")
+		_show_notice("RECORDING — F9 TO STOP")
 
-func _on_gif_encoding_changed(active: bool) -> void:
+func _on_clip_encoding_changed(active: bool) -> void:
 	if recording_label != null:
 		recording_label.visible = active
 		recording_label.text = "● ENC"
 		recording_label.add_theme_color_override("font_color", Color("#ffc857"))
 	recording_pulse = 0.0
 	if active:
-		_show_notice("ENCODING GIF — SAVES TO DOWNLOADS WHEN DONE")
+		_show_notice("ENCODING CLIP — SAVES TO DOWNLOADS WHEN DONE")
 
-func _on_gif_saved(path: String) -> void:
-	_show_notice("GIF SAVED — %s" % path.get_file())
+func _on_clip_saved(path: String) -> void:
+	_show_notice("CLIP SAVED — %s" % path.get_file())
 
-func _on_gif_failed(reason: String) -> void:
-	_show_notice("GIF CAPTURE FAILED — %s" % reason)
+func _on_clip_failed(reason: String) -> void:
+	_show_notice("CLIP CAPTURE FAILED — %s" % reason)
 
 func _on_device_changed(_device: String) -> void:
 	_update_hint()
