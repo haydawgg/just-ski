@@ -27,11 +27,12 @@ func _test_ground_stance_and_carve_loading() -> void:
 	add_child(rig)
 	var frame := _ground_frame()
 	_step(rig, frame, 90)
-	if rig.left_knee.rotation.x < 0.58 or rig.right_knee.rotation.x < 0.58:
+	var neutral := rig.debug_snapshot()
+	if float((neutral.left_knee_rotation as Vector3).x) < 0.58 or float((neutral.right_knee_rotation as Vector3).x) < 0.58:
 		failures.append("Ground neutral returned to a straight-legged mannequin stance")
-	if rig.pelvis.position.y > 0.83:
+	if float((neutral.pelvis_position as Vector3).y) > 0.83:
 		failures.append("Ground neutral pelvis remained too high for an athletic ski stance")
-	if absf(rig.spine.rotation.x) < 0.19:
+	if absf(float((neutral.spine_rotation as Vector3).x)) < 0.19:
 		failures.append("Ground neutral torso remained too upright")
 
 	frame.edge = 1.0
@@ -41,15 +42,16 @@ func _test_ground_stance_and_carve_loading() -> void:
 	frame.carve_ratio = 1.0
 	frame.skid_ratio = 0.0
 	_step(rig, frame, 120)
-	var leg_difference := absf(rig.left_knee.rotation.x - rig.right_knee.rotation.x)
+	var loaded := rig.debug_snapshot()
+	var leg_difference := absf(float((loaded.left_knee_rotation as Vector3).x) - float((loaded.right_knee_rotation as Vector3).x))
 	if leg_difference < 0.48:
 		failures.append("Loaded carve did not create a gameplay-readable inside/outside leg difference (%.3f rad)" % leg_difference)
-	if absf(rig.pelvis.position.x) < 0.24:
+	if absf(float((loaded.pelvis_position as Vector3).x)) < 0.24:
 		failures.append("Loaded carve pelvis did not move inside the turn strongly enough")
-	if absf(rig.balance_root.rotation.z) > 0.05:
+	if absf(float((loaded.balance_root_rotation as Vector3).z)) > 0.05:
 		failures.append("Loaded carve still relied too heavily on whole-body root lean")
-	if rig.pelvis.rotation.z * rig.chest.rotation.z >= 0.0 or absf(rig.chest.rotation.z) < 0.1:
-		failures.append("Loaded carve torso did not visibly counterbalance the lower body (pelvis %.3f, chest %.3f)" % [rig.pelvis.rotation.z, rig.chest.rotation.z])
+	if float((loaded.pelvis_rotation as Vector3).z) * float((loaded.chest_rotation as Vector3).z) >= 0.0 or absf(float((loaded.chest_rotation as Vector3).z)) < 0.1:
+		failures.append("Loaded carve torso did not visibly counterbalance the lower body (pelvis %.3f, chest %.3f)" % [float((loaded.pelvis_rotation as Vector3).z), float((loaded.chest_rotation as Vector3).z)])
 
 	remove_child(rig)
 	rig.free()
@@ -68,7 +70,7 @@ func _test_gameplay_distance_pole_direction() -> void:
 	frame.turn_rate = -0.9
 	frame.lateral_acceleration = -11.0
 	_step(rig, frame, 120)
-	var landmarks := rig.debug_snapshot().get("silhouette_landmarks", {}) as Dictionary
+	var landmarks := rig.debug_snapshot().get("canonical_landmarks", {}) as Dictionary
 	if not landmarks.has("left_hand") or not landmarks.has("left_pole_tip"):
 		failures.append("Animation telemetry did not expose silhouette landmarks")
 	else:
@@ -98,12 +100,12 @@ func _test_straight_air_has_deterministic_asymmetry() -> void:
 	var air := _air_frame()
 	_step(rig, air, 90)
 	var snapshot := rig.debug_snapshot()
-	var knee_difference := absf(rig.left_knee.rotation.x - rig.right_knee.rotation.x)
+	var knee_difference := absf(float((snapshot.left_knee_rotation as Vector3).x) - float((snapshot.right_knee_rotation as Vector3).x))
 	if knee_difference < 0.18:
 		failures.append("Straight air converged on symmetric legs (%.3f rad difference)" % knee_difference)
 	if absf(float(snapshot.get("air_style_side", 0.0))) < 0.9:
 		failures.append("Takeoff did not cache a deterministic air-style side")
-	if absf(rig.pelvis.position.x) < 0.035:
+	if absf(float((snapshot.pelvis_position as Vector3).x)) < 0.035:
 		failures.append("Straight-air pelvis remained centered and mannequin-like")
 	remove_child(rig)
 	rig.free()
@@ -196,7 +198,7 @@ func _sample_actual_gameplay_camera(frame: SkierAnimationFrame, event: int = -1,
 	for _index: int in step_count:
 		skier.animation_controller.apply_frame(frame, STEP)
 		camera_rig._physics_process(STEP)
-	var world := skier.animation_controller.debug_snapshot().silhouette_landmarks as Dictionary
+	var world := skier.animation_controller.debug_snapshot().canonical_landmarks as Dictionary
 	var projected := {}
 	for key: String in ["head", "pelvis", "left_knee", "right_knee", "left_boot", "right_boot", "left_hand", "right_hand", "left_ski_nose", "right_ski_nose", "left_ski_tail", "right_ski_tail"]:
 		projected[key] = _project_gameplay_landmark(camera_rig.camera, world[key] as Vector3)
@@ -317,16 +319,17 @@ func _sample_spin_signature(degrees: float, side: float = 1.0) -> PackedFloat32A
 	frame.angular_velocity = Vector3(0.0, side * 5.4, 0.0)
 	frame.rotation_accumulated = Vector3(0.0, side * deg_to_rad(degrees), 0.0)
 	_step(rig, frame, 90)
+	var snapshot := rig.debug_snapshot()
 	var signature := PackedFloat32Array([
-		rig.left_knee.rotation.x - rig.right_knee.rotation.x,
-		rig.pelvis.position.x,
-		rig.pelvis.rotation.y,
-		rig.chest.rotation.y,
-		rig.chest.rotation.z,
-		rig.left_shoulder.rotation.x - rig.right_shoulder.rotation.x,
-		rig.left_shoulder.rotation.z - rig.right_shoulder.rotation.z,
-		rig.left_ski.rotation.x - rig.right_ski.rotation.x,
-		rig.left_ski.rotation.z - rig.right_ski.rotation.z,
+		(snapshot.left_knee_rotation as Vector3).x - (snapshot.right_knee_rotation as Vector3).x,
+		(snapshot.pelvis_position as Vector3).x,
+		(snapshot.pelvis_rotation as Vector3).y,
+		(snapshot.chest_rotation as Vector3).y,
+		(snapshot.chest_rotation as Vector3).z,
+		(snapshot.left_shoulder_rotation as Vector3).x - (snapshot.right_shoulder_rotation as Vector3).x,
+		(snapshot.left_shoulder_rotation as Vector3).z - (snapshot.right_shoulder_rotation as Vector3).z,
+		(snapshot.left_ski_rotation as Vector3).x - (snapshot.right_ski_rotation as Vector3).x,
+		(snapshot.left_ski_rotation as Vector3).z - (snapshot.right_ski_rotation as Vector3).z,
 	])
 	remove_child(rig)
 	rig.free()

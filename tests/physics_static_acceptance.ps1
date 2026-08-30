@@ -60,6 +60,15 @@ Require-Match $layout 'resolved_pop_strength\s*:=\s*design_pop_strength\s+if\s+d
 Require-Match $layout 'physics_profile\.pop_impulse\s*\*\s*clampf\(resolved_pop_strength' "Jump sizing must use active-profile pop impulse."
 Require-Match $layout 'physics_profile\.air_gravity' "Jump sizing must use active-profile air gravity."
 Reject-Match $layout 'const\s+AIR_GRAVITY|const\s+HALF_POP' "Duplicated ballistic constants cannot remain in ParkLayout."
+Require-Match $layout 'func\s+_add_profiled_snow_body\(' "Jumps, rollers, and aprons must share the sampled snow-profile builder."
+Require-Match $layout 'func\s+_add_grid_snow_body\(' "Sculpted snow meshes and collision must come from the same authored grid."
+Require-Match $layout 'mesh\.create_trimesh_shape\(\)' "Sculpted snow collision must match the rendered profile mesh."
+Require-Match $layout 'lip_samples\s*:=\s*14' "Jump takeoffs must use enough longitudinal samples to round the lip transition."
+Require-Match $layout 'table_samples\s*:=\s*10' "Jump knuckles must use a sampled contour instead of a flat slab."
+Require-Match $layout 'landing_samples\s*:=\s*14' "Jump landings and run-outs must use a sampled contour."
+Require-Match $layout '"BankSurface"' "Side banks must use the transition-shaped bank surface."
+Require-Match $layout 'add_rail_contours' "Rails must author approach and run-out snow contours."
+Require-Match $builder 'ParkLayout\.add_rail_contours' "Course construction must build rail approach and run-out zones."
 
 $jumpSpecs = [regex]::Matches($course, '(?m)^.*"kind":\s*"(?:tabletop|hip)".*$')
 if ($jumpSpecs.Count -eq 0) {

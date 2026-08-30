@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/characters/skier/skier_body.glb" id="1_body"]
+
+[node name="SkeletonSkierVisual" type="Node3D"]
+
+[node name="SkierBody" parent="." instance=ExtResource("1_body")]

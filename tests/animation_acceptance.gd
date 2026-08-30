@@ -27,9 +27,12 @@ func _ready() -> void:
 		get_tree().quit(1)
 
 func _test_rig_structure() -> void:
-	for node_name: String in ["Pelvis", "Spine", "Chest", "Head", "LeftHip", "RightHip", "LeftSki", "RightSki", "LeftHand", "RightHand", "LeftPole", "RightPole"]:
-		if rig.find_child(node_name, true, false) == null:
-			failures.append("Missing articulated rig node: " + node_name)
+	var snapshot := rig.debug_snapshot()
+	for key: String in ["pelvis_rotation", "spine_rotation", "chest_rotation", "head_rotation", "left_hip_rotation", "right_hip_rotation", "left_ski_rotation", "right_ski_rotation", "left_hand_rotation", "right_hand_rotation", "left_pole_rotation", "right_pole_rotation"]:
+		if not snapshot.has(key):
+			failures.append("Missing semantic rig observation: " + key)
+	if str(snapshot.get("rig_adapter", "none")) == "none":
+		failures.append("No presentation adapter was selected")
 
 func _test_ground_poses() -> void:
 	frame.reset()

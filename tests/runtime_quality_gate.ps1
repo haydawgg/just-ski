@@ -13,11 +13,15 @@ $env:APPDATA = (Resolve-Path (Join-Path $RepoRoot ".godot_user/roaming")).Path
 $env:LOCALAPPDATA = (Resolve-Path (Join-Path $RepoRoot ".godot_user/local")).Path
 $scenes = @(
 	"res://tests/runtime_smoke.tscn",
+	"res://tests/environment_visual_acceptance.tscn",
 	"res://tests/gameplay_acceptance.tscn",
 	"res://tests/physics_benchmark.tscn",
 	"res://tests/physics_collision_acceptance.tscn",
 	"res://tests/settings_acceptance.tscn",
 	"res://tests/animation_acceptance.tscn",
+	"res://tests/character_equipment_scale_acceptance.tscn",
+	"res://tests/character_presentation_acceptance.tscn",
+	"res://tests/skeleton_rig_acceptance.tscn",
 	"res://tests/jump_animation_acceptance.tscn",
 	"res://tests/landing_animation_acceptance.tscn",
 	"res://tests/rail_animation_acceptance.tscn",

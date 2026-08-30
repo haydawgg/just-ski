@@ -164,9 +164,9 @@ func _run_full_sequence(hz: float) -> Dictionary:
 	_advance(rig, frame, 0.65, delta, "RESPAWN_SKI_AWAY", stats)
 
 	var final_snapshot := rig.debug_snapshot()
-	stats["final_pelvis_rotation"] = rig.pelvis.rotation
-	stats["final_chest_rotation"] = rig.chest.rotation
-	stats["final_left_pole_rotation"] = rig.left_pole.rotation
+	stats["final_pelvis_rotation"] = final_snapshot.pelvis_rotation
+	stats["final_chest_rotation"] = final_snapshot.chest_rotation
+	stats["final_left_pole_rotation"] = final_snapshot.left_pole_rotation
 	stats["final_secondary_weight"] = float(final_snapshot.get("secondary_motion_weight", 0.0))
 	stats["final_pole_lag"] = maxf(
 		(final_snapshot.get("left_pole_inertia", Vector3.ZERO) as Vector3).length(),
@@ -282,20 +282,20 @@ func _record(rig: SkierAnimationController, stage: String, _delta: float, stats:
 	if not bool(stats.initialized):
 		stats.initialized = true
 	else:
-		stats.maximum_pelvis_delta = maxf(float(stats.maximum_pelvis_delta), rig.pelvis.position.distance_to(stats.previous_pelvis_position as Vector3))
-		stats.maximum_chest_delta = maxf(float(stats.maximum_chest_delta), _euler_delta(rig.chest.rotation, stats.previous_chest_rotation as Vector3))
-		stats.maximum_head_delta = maxf(float(stats.maximum_head_delta), _euler_delta(rig.head.rotation, stats.previous_head_rotation as Vector3))
-		stats.maximum_knee_delta = maxf(float(stats.maximum_knee_delta), _euler_delta(rig.left_knee.rotation, stats.previous_left_knee_rotation as Vector3))
-		stats.maximum_shoulder_delta = maxf(float(stats.maximum_shoulder_delta), _euler_delta(rig.left_shoulder.rotation, stats.previous_left_shoulder_rotation as Vector3))
-		stats.maximum_pole_delta = maxf(float(stats.maximum_pole_delta), _euler_delta(rig.left_pole.rotation, stats.previous_left_pole_rotation as Vector3))
-	stats.previous_pelvis_position = rig.pelvis.position
-	stats.previous_pelvis_rotation = rig.pelvis.rotation
-	stats.previous_chest_rotation = rig.chest.rotation
-	stats.previous_head_rotation = rig.head.rotation
-	stats.previous_left_knee_rotation = rig.left_knee.rotation
-	stats.previous_left_shoulder_rotation = rig.left_shoulder.rotation
-	stats.previous_left_pole_rotation = rig.left_pole.rotation
-	if not _finite_vector(rig.pelvis.rotation) or not _finite_vector(rig.chest.rotation) or not _finite_vector(rig.left_pole.rotation):
+		stats.maximum_pelvis_delta = maxf(float(stats.maximum_pelvis_delta), (snapshot.pelvis_position as Vector3).distance_to(stats.previous_pelvis_position as Vector3))
+		stats.maximum_chest_delta = maxf(float(stats.maximum_chest_delta), _euler_delta(snapshot.chest_rotation as Vector3, stats.previous_chest_rotation as Vector3))
+		stats.maximum_head_delta = maxf(float(stats.maximum_head_delta), _euler_delta(snapshot.head_rotation as Vector3, stats.previous_head_rotation as Vector3))
+		stats.maximum_knee_delta = maxf(float(stats.maximum_knee_delta), _euler_delta(snapshot.left_knee_rotation as Vector3, stats.previous_left_knee_rotation as Vector3))
+		stats.maximum_shoulder_delta = maxf(float(stats.maximum_shoulder_delta), _euler_delta(snapshot.left_shoulder_rotation as Vector3, stats.previous_left_shoulder_rotation as Vector3))
+		stats.maximum_pole_delta = maxf(float(stats.maximum_pole_delta), _euler_delta(snapshot.left_pole_rotation as Vector3, stats.previous_left_pole_rotation as Vector3))
+	stats.previous_pelvis_position = snapshot.pelvis_position
+	stats.previous_pelvis_rotation = snapshot.pelvis_rotation
+	stats.previous_chest_rotation = snapshot.chest_rotation
+	stats.previous_head_rotation = snapshot.head_rotation
+	stats.previous_left_knee_rotation = snapshot.left_knee_rotation
+	stats.previous_left_shoulder_rotation = snapshot.left_shoulder_rotation
+	stats.previous_left_pole_rotation = snapshot.left_pole_rotation
+	if not _finite_vector(snapshot.pelvis_rotation as Vector3) or not _finite_vector(snapshot.chest_rotation as Vector3) or not _finite_vector(snapshot.left_pole_rotation as Vector3):
 		failures.append("Full run produced a non-finite joint transform during %s" % stage)
 
 func _check_run_metrics(stats: Dictionary) -> void:

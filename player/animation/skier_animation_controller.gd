@@ -3,6 +3,9 @@ extends Node3D
 
 const GrabDefinition = preload("res://player/animation/grab_animation_definition.gd")
 const PoseShapeDefinition = preload("res://player/animation/skier_pose_shape_definition.gd")
+const PoseDriverModule = preload("res://player/animation/skier_pose_driver.gd")
+const PrimitiveRigModule = preload("res://player/animation/primitive_skier_rig.gd")
+const SkeletonRigModule = preload("res://player/animation/skeleton_skier_rig.gd")
 
 enum AnimationEvent {
 	POP,
@@ -15,6 +18,8 @@ enum AnimationEvent {
 	RESPAWN,
 }
 
+enum RigMode { AUTO, SKELETON, PRIMITIVE }
+
 const STATE_GROUND := 0
 const STATE_AIR := 1
 const STATE_GRIND := 2
@@ -23,6 +28,8 @@ const STATE_BAIL := 3
 @export var profile: SkierAnimationProfile = preload("res://resources/animation/default_animation_profile.tres")
 @export var grab_library: Resource = preload("res://resources/animation/default_grab_animation_library.tres")
 @export var style_library: Resource = preload("res://resources/animation/default_style_pose_library.tres")
+@export var rig_mode: RigMode = RigMode.AUTO
+@export var skeleton_profile: SkierSkeletonProfile = preload("res://resources/animation/default_skier_skeleton_profile.tres")
 
 var balance_root: Node3D
 var pelvis: Node3D
@@ -55,6 +62,10 @@ var right_grab_binding_outside: Node3D
 var right_grab_binding_inside: Node3D
 var right_grab_nose: Node3D
 var right_grab_tail: Node3D
+var pose_driver: SkierPoseDriver
+var rig_adapter: SkierRigAdapter
+var rig_fallback_reason := ""
+var requested_rig_adapter := "skeleton"
 
 var _rotation_targets: Dictionary = {}
 var _position_targets: Dictionary = {}
@@ -263,6 +274,8 @@ func apply_frame(frame: SkierAnimationFrame, delta: float) -> void:
 	_apply_pre_bail_layer(frame)
 	_enforce_joint_limits()
 	_blend_targets(delta)
+	if rig_adapter != null:
+		rig_adapter.sync_pose(delta)
 
 func trigger(event: int, strength: float = 1.0, side: float = 0.0) -> void:
 	_reaction_event = event
@@ -292,6 +305,9 @@ func is_landing_idle() -> bool:
 
 func debug_snapshot() -> Dictionary:
 	return {
+		"rig_adapter": rig_adapter.adapter_name() if rig_adapter != null else "none",
+		"rig_requested": requested_rig_adapter,
+		"rig_fallback_reason": rig_fallback_reason,
 		"state": ["GROUND", "AIR", "GRIND", "BAIL"][_current_state],
 		"pose": _current_pose_name,
 		"blend": _current_blend,
@@ -299,16 +315,25 @@ func debug_snapshot() -> Dictionary:
 		"reaction_time": _reaction_time,
 		"pelvis_height": pelvis.position.y,
 		"pelvis_position": pelvis.position,
+		"balance_root_rotation": balance_root.rotation,
 		"pelvis_rotation": pelvis.rotation,
 		"spine_rotation": spine.rotation,
 		"chest_rotation": chest.rotation,
 		"head_rotation": head.rotation,
+		"left_hip_rotation": left_hip.rotation,
+		"right_hip_rotation": right_hip.rotation,
 		"left_knee_rotation": left_knee.rotation,
 		"right_knee_rotation": right_knee.rotation,
+		"left_boot_rotation": left_boot.rotation,
+		"right_boot_rotation": right_boot.rotation,
 		"left_ski_rotation": left_ski.rotation,
 		"right_ski_rotation": right_ski.rotation,
 		"left_shoulder_rotation": left_shoulder.rotation,
 		"right_shoulder_rotation": right_shoulder.rotation,
+		"left_elbow_rotation": left_elbow.rotation,
+		"right_elbow_rotation": right_elbow.rotation,
+		"left_hand_rotation": left_hand.rotation,
+		"right_hand_rotation": right_hand.rotation,
 		"left_pole_rotation": left_pole.rotation,
 		"right_pole_rotation": right_pole.rotation,
 		"crouch": _crouch_amount,
@@ -422,6 +447,7 @@ func debug_snapshot() -> Dictionary:
 		"right_arm_inertia": _right_arm_inertia,
 		"left_pole_inertia": _left_pole_inertia,
 		"right_pole_inertia": _right_pole_inertia,
+		"canonical_landmarks": pose_driver.canonical_landmarks() if pose_driver != null else {},
 		"silhouette_landmarks": _silhouette_landmarks(),
 		"leg_rebound": _leg_rebound,
 		"secondary_motion_weight": _secondary_motion_weight,
@@ -2050,6 +2076,17 @@ func _apply_grab_tweak(definition: Resource, tweak: Vector2, amount: float) -> v
 		_add_rotation(right_ski, Vector3(pitch * 0.18, 0.0, roll * 0.28))
 
 func _grab_target_marker(ski_side: int, target: int) -> Node3D:
+	var side := &"left" if ski_side == GrabDefinition.Ski.LEFT else (&"right" if ski_side == GrabDefinition.Ski.RIGHT else &"")
+	var target_name := &""
+	match target:
+		GrabDefinition.Target.BINDING_OUTSIDE: target_name = &"binding_outside"
+		GrabDefinition.Target.BINDING_INSIDE: target_name = &"binding_inside"
+		GrabDefinition.Target.NOSE: target_name = &"nose"
+		GrabDefinition.Target.TAIL: target_name = &"tail"
+	if rig_adapter != null and side != &"" and target_name != &"":
+		var adapter_target := rig_adapter.grab_target(side, target_name)
+		if adapter_target != null:
+			return adapter_target
 	if ski_side == GrabDefinition.Ski.LEFT:
 		match target:
 			GrabDefinition.Target.BINDING_OUTSIDE: return left_grab_binding_outside
@@ -2070,6 +2107,11 @@ func _aim_arm_at(shoulder: Node3D, elbow: Node3D, hand: Node3D, target_world: Ve
 		return
 	var upper := profile.grab_upper_arm_length
 	var lower := profile.grab_forearm_length
+	if rig_adapter != null:
+		var measured_lengths := rig_adapter.arm_lengths(&"left" if side < 0.0 else &"right")
+		if measured_lengths.x > 0.01 and measured_lengths.y > 0.01:
+			upper = measured_lengths.x
+			lower = measured_lengths.y
 	var raw_distance := target_local.length()
 	var distance := clampf(raw_distance, absf(upper - lower) + 0.01, upper + lower - 0.005)
 	var direction := target_local.normalized()
@@ -2252,6 +2294,10 @@ func _apply_secondary_motion(frame: SkierAnimationFrame) -> void:
 	_add_rotation(right_pole, _right_pole_inertia)
 
 func _silhouette_landmarks() -> Dictionary:
+	if rig_adapter != null:
+		var adapter_landmarks := rig_adapter.landmarks()
+		if not adapter_landmarks.is_empty():
+			return adapter_landmarks
 	return {
 		"head": head.to_global(Vector3(0.0, 0.22, 0.0)),
 		"pelvis": pelvis.global_position,
@@ -2520,127 +2566,63 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_initialize_secondary_motion_state()
 
 func _build_articulated_rig() -> void:
-	var jacket := _material(Color("#f24f68"), 0.78, 0.05)
-	var pants := _material(Color("#243543"), 0.82, 0.0)
-	var skin := _material(Color("#e8b58e"), 0.9, 0.0)
-	var dark := _material(Color("#132532"), 0.5, 0.25)
-	var accent := _material(Color("#ffc857"), 0.65, 0.05)
-	var lens := _material(Color("#5ac8fa"), 0.2, 0.55)
-
-	balance_root = _joint("BalanceRoot", self, Vector3.ZERO)
-	pelvis = _joint("Pelvis", balance_root, Vector3(0.0, 0.96, 0.0))
-	_add_box(pelvis, "PelvisMesh", Vector3(0.52, 0.22, 0.3), Vector3(0.0, 0.05, 0.0), pants)
-	spine = _joint("Spine", pelvis, Vector3(0.0, 0.14, 0.0))
-	_add_capsule(spine, "TorsoMesh", 0.31, 0.72, Vector3(0.0, 0.34, 0.0), jacket)
-	chest = _joint("Chest", spine, Vector3(0.0, 0.42, 0.0))
-	_add_box(chest, "ShoulderJacket", Vector3(0.74, 0.2, 0.34), Vector3(0.0, 0.14, 0.0), jacket)
-	head = _joint("Head", chest, Vector3(0.0, 0.38, 0.0))
-	_add_sphere(head, "HeadMesh", 0.2, Vector3(0.0, 0.11, 0.0), skin)
-	_add_sphere(head, "Helmet", 0.225, Vector3(0.0, 0.19, 0.02), dark, Vector3(1.0, 0.72, 1.0))
-	_add_box(head, "Goggles", Vector3(0.29, 0.105, 0.08), Vector3(0.0, 0.13, -0.19), lens)
-
-	left_hip = _joint("LeftHip", pelvis, Vector3(-0.27, -0.04, 0.0))
-	right_hip = _joint("RightHip", pelvis, Vector3(0.27, -0.04, 0.0))
-	_add_capsule(left_hip, "LeftThigh", 0.095, 0.56, Vector3(0.0, -0.26, 0.0), pants)
-	_add_capsule(right_hip, "RightThigh", 0.095, 0.56, Vector3(0.0, -0.26, 0.0), pants)
-	left_knee = _joint("LeftKnee", left_hip, Vector3(0.0, -0.52, 0.0))
-	right_knee = _joint("RightKnee", right_hip, Vector3(0.0, -0.52, 0.0))
-	_add_capsule(left_knee, "LeftShin", 0.08, 0.52, Vector3(0.0, -0.24, 0.0), pants)
-	_add_capsule(right_knee, "RightShin", 0.08, 0.52, Vector3(0.0, -0.24, 0.0), pants)
-	left_boot = _joint("LeftBoot", left_knee, Vector3(0.0, -0.49, -0.03))
-	right_boot = _joint("RightBoot", right_knee, Vector3(0.0, -0.49, -0.03))
-	_add_box(left_boot, "LeftBootMesh", Vector3(0.2, 0.17, 0.4), Vector3(0.0, -0.02, -0.09), dark)
-	_add_box(right_boot, "RightBootMesh", Vector3(0.2, 0.17, 0.4), Vector3(0.0, -0.02, -0.09), dark)
-	left_ski = _joint("LeftSki", left_boot, Vector3(0.0, -0.12, -0.08))
-	right_ski = _joint("RightSki", right_boot, Vector3(0.0, -0.12, -0.08))
-	_add_box(left_ski, "LeftSkiMesh", Vector3(0.16, 0.055, 2.15), Vector3(0.0, 0.0, -0.12), accent)
-	_add_box(right_ski, "RightSkiMesh", Vector3(0.16, 0.055, 2.15), Vector3(0.0, 0.0, -0.12), accent)
-	left_grab_binding_outside = _joint("LeftGrabBindingOutside", left_ski, Vector3(-0.075, 0.04, 0.05))
-	left_grab_binding_inside = _joint("LeftGrabBindingInside", left_ski, Vector3(0.075, 0.04, 0.02))
-	left_grab_nose = _joint("LeftGrabNose", left_ski, Vector3(0.0, 0.04, -0.72))
-	left_grab_tail = _joint("LeftGrabTail", left_ski, Vector3(0.0, 0.04, 0.42))
-	right_grab_binding_outside = _joint("RightGrabBindingOutside", right_ski, Vector3(0.075, 0.04, 0.05))
-	right_grab_binding_inside = _joint("RightGrabBindingInside", right_ski, Vector3(-0.075, 0.04, 0.02))
-	right_grab_nose = _joint("RightGrabNose", right_ski, Vector3(0.0, 0.04, -0.72))
-	right_grab_tail = _joint("RightGrabTail", right_ski, Vector3(0.0, 0.04, 0.42))
-
-	left_shoulder = _joint("LeftShoulder", chest, Vector3(-0.4, 0.24, 0.0))
-	right_shoulder = _joint("RightShoulder", chest, Vector3(0.4, 0.24, 0.0))
-	_add_capsule(left_shoulder, "LeftUpperArm", 0.085, 0.46, Vector3(0.0, -0.21, 0.0), jacket)
-	_add_capsule(right_shoulder, "RightUpperArm", 0.085, 0.46, Vector3(0.0, -0.21, 0.0), jacket)
-	left_elbow = _joint("LeftElbow", left_shoulder, Vector3(0.0, -0.42, 0.0))
-	right_elbow = _joint("RightElbow", right_shoulder, Vector3(0.0, -0.42, 0.0))
-	_add_capsule(left_elbow, "LeftForearm", 0.07, 0.4, Vector3(0.0, -0.18, 0.0), jacket)
-	_add_capsule(right_elbow, "RightForearm", 0.07, 0.4, Vector3(0.0, -0.18, 0.0), jacket)
-	left_hand = _joint("LeftHand", left_elbow, Vector3(0.0, -0.37, 0.0))
-	right_hand = _joint("RightHand", right_elbow, Vector3(0.0, -0.37, 0.0))
-	_add_sphere(left_hand, "LeftGlove", 0.09, Vector3.ZERO, dark)
-	_add_sphere(right_hand, "RightGlove", 0.09, Vector3.ZERO, dark)
-	left_pole = _joint("LeftPole", left_hand, Vector3.ZERO)
-	right_pole = _joint("RightPole", right_hand, Vector3.ZERO)
-	_add_cylinder(left_pole, "LeftPoleMesh", 0.028, 1.15, Vector3(0.0, -0.52, 0.08), dark)
-	_add_cylinder(right_pole, "RightPoleMesh", 0.028, 1.15, Vector3(0.0, -0.52, 0.08), dark)
-	_add_cylinder(left_pole, "LeftPoleBasket", 0.085, 0.025, Vector3(0.0, -1.02, 0.08), accent)
-	_add_cylinder(right_pole, "RightPoleBasket", 0.085, 0.025, Vector3(0.0, -1.02, 0.08), accent)
-	left_pole_tip = _joint("LeftPoleTip", left_pole, Vector3(0.0, -1.08, 0.08))
-	right_pole_tip = _joint("RightPoleTip", right_pole, Vector3(0.0, -1.08, 0.08))
+	pose_driver = PoseDriverModule.new() as SkierPoseDriver
+	pose_driver.name = "CanonicalPoseDriver"
+	add_child(pose_driver)
+	pose_driver.build()
+	balance_root = pose_driver.joint(&"balance_root")
+	pelvis = pose_driver.joint(&"pelvis")
+	spine = pose_driver.joint(&"spine")
+	chest = pose_driver.joint(&"chest")
+	head = pose_driver.joint(&"head")
+	left_hip = pose_driver.joint(&"left_hip")
+	right_hip = pose_driver.joint(&"right_hip")
+	left_knee = pose_driver.joint(&"left_knee")
+	right_knee = pose_driver.joint(&"right_knee")
+	left_boot = pose_driver.joint(&"left_boot")
+	right_boot = pose_driver.joint(&"right_boot")
+	left_ski = pose_driver.joint(&"left_ski")
+	right_ski = pose_driver.joint(&"right_ski")
+	left_shoulder = pose_driver.joint(&"left_shoulder")
+	right_shoulder = pose_driver.joint(&"right_shoulder")
+	left_elbow = pose_driver.joint(&"left_elbow")
+	right_elbow = pose_driver.joint(&"right_elbow")
+	left_hand = pose_driver.joint(&"left_hand")
+	right_hand = pose_driver.joint(&"right_hand")
+	left_pole = pose_driver.joint(&"left_pole")
+	right_pole = pose_driver.joint(&"right_pole")
+	left_grab_binding_outside = pose_driver.grab_target(&"left", &"binding_outside")
+	left_grab_binding_inside = pose_driver.grab_target(&"left", &"binding_inside")
+	left_grab_nose = pose_driver.grab_target(&"left", &"nose")
+	left_grab_tail = pose_driver.grab_target(&"left", &"tail")
+	right_grab_binding_outside = pose_driver.grab_target(&"right", &"binding_outside")
+	right_grab_binding_inside = pose_driver.grab_target(&"right", &"binding_inside")
+	right_grab_nose = pose_driver.grab_target(&"right", &"nose")
+	right_grab_tail = pose_driver.grab_target(&"right", &"tail")
+	left_pole_tip = pose_driver.pole_tips[&"left"] as Node3D
+	right_pole_tip = pose_driver.pole_tips[&"right"] as Node3D
+	_select_rig_adapter()
 	_reset_pose_immediately()
+	if rig_adapter != null:
+		rig_adapter.sync_pose(0.0)
 
-func _joint(joint_name: String, parent: Node3D, position: Vector3) -> Node3D:
-	var joint := Node3D.new()
-	joint.name = joint_name
-	joint.position = position
-	parent.add_child(joint)
-	return joint
-
-func _material(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = roughness
-	material.metallic = metallic
-	return material
-
-func _add_box(parent: Node3D, mesh_name: String, size: Vector3, position: Vector3, material: Material) -> void:
-	var instance := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = size
-	instance.name = mesh_name
-	instance.mesh = mesh
-	instance.position = position
-	instance.material_override = material
-	parent.add_child(instance)
-
-func _add_capsule(parent: Node3D, mesh_name: String, radius: float, height: float, position: Vector3, material: Material) -> void:
-	var instance := MeshInstance3D.new()
-	var mesh := CapsuleMesh.new()
-	mesh.radius = radius
-	mesh.height = height
-	instance.name = mesh_name
-	instance.mesh = mesh
-	instance.position = position
-	instance.material_override = material
-	parent.add_child(instance)
-
-func _add_sphere(parent: Node3D, mesh_name: String, radius: float, position: Vector3, material: Material, scale: Vector3 = Vector3.ONE) -> void:
-	var instance := MeshInstance3D.new()
-	var mesh := SphereMesh.new()
-	mesh.radius = radius
-	mesh.height = radius * 2.0
-	instance.name = mesh_name
-	instance.mesh = mesh
-	instance.position = position
-	instance.scale = scale
-	instance.material_override = material
-	parent.add_child(instance)
-
-func _add_cylinder(parent: Node3D, mesh_name: String, radius: float, height: float, position: Vector3, material: Material) -> void:
-	var instance := MeshInstance3D.new()
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = radius
-	mesh.bottom_radius = radius
-	mesh.height = height
-	instance.name = mesh_name
-	instance.mesh = mesh
-	instance.position = position
-	instance.material_override = material
-	parent.add_child(instance)
+func _select_rig_adapter() -> void:
+	var selected_mode := rig_mode
+	if OS.get_cmdline_user_args().has("--primitive-skier"):
+		selected_mode = RigMode.PRIMITIVE
+	requested_rig_adapter = "primitive" if selected_mode == RigMode.PRIMITIVE else "skeleton"
+	if selected_mode != RigMode.PRIMITIVE:
+		var skeleton_candidate := SkeletonRigModule.new() as SkierRigAdapter
+		skeleton_candidate.name = "SkeletonRigAdapter"
+		add_child(skeleton_candidate)
+		if skeleton_candidate.configure(pose_driver, skeleton_profile):
+			rig_adapter = skeleton_candidate
+			return
+		rig_fallback_reason = skeleton_candidate.validation_error()
+		remove_child(skeleton_candidate)
+		skeleton_candidate.free()
+	var primitive_candidate := PrimitiveRigModule.new() as SkierRigAdapter
+	primitive_candidate.name = "PrimitiveRigAdapter"
+	add_child(primitive_candidate)
+	primitive_candidate.configure(pose_driver)
+	rig_adapter = primitive_candidate

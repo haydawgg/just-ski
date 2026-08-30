@@ -53,6 +53,7 @@ static func _build_feature(parent: Node3D, spec: Dictionary, physics_profile: Sk
 			)
 			rail.approach_angle_degrees = float(spec.get("approach", 44.0))
 			rail.drift_bias = float(spec.get("drift_bias", 0.0))
+			ParkLayout.add_rail_contours(parent, label, rail_points)
 			return rail
 		"berm":
 			return ParkLayout.add_berm(

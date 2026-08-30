@@ -126,34 +126,42 @@ func _test_small_table_geometry() -> void:
 			shape_node = child as CollisionShape3D
 		elif child is MeshInstance3D:
 			mesh_instance = child as MeshInstance3D
-	if shape_node == null or not shape_node.shape is ConvexPolygonShape3D:
-		failures.append("SmallTable Table collision is not a convex prism")
+	if shape_node == null or not shape_node.shape is ConcavePolygonShape3D:
+		failures.append("SmallTable Table collision is not the sampled knuckle surface")
 		return
 	if mesh_instance == null or mesh_instance.mesh == null:
 		failures.append("SmallTable Table has no visible mesh to compare against collision")
 		return
-	var convex := shape_node.shape as ConvexPolygonShape3D
-	var collision_aabb := _points_aabb(convex.points)
+	var concave := shape_node.shape as ConcavePolygonShape3D
+	var collision_aabb := _points_aabb(concave.data)
 	var mesh_aabb := mesh_instance.mesh.get_aabb()
 	if collision_aabb.size.distance_to(mesh_aabb.size) > 0.05 or collision_aabb.position.distance_to(mesh_aabb.position) > 0.05:
 		failures.append("SmallTable Table collision bounds do not match the visible mesh")
+	if int(table.get_meta("profile_rows", 0)) < 8 or int(table.get_meta("profile_columns", 0)) < 7:
+		failures.append("SmallTable Table does not have enough profile samples for a rounded knuckle and shoulders")
+	if mesh_instance.mesh.get_faces().size() < 120:
+		failures.append("SmallTable Table mesh is still too coarse to read as a sculpted snow form")
 	# Direct overhead approach must hit the visible tabletop body.
-	var center := table.global_position
+	var center := table.to_global(mesh_aabb.get_center())
 	var direct := PhysicsRayQueryParameters3D.create(center + Vector3.UP * 4.0, center - Vector3.UP * 4.0, 1)
 	direct.exclude = [skier.get_rid()]
 	var direct_hit := skier.get_world_3d().direct_space_state.intersect_ray(direct)
 	if direct_hit.is_empty() or direct_hit.get("collider") != table:
 		failures.append("Direct SmallTable approach did not hit the authored Table collider")
-	# A shallow diagonal approach should also meet the side without an oversized wall.
-	var glancing_from := center + Vector3(0.0, 3.0, 8.0)
-	var glancing_to := center + Vector3(0.0, 0.0, 2.0)
+	# A lateral skim across the rolled shoulder must meet this profile rather
+	# than an adjacent lip body or an oversized vertical slab.
+	var surface_point: Vector3 = direct_hit.get("position", center)
+	var glancing_from := surface_point + Vector3.RIGHT * 7.0 + ParkLayout.snow_normal() * 0.2
+	var glancing_to := surface_point - ParkLayout.snow_normal() * 0.2
 	var glancing := PhysicsRayQueryParameters3D.create(glancing_from, glancing_to, 1)
 	glancing.exclude = [skier.get_rid()]
 	var glancing_hit := skier.get_world_3d().direct_space_state.intersect_ray(glancing)
 	if glancing_hit.is_empty() or glancing_hit.get("collider") != table:
 		failures.append("Glancing SmallTable approach did not meet the authored side collision")
 	print(
-		"SMALLTABLE_GEOMETRY collision_aabb=", collision_aabb,
+		"SMALLTABLE_PROFILE rows=", table.get_meta("profile_rows", 0),
+		" columns=", table.get_meta("profile_columns", 0),
+		" collision_aabb=", collision_aabb,
 		" mesh_aabb=", mesh_aabb,
 		" direct_collider=", direct_hit.get("collider", null),
 		" glancing_collider=", glancing_hit.get("collider", null),
@@ -179,7 +187,7 @@ func _finish() -> void:
 	)
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("COLLISION_PASS: kicker ride, rail capture, contact stability, and tree block checks passed")
+		print("COLLISION_PASS: sculpted kicker ride, rail capture, contact stability, and tree block checks passed")
 		get_tree().quit(0)
 	else:
 		for failure: String in failures:

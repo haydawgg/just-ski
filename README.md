@@ -70,6 +70,8 @@ $env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/physics_collision_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/settings_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/animation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/character_presentation_acceptance.tscn
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/skeleton_rig_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/jump_animation_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/landing_animation_acceptance.tscn
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/rail_animation_acceptance.tscn
@@ -93,5 +95,7 @@ Generate the deterministic 21.6-second actual-follow-camera animation comparison
 ```
 
 The comparison is written to `.godot_user/captures/animation_silhouette_comparison.mp4`.
+
+Use `-- --primitive-skier` to force the temporary primitive presentation adapter. Normal runtime uses `AUTO`, which prefers the configured Skeleton3D body and records a validation reason before falling back when that asset is unavailable.
 
 See `docs/KNOWN_ISSUES.md` for the honest boundary between exercised automated behavior and hardware/visual checks that still require a human play session.

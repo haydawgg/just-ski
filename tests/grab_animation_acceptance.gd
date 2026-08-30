@@ -93,7 +93,7 @@ func _test_safety_left_sequence() -> void:
 	])
 	print("GRAB_REACH hand=%s target=%s shoulder=%s elbow=%s" % [
 		held.get("grab_hand_left", Vector3.ZERO), held.get("grab_target_left", Vector3.ZERO),
-		held.left_shoulder_rotation, rig.left_elbow.rotation,
+		held.left_shoulder_rotation, held.left_elbow_rotation,
 	])
 	if str(held.get("grab_type", "")) != "Safety Grab Left":
 		failures.append("Safety Left did not resolve its authoritative display name")

@@ -722,6 +722,9 @@ func _on_telemetry(data: Dictionary) -> void:
 		animation.get("grab_type", "—"), animation.get("grab_phase", "IDLE"), animation.get("grab_hand", "NONE"),
 		animation.get("grab_target_ski", "NONE"), animation.get("grab_pose_weight", 0.0),
 		animation.get("grab_contact_weight", 0.0), animation.get("grab_reach_error", 0.0), animation.get("grab_hold_time", 0.0)]
+	debug_label.text += "\nRig %s (requested %s)%s" % [
+		animation.get("rig_adapter", "none"), animation.get("rig_requested", "none"),
+		(" fallback: " + str(animation.get("rig_fallback_reason", ""))) if not str(animation.get("rig_fallback_reason", "")).is_empty() else ""]
 	var torso_follow := animation.get("torso_follow_through", Vector3.ZERO) as Vector3
 	var left_arm_inertia := animation.get("left_arm_inertia", Vector3.ZERO) as Vector3
 	var right_arm_inertia := animation.get("right_arm_inertia", Vector3.ZERO) as Vector3

@@ -11,6 +11,19 @@ uniform float normal_strength : hint_range(0.0, 2.0) = 0.7;
 uniform float roughness_texture_strength : hint_range(0.0, 1.0) = 0.72;
 uniform float macro_tint_amount : hint_range(0.0, 0.25) = 0.055;
 uniform float macro_scale : hint_range(0.005, 0.2) = 0.035;
+uniform float far_macro_tint_amount : hint_range(0.0, 0.25) = 0.08;
+uniform float far_macro_scale : hint_range(0.001, 0.05) = 0.012;
+uniform vec3 warm_snow_tint : source_color = vec3(1.0, 0.985, 0.955);
+uniform vec3 cool_snow_tint : source_color = vec3(0.965, 0.985, 1.0);
+uniform float macro_temperature_amount : hint_range(0.0, 1.0) = 0.8;
+uniform float macro_roughness_amount : hint_range(0.0, 0.3) = 0.1;
+uniform float slope_contrast_strength : hint_range(0.0, 0.25) = 0.07;
+uniform vec2 wind_direction_world_xz = vec2(0.82, -0.57);
+uniform float wind_crust_amount : hint_range(0.0, 0.2) = 0.035;
+uniform vec3 feature_tint : source_color = vec3(0.86, 0.9, 0.94);
+uniform float feature_emphasis : hint_range(0.0, 1.0) = 0.0;
+uniform float disturbed_roughness_offset : hint_range(-0.2, 0.2) = 0.08;
+uniform float disturbed_detail_boost : hint_range(0.0, 0.5) = 0.16;
 uniform float detail_near_distance : hint_range(0.0, 100.0) = 20.0;
 uniform float detail_far_distance : hint_range(1.0, 200.0) = 60.0;
 uniform vec2 groom_direction_world_xz = vec2(0.0, -1.0);
@@ -97,7 +110,7 @@ float snow_detail_visibility(vec3 camera_world_position) {
 	return 1.0 - smoothstep(detail_near_distance, max(detail_far_distance, detail_near_distance + 0.01), distance_to_camera);
 }
 
-vec3 snow_apply_corduroy(vec3 geometry_normal, float detail_visibility) {
+vec3 snow_apply_corduroy(vec3 geometry_normal, float detail_visibility, float disturbance) {
 	vec2 track_direction = groom_direction_world_xz;
 	if (dot(track_direction, track_direction) < 0.0001) {
 		track_direction = vec2(0.0, -1.0);
@@ -111,7 +124,8 @@ vec3 snow_apply_corduroy(vec3 geometry_normal, float detail_visibility) {
 	}
 	across_world = normalize(across_world);
 	float phase = dot(snow_world_position.xz, across_direction) * corduroy_frequency * TAU;
-	float gradient = cos(phase) * corduroy_amount * detail_visibility * 0.2;
+	float grooming_visibility = 1.0 - clamp(disturbance * 0.82, 0.0, 0.82);
+	float gradient = cos(phase) * corduroy_amount * grooming_visibility * detail_visibility * 0.2;
 	return normalize(geometry_normal - across_world * gradient);
 }
 
@@ -127,23 +141,39 @@ void snow_surface(
 	vec3 geometry_normal = normalize(snow_world_normal);
 	detail_visibility = snow_detail_visibility(camera_world_position);
 	float sky_term = clamp(geometry_normal.y * 0.5 + 0.5, 0.0, 1.0);
-	float macro = snow_value_noise(snow_world_position.xz * macro_scale);
+	float near_macro = snow_value_noise(snow_world_position.xz * macro_scale);
+	float far_macro = snow_value_noise(snow_world_position.xz * far_macro_scale + vec2(17.0, -9.0));
+	float temperature = snow_value_noise(snow_world_position.xz * far_macro_scale * 0.63 + vec2(-31.0, 24.0));
+	vec2 safe_wind_direction = dot(wind_direction_world_xz, wind_direction_world_xz) > 0.0001 ? normalize(wind_direction_world_xz) : vec2(0.82, -0.57);
+	float wind_crust = snow_value_noise(vec2(dot(snow_world_position.xz, safe_wind_direction) * 0.055, dot(snow_world_position.xz, vec2(-safe_wind_direction.y, safe_wind_direction.x)) * 0.012));
+	float disturbance_noise = smoothstep(0.24, 0.78, mix(near_macro, wind_crust, 0.62));
+	float disturbance = feature_emphasis * mix(0.38, 1.0, disturbance_noise);
+	float slope_aspect = dot(geometry_normal.xz, safe_wind_direction);
 	surface_albedo = mix(shadow_tint, snow_color, 0.42 + 0.58 * sky_term);
-	surface_albedo *= 1.0 + (macro - 0.5) * macro_tint_amount * detail_visibility;
-	surface_roughness = roughness_base;
+	vec3 temperature_tint = mix(cool_snow_tint, warm_snow_tint, temperature);
+	surface_albedo *= mix(vec3(1.0), temperature_tint, macro_temperature_amount);
+	surface_albedo *= 1.0 + (far_macro - 0.5) * far_macro_tint_amount;
+	surface_albedo *= 1.0 + (near_macro - 0.5) * macro_tint_amount * detail_visibility;
+	surface_albedo *= 1.0 + slope_aspect * slope_contrast_strength;
+	surface_albedo *= 1.0 + (wind_crust - 0.5) * wind_crust_amount;
+	surface_albedo = mix(surface_albedo, feature_tint, disturbance * 0.12);
+	surface_roughness = roughness_base + (far_macro - 0.5) * macro_roughness_amount + disturbance * disturbed_roughness_offset;
 	surface_translucency = 0.5;
 
 	vec3 detailed_normal = geometry_normal;
 	if (detail_visibility > 0.001) {
 		SnowTriplanarSample detail = sample_triplanar(snow_world_position, geometry_normal);
-		vec3 texture_tint = mix(vec3(1.0), detail.albedo, albedo_texture_strength * detail_visibility);
+		float visible_albedo_detail = clamp(albedo_texture_strength + disturbance * disturbed_detail_boost, 0.0, 1.0) * detail_visibility;
+		vec3 texture_tint = mix(vec3(1.0), detail.albedo, visible_albedo_detail);
 		surface_albedo *= texture_tint;
-		detailed_normal = normalize(mix(geometry_normal, detail.normal_world, normal_strength * detail_visibility));
-		surface_roughness = mix(roughness_base, detail.roughness, roughness_texture_strength * detail_visibility);
+		float visible_normal_detail = normal_strength * (1.0 + disturbance * 0.3) * detail_visibility;
+		detailed_normal = normalize(mix(geometry_normal, detail.normal_world, visible_normal_detail));
+		surface_roughness += (detail.roughness - 0.5) * roughness_texture_strength * detail_visibility * 0.32;
 		surface_translucency = mix(0.5, detail.translucency, detail_visibility);
 	}
 
-	detailed_normal = snow_apply_corduroy(detailed_normal, detail_visibility);
+	detailed_normal = snow_apply_corduroy(detailed_normal, detail_visibility, disturbance);
+	surface_roughness = clamp(surface_roughness, 0.28, 0.98);
 	surface_normal_view = normalize(view_rotation * detailed_normal);
 }
 

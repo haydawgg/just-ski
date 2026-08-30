@@ -2,6 +2,7 @@ extends Node3D
 
 const DURATION := 21.6
 const REVIEW_TIMES: Array[float] = [0.8, 2.0, 3.2, 4.4, 5.6, 6.9, 8.2, 9.5, 10.7, 11.9, 13.1, 14.3, 15.5, 16.8, 17.9, 19.0, 20.2, 21.0]
+const REVIEW_LABELS := ["ground", "carve", "scrape", "switch", "takeoff", "spin", "grab", "spread_eagle", "daffy", "shifty", "frontflip", "backflip", "cork", "rail_50_50", "rail_slide", "landing_setup", "landing_impact", "runout"]
 
 var rig: SkierAnimationController
 var skier: SkierController
@@ -11,6 +12,7 @@ var elapsed := 0.0
 var previous_stage := -1
 var review_index := 0
 var capture_mode := false
+var presentation_capture := false
 var capture_finished := false
 var output_directory := ""
 
@@ -25,13 +27,15 @@ func _ready() -> void:
 	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
 	add_child(camera_rig)
 	camera_rig.set_target(skier)
-	capture_mode = OS.get_cmdline_user_args().has("--capture-silhouette-showcase")
+	presentation_capture = OS.get_cmdline_user_args().has("--capture-character-presentation")
+	capture_mode = OS.get_cmdline_user_args().has("--capture-silhouette-showcase") or presentation_capture
 	if capture_mode:
-		output_directory = ProjectSettings.globalize_path("res://.godot_user/captures")
+		output_directory = ProjectSettings.globalize_path("res://.godot_user/captures/phase_17_after" if presentation_capture else "res://.godot_user/captures")
 		DirAccess.make_dir_recursive_absolute(output_directory)
-		ClipRecorder.clip_saved.connect(_on_clip_saved)
-		ClipRecorder.clip_failed.connect(_on_clip_failed)
-		ClipRecorder._start_recording()
+		if not presentation_capture:
+			ClipRecorder.clip_saved.connect(_on_clip_saved)
+			ClipRecorder.clip_failed.connect(_on_clip_failed)
+			ClipRecorder._start_recording()
 
 func _process(delta: float) -> void:
 	if capture_finished:
@@ -43,9 +47,13 @@ func _process(delta: float) -> void:
 	if capture_mode and review_index < REVIEW_TIMES.size() and elapsed >= REVIEW_TIMES[review_index]:
 		_capture_review_frame(review_index)
 		review_index += 1
-	if capture_mode and elapsed >= DURATION and ClipRecorder._recording:
+	if presentation_capture and elapsed >= DURATION:
+		capture_finished = true
+		print("CHARACTER_PRESENTATION_CAPTURED: %s" % output_directory)
+		get_tree().quit(0)
+	elif capture_mode and elapsed >= DURATION and ClipRecorder._recording:
 		ClipRecorder._stop_recording()
-	if capture_mode and elapsed > DURATION + 12.0:
+	if capture_mode and not presentation_capture and elapsed > DURATION + 12.0:
 		push_error("SILHOUETTE_INSPECTION_FAIL: capture did not finish")
 		get_tree().quit(1)
 	elif not capture_mode and elapsed >= DURATION:
@@ -218,10 +226,12 @@ func _capture_review_frame(index: int) -> void:
 	if image == null or image.is_empty():
 		return
 	image.resize(960, 540, Image.INTERPOLATE_BILINEAR)
-	image.save_png(output_directory.path_join("silhouette_%02d.png" % (index + 1)))
+	var label: String = REVIEW_LABELS[index] if index < REVIEW_LABELS.size() else "pose"
+	var filename := "character_%02d_%s.png" % [index + 1, label] if presentation_capture else "silhouette_%02d.png" % (index + 1)
+	image.save_png(output_directory.path_join(filename))
 
 func _on_clip_saved(path: String) -> void:
-	var destination := output_directory.path_join("animation_silhouette_comparison.mp4")
+	var destination := output_directory.path_join("character_presentation.mp4" if presentation_capture else "animation_silhouette_comparison.mp4")
 	var error := DirAccess.copy_absolute(path, destination)
 	if error != OK:
 		push_error("SILHOUETTE_INSPECTION_FAIL: could not copy clip (%s)" % error_string(error))

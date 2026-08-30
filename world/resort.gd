@@ -30,12 +30,12 @@ func _build_environment() -> void:
 	var env := Environment.new()
 	var sky := Sky.new()
 	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.23, 0.45, 0.72)
-	sky_mat.sky_horizon_color = Color(0.82, 0.9, 0.96)
-	sky_mat.sky_curve = 0.09
-	sky_mat.sky_energy_multiplier = 1.15
-	sky_mat.ground_bottom_color = Color(0.72, 0.8, 0.88)
-	sky_mat.ground_horizon_color = Color(0.9, 0.94, 0.97)
+	sky_mat.sky_top_color = Color(0.16, 0.37, 0.66)
+	sky_mat.sky_horizon_color = Color(0.76, 0.86, 0.94)
+	sky_mat.sky_curve = 0.075
+	sky_mat.sky_energy_multiplier = 1.08
+	sky_mat.ground_bottom_color = Color(0.62, 0.72, 0.82)
+	sky_mat.ground_horizon_color = Color(0.87, 0.92, 0.96)
 	sky_mat.ground_curve = 0.12
 	sky_mat.ground_energy_multiplier = 0.85
 	sky_mat.sun_angle_max = 18.0
@@ -44,23 +44,27 @@ func _build_environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_sky_contribution = 0.92
+	env.ambient_light_sky_contribution = 0.84
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.08
+	env.tonemap_exposure = 1.02
 	env.tonemap_white = 6.2
+	env.adjustment_enabled = true
+	env.adjustment_brightness = 1.01
+	env.adjustment_contrast = 1.07
+	env.adjustment_saturation = 0.96
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.86, 0.92, 0.97)
-	env.fog_sun_scatter = 0.18
-	env.fog_density = 0.0032
-	env.fog_aerial_perspective = 0.55
-	env.fog_sky_affect = 0.45
-	env.fog_height = 2.0
-	env.fog_height_density = 0.055
+	env.fog_light_color = Color(0.79, 0.87, 0.94)
+	env.fog_sun_scatter = 0.24
+	env.fog_density = 0.0026
+	env.fog_aerial_perspective = 0.72
+	env.fog_sky_affect = 0.38
+	env.fog_height = -4.0
+	env.fog_height_density = 0.032
 	env.glow_enabled = true
-	env.glow_intensity = 0.32
-	env.glow_strength = 0.72
-	env.glow_bloom = 0.035
+	env.glow_intensity = 0.24
+	env.glow_strength = 0.66
+	env.glow_bloom = 0.025
 	env.glow_hdr_threshold = 0.85
 	env.ssao_radius = 1.6
 	env.ssao_intensity = 1.8
@@ -68,22 +72,22 @@ func _build_environment() -> void:
 	add_child(environment)
 	sun = DirectionalLight3D.new()
 	sun.name = "Sun"
-	sun.rotation_degrees = Vector3(-38.0, -42.0, 0.0)
-	sun.light_color = Color(1.0, 0.94, 0.84)
-	sun.light_energy = 1.72
-	sun.light_indirect_energy = 0.85
-	sun.light_specular = 0.7
+	sun.rotation_degrees = Vector3(-34.0, -48.0, 0.0)
+	sun.light_color = Color(1.0, 0.925, 0.8)
+	sun.light_energy = 1.58
+	sun.light_indirect_energy = 0.72
+	sun.light_specular = 0.62
 	sun.shadow_enabled = true
-	sun.shadow_bias = 0.04
-	sun.shadow_normal_bias = 1.2
+	sun.shadow_bias = 0.028
+	sun.shadow_normal_bias = 0.82
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	sun.directional_shadow_max_distance = 320.0
 	add_child(sun)
 
 func _build_resort() -> void:
 	var face_len := ParkLayout.FACE_SLOPE_LENGTH
-	ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, SnowSurface.Kind.POWDER, true)
-	_add_box("BottomHub", Vector3(92.0, 1.5, 92.0), Vector3(0.0, 2.4, -181.0), Vector3.ZERO, SNOW, true, SnowSurface.Kind.POWDER)
+	ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, SnowSurface.Kind.POWDER, true, 0.0, SnowSurface.Kind.GROOMED)
+	_add_box("BottomHub", Vector3(92.0, 1.5, 92.0), Vector3(0.0, 2.4, -181.0), Vector3.ZERO, SNOW, true, SnowSurface.Kind.POWDER, SnowSurface.Kind.PACKED)
 	ParkLayout.add_slope_box(self, "LeftBank", -36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), -10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
 	ParkLayout.add_slope_box(self, "RightBank", 36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), 10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
 	course_features = ParkCourseBuilderModule.build(self, course_profile, physics_profile)
@@ -148,7 +152,7 @@ func _build_finish_trigger() -> void:
 			player.scoring.finish_run()
 	)
 
-func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees: Vector3, color: Color, collision_enabled: bool, surface_kind: int = -1) -> StaticBody3D:
+func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees: Vector3, color: Color, collision_enabled: bool, surface_kind: int = -1, visual_surface_kind: int = -1) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = label
 	body.position = position
@@ -161,7 +165,7 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _material_for_surface(color, surface_kind)
+	mesh_instance.material_override = _material_for_surface(color, surface_kind, visual_surface_kind)
 	body.add_child(mesh_instance)
 	if collision_enabled:
 		var shape_node := CollisionShape3D.new()
@@ -193,6 +197,8 @@ func _add_tree(position: Vector3) -> void:
 	trunk_mesh.height = 3.4
 	trunk.mesh = trunk_mesh
 	trunk.position.y = 1.7
+	trunk.visibility_range_end = 245.0
+	trunk.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	var bark := StandardMaterial3D.new()
 	bark.albedo_color = Color("#594337")
 	trunk.material_override = bark
@@ -205,6 +211,8 @@ func _add_tree(position: Vector3) -> void:
 		cone.height = 2.4
 		crown.mesh = cone
 		crown.position.y = height
+		crown.visibility_range_end = 245.0
+		crown.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		var needles := StandardMaterial3D.new()
 		needles.albedo_color = Color("#214b46")
 		crown.material_override = needles
@@ -215,6 +223,8 @@ func _add_tree(position: Vector3) -> void:
 	cap_mesh.height = 0.55
 	cap.mesh = cap_mesh
 	cap.position.y = 5.35
+	cap.visibility_range_end = 245.0
+	cap.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER)
 	root.add_child(cap)
 	add_child(root)
@@ -244,8 +254,9 @@ func _add_mountain_peak(label: String, position: Vector3, radius: float, height:
 	mountain_mesh.rings = 1
 	mountain.mesh = mountain_mesh
 	var rock_material := StandardMaterial3D.new()
-	rock_material.albedo_color = color
+	rock_material.albedo_color = color.lightened(0.08)
 	rock_material.roughness = 0.96
+	rock_material.metallic = 0.0
 	mountain.material_override = rock_material
 	root.add_child(mountain)
 	var cap := MeshInstance3D.new()
@@ -261,9 +272,10 @@ func _add_mountain_peak(label: String, position: Vector3, radius: float, height:
 	root.add_child(cap)
 	add_child(root)
 
-func _material_for_surface(color: Color, surface_kind: int) -> Material:
-	if surface_kind >= 0:
-		return SnowSurface.create(surface_kind)
+func _material_for_surface(color: Color, surface_kind: int, visual_surface_kind: int = -1) -> Material:
+	var material_kind := visual_surface_kind if visual_surface_kind >= 0 else surface_kind
+	if material_kind >= 0:
+		return SnowSurface.create(material_kind)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = 0.5

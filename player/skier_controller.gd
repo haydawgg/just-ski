@@ -1,6 +1,8 @@
 class_name SkierController
 extends CharacterBody3D
 
+const SkierVisualScene := preload("res://player/animation/skier_visual.tscn")
+
 signal state_changed(state_name: String)
 signal telemetry_updated(data: Dictionary)
 signal landed(result: Dictionary)
@@ -48,7 +50,7 @@ var bail_recovering := false
 var debug_enabled := false
 var trick: TrickController
 var scoring: RunScoring
-var spray: GPUParticles3D
+var snow_vfx: SkiSnowVFX
 var visual_root: Node3D
 var animation_controller: SkierAnimationController
 var animation_frame := SkierAnimationFrame.new()
@@ -92,7 +94,7 @@ func _ready() -> void:
 	floor_snap_length = 0.42
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	_build_body()
-	_build_spray()
+	_build_snow_vfx()
 	_build_debug_draw()
 	trick = TrickController.new()
 	add_child(trick)
@@ -137,6 +139,7 @@ func _physics_process(delta: float) -> void:
 			_update_wall_pin(delta)
 	scoring.step(delta, velocity.length())
 	_update_animation(delta)
+	snow_vfx.update_from_existing_contact(delta)
 	_update_debug()
 	AudioManager.update_surface_audio(velocity.length(), skid_amount, state == State.GRIND, contact.surface_kind, state == State.AIR)
 	telemetry_updated.emit(telemetry())
@@ -291,8 +294,6 @@ func _update_ground(delta: float) -> void:
 		jump_charge = maxf(jump_charge, 0.06)
 
 	AudioManager.skid_feedback(skid_amount)
-	spray.amount_ratio = clampf((skid_amount - 0.15) / 0.85, 0.0, 1.0)
-	spray.emitting = skid_amount > 0.2
 
 func _constrain_heading_to_travel(candidate: Vector3, normal: Vector3, speed_ratio: float, delta: float) -> Vector3:
 	var travel := velocity.slide(normal)
@@ -341,7 +342,6 @@ func _update_air(delta: float) -> void:
 	rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
 	global_basis = global_basis.orthonormalized()
 	trick.update_air(angular_velocity, delta, trick_command)
-	spray.emitting = false
 	_try_capture_rail()
 	if state != State.AIR:
 		return
@@ -971,8 +971,8 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	gesture_strength = 0.0
 	if scoring != null:
 		scoring.reset_run()
-	if spray != null:
-		spray.emitting = false
+	if snow_vfx != null:
+		snow_vfx.clear_transient_effects()
 	if animation_controller != null:
 		animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
 	state_changed.emit("Air")
@@ -1098,43 +1098,15 @@ func _build_body() -> void:
 	# height above the snow (skis kissing the surface) instead of sinking below it.
 	shape.position.y = 0.67
 	add_child(shape)
-	animation_controller = SkierAnimationController.new()
+	animation_controller = SkierVisualScene.instantiate() as SkierAnimationController
 	animation_controller.name = "SkierAnimationController"
 	visual_root = animation_controller
 	add_child(animation_controller)
 
-func _build_spray() -> void:
-	spray = GPUParticles3D.new()
-	spray.amount = 140
-	spray.lifetime = 0.85
-	spray.explosiveness = 0.05
-	spray.visibility_aabb = AABB(Vector3(-5, -2, -5), Vector3(10, 8, 10))
-	var process_material := ParticleProcessMaterial.new()
-	process_material.direction = Vector3(0.0, 0.85, 0.55)
-	process_material.spread = 48.0
-	process_material.initial_velocity_min = 1.6
-	process_material.initial_velocity_max = 6.2
-	process_material.gravity = Vector3(0.0, -5.5, 0.0)
-	process_material.damping_min = 0.4
-	process_material.damping_max = 1.2
-	process_material.scale_min = 0.035
-	process_material.scale_max = 0.11
-	process_material.color = Color(0.93, 0.97, 1.0, 0.82)
-	spray.process_material = process_material
-	var particle_mesh := QuadMesh.new()
-	particle_mesh.size = Vector2(0.07, 0.07)
-	var particle_material := StandardMaterial3D.new()
-	particle_material.albedo_color = Color(0.95, 0.98, 1.0, 0.7)
-	particle_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	particle_material.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
-	particle_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	particle_material.emission_enabled = true
-	particle_material.emission = Color(0.85, 0.93, 1.0)
-	particle_material.emission_energy_multiplier = 0.35
-	particle_mesh.material = particle_material
-	spray.draw_pass_1 = particle_mesh
-	spray.position = Vector3(0.0, 0.15, 0.55)
-	add_child(spray)
+func _build_snow_vfx() -> void:
+	snow_vfx = SkiSnowVFX.new()
+	snow_vfx.name = "SkiSnowVFX"
+	add_child(snow_vfx)
 
 func _build_debug_draw() -> void:
 	debug_mesh = ImmediateMesh.new()
@@ -1404,13 +1376,19 @@ func _update_debug() -> void:
 		_debug_line_world(point, point + contact.average_normal * 1.2)
 	if contact.left_grounded:
 		_debug_line_world(contact.left_hit_position, contact.left_hit_position + contact.left_normal * 0.8)
-		_debug_line_world(animation_controller.left_ski.global_position, contact.left_hit_position)
+		var left_nose := animation_debug_landmark(&"left_ski_nose")
+		var left_tail := animation_debug_landmark(&"left_ski_tail")
+		_debug_line_world((left_nose + left_tail) * 0.5, contact.left_hit_position)
 	if contact.right_grounded:
 		_debug_line_world(contact.right_hit_position, contact.right_hit_position + contact.right_normal * 0.8)
-		_debug_line_world(animation_controller.right_ski.global_position, contact.right_hit_position)
+		var right_nose := animation_debug_landmark(&"right_ski_nose")
+		var right_tail := animation_debug_landmark(&"right_ski_tail")
+		_debug_line_world((right_nose + right_tail) * 0.5, contact.right_hit_position)
 	var animation_debug := animation_controller.debug_snapshot()
-	var pelvis_target := animation_debug.get("pelvis_target_world", animation_controller.pelvis.global_position) as Vector3
-	_debug_line_world(animation_controller.pelvis.global_position, pelvis_target)
+	var landmarks := animation_debug.get("silhouette_landmarks", {}) as Dictionary
+	var pelvis_world := landmarks.get("pelvis", global_position) as Vector3
+	var pelvis_target := animation_debug.get("pelvis_target_world", pelvis_world) as Vector3
+	_debug_line_world(pelvis_world, pelvis_target)
 	var compression_origin := global_position + global_basis.y * 1.7
 	var left_compression := float(animation_debug.get("left_leg_compression", 0.0))
 	var right_compression := float(animation_debug.get("right_leg_compression", 0.0))
@@ -1425,10 +1403,17 @@ func _update_debug() -> void:
 		var left_target := animation_debug.get("grab_target_left", Vector3.ZERO) as Vector3
 		var right_target := animation_debug.get("grab_target_right", Vector3.ZERO) as Vector3
 		if str(animation_debug.get("grab_hand", "NONE")) in ["LEFT", "BOTH"]:
-			_debug_line_world(animation_controller.left_hand.global_position, left_target)
+			_debug_line_world(landmarks.get("left_hand", global_position) as Vector3, left_target)
 		if str(animation_debug.get("grab_hand", "NONE")) in ["RIGHT", "BOTH"]:
-			_debug_line_world(animation_controller.right_hand.global_position, right_target)
+			_debug_line_world(landmarks.get("right_hand", global_position) as Vector3, right_target)
 	debug_mesh.surface_end()
+
+func animation_debug_landmark(name: StringName) -> Vector3:
+	if animation_controller == null:
+		return global_position
+	var snapshot := animation_controller.debug_snapshot()
+	var landmarks := snapshot.get("silhouette_landmarks", {}) as Dictionary
+	return landmarks.get(name, global_position) as Vector3
 
 func _debug_line_world(from_world: Vector3, to_world: Vector3) -> void:
 	debug_mesh.surface_add_vertex(to_local(from_world))
