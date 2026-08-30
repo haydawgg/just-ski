@@ -2,6 +2,7 @@ class_name SkierController
 extends CharacterBody3D
 
 const SkierVisualScene := preload("res://player/animation/skier_visual.tscn")
+const ParkLayout := preload("res://world/park_features/park_layout.gd")
 
 signal state_changed(state_name: String)
 signal telemetry_updated(data: Dictionary)
@@ -86,6 +87,8 @@ var crash_context := CrashContext.new()
 var recent_rail_detach_time := 0.0
 var recent_rail_detach_balance := 0.0
 var respawn_count := 0
+var contact_shadow: MeshInstance3D
+var contact_shadow_material: ShaderMaterial
 
 func _ready() -> void:
 	collision_layer = 2
@@ -95,6 +98,7 @@ func _ready() -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	_build_body()
 	_build_snow_vfx()
+	_build_contact_shadow()
 	_build_debug_draw()
 	trick = TrickController.new()
 	add_child(trick)
@@ -140,6 +144,7 @@ func _physics_process(delta: float) -> void:
 	scoring.step(delta, velocity.length())
 	_update_animation(delta)
 	snow_vfx.update_from_existing_contact(delta)
+	_update_contact_shadow(delta)
 	_update_debug()
 	AudioManager.update_surface_audio(velocity.length(), skid_amount, state == State.GRIND, contact.surface_kind, state == State.AIR)
 	telemetry_updated.emit(telemetry())
@@ -1114,6 +1119,100 @@ func _build_snow_vfx() -> void:
 	snow_vfx = SkiSnowVFX.new()
 	snow_vfx.name = "SkiSnowVFX"
 	add_child(snow_vfx)
+
+func _build_contact_shadow() -> void:
+	contact_shadow = MeshInstance3D.new()
+	contact_shadow.name = "ContactShadow"
+	contact_shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	contact_shadow.visibility_range_begin = 0.0
+	contact_shadow.visibility_range_end = 120.0
+	contact_shadow.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(2.2, 2.2)
+	plane.orientation = PlaneMesh.FACE_Y
+	contact_shadow.mesh = plane
+	contact_shadow_material = ShaderMaterial.new()
+	contact_shadow_material.shader = preload("res://shaders/contact_shadow.gdshader")
+	contact_shadow_material.set_shader_parameter("shadow_color", Color(0.08, 0.12, 0.18, 1.0))
+	contact_shadow_material.set_shader_parameter("shadow_opacity", 0.52)
+	contact_shadow.material_override = contact_shadow_material
+	contact_shadow.top_level = true
+	add_child(contact_shadow)
+
+func _update_contact_shadow(_delta: float) -> void:
+	if contact_shadow == null or contact_shadow_material == null:
+		return
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	if not contact_shadow.is_inside_tree() or contact_shadow.is_queued_for_deletion():
+		return
+	var tree := get_tree()
+	if tree == null or tree.is_queued_for_deletion():
+		return
+	var world := get_world_3d()
+	if world == null:
+		contact_shadow.visible = false
+		return
+	var ground_pos := Vector3.ZERO
+	var ground_normal := Vector3.UP
+	var found := false
+	if contact.grounded and contact.average_hit_position.length_squared() > 0.001:
+		ground_pos = contact.average_hit_position
+		ground_normal = contact.average_normal.normalized() if contact.average_normal.length_squared() > 0.001 else Vector3.UP
+		found = true
+	else:
+		# Airborne: raycast down to find snow for height cue.
+		var space := world.direct_space_state
+		if space != null:
+			var from := global_position + Vector3.UP * 0.4
+			var to := global_position + Vector3.DOWN * 12.0
+			var query := PhysicsRayQueryParameters3D.create(from, to, 1)
+			query.exclude = [get_rid()]
+			var hit := space.intersect_ray(query)
+			if not hit.is_empty():
+				ground_pos = hit.position as Vector3
+				ground_normal = hit.normal as Vector3
+				found = true
+			else:
+				# Fallback to vertical projection onto pitched piste plane.
+				var n := ParkLayout.snow_normal()
+				var plane_dist := (global_position - ParkLayout.snow_at(global_position.x, global_position.z)).dot(n)
+				ground_pos = global_position - n * plane_dist
+				ground_normal = n
+				found = true
+		else:
+			var n := ParkLayout.snow_normal()
+			var plane_dist := (global_position - ParkLayout.snow_at(global_position.x, global_position.z)).dot(n)
+			ground_pos = global_position - n * plane_dist
+			ground_normal = n
+			found = true
+	if not found:
+		contact_shadow.visible = false
+		return
+	var to_skier := global_position - ground_pos
+	var height := to_skier.dot(ground_normal)
+	height = clampf(height, 0.0, 12.0)
+	# Restrained fade: visible when near ground, fades gracefully before becoming a distant blob.
+	var height_alpha := clampf(1.0 - smoothstep(1.2, 9.5, height), 0.0, 1.0)
+	var confidence_alpha := clampf(contact.confidence, 0.0, 1.0) if state == State.GROUND else 0.85
+	var alpha := height_alpha * lerpf(0.45, 0.72, confidence_alpha) * 0.52
+	if alpha < 0.02 or height > 9.0:
+		contact_shadow.visible = false
+		return
+	contact_shadow.visible = true
+	# Position slightly above snow to avoid z-fighting, oriented to snow plane.
+	var downhill := ParkLayout.downhill()
+	if ground_normal.length_squared() < 0.001:
+		ground_normal = Vector3.UP
+	if downhill.length_squared() < 0.001:
+		downhill = Vector3.FORWARD
+	# Align plane to ground: Y = ground_normal
+	var basis := Basis.looking_at(downhill, ground_normal)
+	contact_shadow.global_transform = Transform3D(basis, ground_pos + ground_normal * 0.018)
+	# Size grows slightly with height to mimic softer penumbra, but restrained (use scale, not mesh mutation).
+	var size_factor := lerpf(1.0, 1.45, clampf(height / 7.0, 0.0, 1.0))
+	contact_shadow.scale = Vector3(size_factor, 1.0, size_factor)
+	contact_shadow_material.set_shader_parameter("shadow_opacity", alpha)
 
 func _build_debug_draw() -> void:
 	debug_mesh = ImmediateMesh.new()
