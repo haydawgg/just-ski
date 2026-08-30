@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://crash_viewport_diag"]
+
+[ext_resource type="Script" path="res://tests/crash_viewport_diagnostic.gd" id="1"]
+
+[node name="CrashViewportDiagnostic" type="Node"]
+script = ExtResource("1")

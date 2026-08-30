@@ -424,8 +424,21 @@ func _update_bail(delta: float) -> void:
 	velocity += Vector3.DOWN * profile.air_gravity * delta
 	if contact.grounded:
 		velocity = velocity.slide(contact.average_normal)
-		velocity *= exp(-profile.bail_ground_damping * delta)
-		angular_velocity *= exp(-profile.crash_ground_angular_damping * delta)
+		var ground_damping := profile.bail_ground_damping
+		var angular_damping := profile.crash_ground_angular_damping
+		if crash_context.stage == CrashContext.Stage.FALL:
+			ground_damping *= 0.55
+			angular_damping *= 0.6
+		elif crash_context.stage == CrashContext.Stage.REST:
+			ground_damping *= 0.38
+			angular_damping *= 0.45
+		velocity *= exp(-ground_damping * delta)
+		angular_velocity *= exp(-angular_damping * delta)
+		# Rest stage retains a faint velocity-driven secondary wobble instead of freezing.
+		if crash_context.stage == CrashContext.Stage.REST and velocity.length() > 0.15:
+			var wobble_axis := Vector3.UP.cross(velocity.normalized())
+			if wobble_axis.length_squared() > 0.001:
+				angular_velocity += wobble_axis.normalized() * 0.08 * clampf(velocity.length() / 5.0, 0.0, 1.0) * delta
 		var aligned_up := global_basis.y.lerp(contact.average_normal, 1.0 - exp(-profile.bail_ground_align_rate * delta)).normalized()
 		var forward := (-global_basis.z).slide(contact.average_normal)
 		if forward.length_squared() < 0.0001:
@@ -438,6 +451,22 @@ func _update_bail(delta: float) -> void:
 		rotate_object_local(Vector3.UP, angular_velocity.y * delta)
 		rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
 		global_basis = global_basis.orthonormalized()
+		# Prevent sustained vertical post where skis appear as a pole through the character.
+		var up_dot := global_basis.y.dot(Vector3.UP)
+		if up_dot < 0.45:
+			var forward := -global_basis.z
+			if forward.length_squared() < 0.001:
+				forward = Vector3.FORWARD
+			var target_basis := Basis.looking_at(forward.normalized(), Vector3.UP)
+			global_basis = global_basis.slerp(target_basis, 0.68)
+			global_basis = global_basis.orthonormalized()
+			# Strongly damp angular velocity when correcting from extreme inversion.
+			angular_velocity *= 0.62
+			# Add upright torque to prevent lingering vertical.
+			var upright_torque := Vector3.UP.cross(global_basis.y).normalized() * 4.5 * (0.45 - up_dot)
+			angular_velocity += upright_torque * delta
+			# Clamp angular velocity to prevent re-tumbling into vertical.
+			angular_velocity = angular_velocity.limit_length(3.5)
 	crash_context.current_velocity = velocity
 	crash_context.angular_speed = angular_velocity.length()
 	_update_crash_stage_and_rest(delta)

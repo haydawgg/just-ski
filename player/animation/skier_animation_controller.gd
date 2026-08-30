@@ -2139,6 +2139,8 @@ func _apply_bail_pose(frame: SkierAnimationFrame) -> void:
 		_:
 			_current_pose_name = "Crash Release"
 			_crash_stage_name = "Release"
+	_enforce_crash_equipment_constraints(frame)
+	_apply_crash_settling(frame)
 	if frame.crash_stage == CrashContext.Stage.RELEASE and not _crash_handoff_rotations.is_empty():
 		var release_blend := clampf(frame.crash_elapsed / maxf(profile.crash_release_duration, 0.01), 0.0, 1.0)
 		_blend_crash_handoff(1.0 - release_blend)
@@ -2159,6 +2161,106 @@ func _blend_crash_handoff(weight: float) -> void:
 
 func _crash_handoff_joints() -> Array[Node3D]:
 	return [pelvis, spine, chest, head, left_hip, right_hip, left_knee, right_knee, left_shoulder, right_shoulder, left_elbow, right_elbow, left_hand, right_hand, left_pole, right_pole, left_ski, right_ski]
+
+func _enforce_crash_equipment_constraints(frame: SkierAnimationFrame) -> void:
+	# Prevent skis from becoming vertical posts and from intersecting near the body.
+	var left_ski_rot := _rotation_targets.get(left_ski, Vector3.ZERO) as Vector3
+	var right_ski_rot := _rotation_targets.get(right_ski, Vector3.ZERO) as Vector3
+	# Clamp pitch/roll to keep skis roughly horizontal in world, compensating for body tumble.
+	var pitch_limit := 0.38
+	var roll_limit := 0.38
+	var body_up_dot := frame.body_up.dot(Vector3.UP) if frame.body_up_valid else 1.0
+	if frame.grounded:
+		pitch_limit = 0.24
+		roll_limit = 0.28
+	# When body is inverted, allow larger local pitch to keep skis horizontal in world.
+	if body_up_dot < 0.3:
+		pitch_limit = 1.35
+		roll_limit = 0.85
+		# Compensate: set ski pitch to counter body pitch so ski stays roughly horizontal.
+		var body_pitch := acos(clampf(body_up_dot, -1.0, 1.0))
+		# Body pitched 90 deg (dot 0) -> need -90 deg local to keep ski horizontal.
+		var compensation := -body_pitch * 0.92
+		left_ski_rot.x = clampf(compensation + left_ski_rot.x * 0.15, -pitch_limit, pitch_limit)
+		right_ski_rot.x = clampf(compensation + right_ski_rot.x * 0.15, -pitch_limit, pitch_limit)
+	else:
+		left_ski_rot.x = clampf(left_ski_rot.x, -pitch_limit, pitch_limit)
+		left_ski_rot.z = clampf(left_ski_rot.z, -roll_limit, roll_limit)
+		right_ski_rot.x = clampf(right_ski_rot.x, -pitch_limit, pitch_limit)
+		right_ski_rot.z = clampf(right_ski_rot.z, -roll_limit, roll_limit)
+	if body_up_dot >= 0.3:
+		left_ski_rot.z = clampf(left_ski_rot.z, -roll_limit, roll_limit)
+		right_ski_rot.z = clampf(right_ski_rot.z, -roll_limit, roll_limit)
+	# Keep yaw separation restrained so skis stay parallel.
+	var yaw_sep := left_ski_rot.y - right_ski_rot.y
+	if absf(yaw_sep) > 0.45:
+		var avg_yaw := (left_ski_rot.y + right_ski_rot.y) * 0.5
+		left_ski_rot.y = avg_yaw + 0.22 * signf(yaw_sep)
+		right_ski_rot.y = avg_yaw - 0.22 * signf(yaw_sep)
+	# When grounded, also keep skis splayed slightly outward for silhouette, not crossed.
+	if frame.grounded:
+		left_ski_rot.y = clampf(left_ski_rot.y, -0.28, -0.04)
+		right_ski_rot.y = clampf(right_ski_rot.y, 0.04, 0.28)
+		# Nudge splay outward
+		if left_ski_rot.y > -0.06:
+			left_ski_rot.y = -0.08
+		if right_ski_rot.y < 0.06:
+			right_ski_rot.y = 0.08
+	_rotation_targets[left_ski] = left_ski_rot
+	_rotation_targets[right_ski] = right_ski_rot
+	# Keep poles tucked near body during crash, not extended to ground.
+	var left_pole_rot := _rotation_targets.get(left_pole, Vector3.ZERO) as Vector3
+	var right_pole_rot := _rotation_targets.get(right_pole, Vector3.ZERO) as Vector3
+	left_pole_rot.x = clampf(left_pole_rot.x, -0.55, 0.55)
+	right_pole_rot.x = clampf(right_pole_rot.x, -0.55, 0.55)
+	left_pole_rot.z = clampf(left_pole_rot.z, -0.45, 0.45)
+	right_pole_rot.z = clampf(right_pole_rot.z, -0.45, 0.45)
+	# In pre-bail/airborne, poles should be driven by inertia, not reaching to ground.
+	if frame.locomotion_state == STATE_AIR and frame.pre_bail_weight > 0.3:
+		left_pole_rot.x *= 0.5
+		right_pole_rot.x *= 0.5
+	_rotation_targets[left_pole] = left_pole_rot
+	_rotation_targets[right_pole] = right_pole_rot
+	# If we are in REST and still have high angular velocity, damp the authored tumble.
+	if frame.crash_stage == CrashContext.Stage.REST and frame.crash_angular_speed > 2.0:
+		var pelvis_rot := _rotation_targets.get(pelvis, Vector3.ZERO) as Vector3
+		pelvis_rot.x = clampf(pelvis_rot.x, -0.55, 0.35)
+		pelvis_rot.z = clampf(pelvis_rot.z, -0.75, 0.75)
+		_rotation_targets[pelvis] = pelvis_rot
+
+func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
+	# Add restrained velocity-driven dragging after impact so the crash does not freeze.
+	if frame.crash_stage != CrashContext.Stage.FALL and frame.crash_stage != CrashContext.Stage.REST:
+		return
+	var drag_vel := frame.crash_current_velocity
+	var drag_speed := drag_vel.length()
+	if drag_speed < 0.15:
+		return
+	var ground_n := frame.ground_normal if frame.grounded else frame.crash_impact_normal
+	if ground_n.length_squared() < 0.001:
+		ground_n = Vector3.UP
+	var lateral_drag := drag_vel.slide(ground_n)
+	var lateral_speed := lateral_drag.length()
+	if lateral_speed < 0.1:
+		return
+	var drag_dir := lateral_drag.normalized()
+	var influence := clampf(lateral_speed / 7.0, 0.0, 1.0)
+	# In FALL, add subtle translation and tumble from remaining velocity.
+	if frame.crash_stage == CrashContext.Stage.FALL:
+		var fall_drag := influence * 0.07
+		_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_dir * fall_drag + Vector3(0, -0.015 * fall_drag, 0)
+		_add_rotation(pelvis, Vector3(0, drag_dir.x * 0.08 * influence, 0))
+		_add_rotation(left_ski, Vector3(0, drag_dir.x * 0.06 * influence, 0))
+		_add_rotation(right_ski, Vector3(0, drag_dir.x * 0.06 * influence, 0))
+	# In REST, keep a small residual slide and secondary wobble until rest is confirmed.
+	if frame.crash_stage == CrashContext.Stage.REST:
+		var rest_drag := influence * 0.045 * clampf(1.0 - frame.crash_elapsed / maxf(1.4, 0.01), 0.0, 1.0)
+		_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_dir * rest_drag
+		var wobble := sin(frame.crash_elapsed * 6.2) * influence * 0.035
+		_add_rotation(spine, Vector3(wobble * 0.5, 0, wobble))
+		_add_rotation(chest, Vector3(0, 0, wobble * 0.7))
+		_add_rotation(left_pole, Vector3(wobble * 0.3, 0, 0))
+		_add_rotation(right_pole, Vector3(-wobble * 0.3, 0, 0))
 
 func _update_pre_bail_response(frame: SkierAnimationFrame, delta: float) -> void:
 	var target := clampf(frame.pre_bail_weight, 0.0, 1.0) if frame.locomotion_state == STATE_AIR else 0.0
