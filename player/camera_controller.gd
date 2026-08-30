@@ -23,6 +23,8 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var air_height := 0.82
 @export var air_height_rise_rate := 5.0
 @export var air_height_fall_rate := 7.0
+@export var air_vertical_dead_zone := 0.5
+@export var air_vertical_anchor_response := 3.4
 
 @export_group("Position Spring")
 @export var spring_strength := 14.0
@@ -56,6 +58,8 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var look_heading_weight_gain := 0.35
 @export var heading_angle_reference := 45.0
 @export var landing_heading_weight := 0.05
+@export var turn_look_ahead_gain := 1.8
+@export var predicted_landing_look_weight := 0.38
 
 @export_group("Look-ahead & FOV")
 @export var look_ahead_min := 3.0
@@ -106,6 +110,8 @@ var _filtered_surface_up := Vector3.UP
 var _yaw_dir := Vector3.FORWARD
 var _pitch := 0.0
 var _smoothed_air_height := 0.0
+var _air_anchor_height := 0.0
+var _air_anchor_valid := false
 var _smoothed_speed_distance := 0.0
 var _smoothed_speed_height := 0.0
 var _smoothed_look_ahead := look_ahead_min
@@ -158,6 +164,8 @@ func reset_immediate() -> void:
 	spring_velocity_horizontal = Vector3.ZERO
 	spring_velocity_vertical = Vector3.ZERO
 	_smoothed_air_height = air_height if (skier != null and skier.state == SkierController.State.AIR) else 0.0
+	_air_anchor_height = target.global_position.dot(up)
+	_air_anchor_valid = skier != null and skier.state == SkierController.State.AIR
 	_smoothed_speed_distance = clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
 	_smoothed_speed_height = clampf(speed * speed_height_gain, 0.0, speed_height_cap)
 	_smoothed_look_ahead = clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max)
@@ -196,8 +204,14 @@ func _physics_process(delta: float) -> void:
 	_filtered_surface_up = _slerp_direction(_filtered_surface_up, raw_surface_up, 1.0 - exp(-surface_up_rate * delta))
 	var up := _filtered_surface_up
 
+	var previous_camera_state := camera_state
 	_update_camera_state(skier, delta)
 	_update_profile(skier, delta)
+	if camera_state == CameraState.AIR and previous_camera_state != CameraState.AIR:
+		_air_anchor_height = target.global_position.dot(up)
+		_air_anchor_valid = true
+	elif camera_state != CameraState.AIR:
+		_air_anchor_valid = false
 
 	var planar := target.velocity.slide(up)
 	var planar_speed := planar.length()
@@ -231,6 +245,9 @@ func _physics_process(delta: float) -> void:
 		air_target = air_height
 	var air_rate := air_height_rise_rate if air_target > _smoothed_air_height else air_height_fall_rate
 	_smoothed_air_height = lerpf(_smoothed_air_height, air_target, 1.0 - exp(-air_rate * delta))
+	var framing_target := target.global_position
+	if camera_state == CameraState.AIR:
+		framing_target = _air_framing_target(target.global_position, up, delta)
 
 	var speed_distance_target := clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
 	var speed_height_target := clampf(speed * speed_height_gain, 0.0, speed_height_cap)
@@ -238,7 +255,7 @@ func _physics_process(delta: float) -> void:
 	_smoothed_speed_height = lerpf(_smoothed_speed_height, speed_height_target, 1.0 - exp(-speed_height_response * delta))
 	var distance := follow_distance + _smoothed_speed_distance + _profile_distance
 	var desired_height := follow_height + _smoothed_speed_height + _smoothed_air_height + _profile_height
-	var desired := target.global_position - travel * distance + up * desired_height
+	var desired := framing_target - travel * distance + up * desired_height
 	_desired_camera_position = desired
 	var error := desired - global_position
 	var error_vertical := up * error.dot(up)
@@ -247,7 +264,12 @@ func _physics_process(delta: float) -> void:
 	spring_velocity_vertical += (error_vertical * vertical_spring_strength - spring_velocity_vertical * vertical_damping) * delta
 	global_position += (spring_velocity_horizontal + spring_velocity_vertical) * delta
 	var pre_collision_position := global_position
-	var collision_safe := _avoid_collision(target.global_position + up * collision_probe_height, global_position, up, travel)
+	var collision_candidate := _avoid_collision(target.global_position + up * collision_probe_height, global_position, up, travel)
+	var collision_safe := collision_candidate
+	if _collision_reframed:
+		# Reframing is a camera presentation change, not a teleport. Blend the
+		# safe candidate from the spring position before enforcing hard clearance.
+		collision_safe = pre_collision_position.lerp(collision_candidate, 1.0 - exp(-collision_correction_speed * delta))
 	var stabilized := _stabilize_camera_position(collision_safe, up, travel)
 	var correction := stabilized - pre_collision_position
 	var correction_limit := collision_correction_speed * delta
@@ -261,14 +283,25 @@ func _physics_process(delta: float) -> void:
 	# Translation limiting must never erode the minimum playable frame.
 	global_position = _stabilize_camera_position(global_position, up, travel)
 
-	var look_ahead_target := maxf(clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max), _profile_look_ahead)
+	var turn_look_ahead := 0.0
+	if skier != null and camera_state in [CameraState.GROUND, CameraState.LANDING]:
+		turn_look_ahead = clampf(
+			absf(skier.heading_travel_angle_degrees) / maxf(heading_angle_reference, 1.0) * turn_look_ahead_gain,
+			0.0,
+			turn_look_ahead_gain
+		)
+	var look_ahead_target := maxf(clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max) + turn_look_ahead, _profile_look_ahead)
 	_smoothed_look_ahead = lerpf(_smoothed_look_ahead, look_ahead_target, 1.0 - exp(-look_ahead_rate * delta))
 	var look_dir := travel
 	if skier != null and _smoothed_heading_weight > 0.005:
 		var heading := (-target.global_basis.z).slide(up).normalized()
 		if heading.length_squared() > 0.05:
 			look_dir = _slerp_direction(travel, heading, _smoothed_heading_weight)
-	var look_target := target.global_position + look_dir * _smoothed_look_ahead + up * look_height_offset
+	var look_target := framing_target + look_dir * _smoothed_look_ahead + up * look_height_offset
+	if skier != null and camera_state == CameraState.AIR and skier.predicted_landing_valid and skier.velocity.dot(up) < 0.0:
+		var landing_weight := 1.0 - clampf(skier.predicted_landing_time / 0.75, 0.0, 1.0)
+		landing_weight = smoothstep(0.0, 1.0, landing_weight) * predicted_landing_look_weight
+		look_target = look_target.lerp(skier.predicted_landing_point + up * look_height_offset, landing_weight)
 	var desired_forward := global_position.direction_to(look_target)
 	_desired_camera_forward = desired_forward
 
@@ -318,6 +351,20 @@ func _update_camera_state(skier: SkierController, delta: float) -> void:
 			camera_state = CameraState.CRASH
 		_:
 			camera_state = CameraState.LANDING if _landing_timer > 0.0 else CameraState.GROUND
+
+func _air_framing_target(player_position: Vector3, up: Vector3, delta: float) -> Vector3:
+	var player_height := player_position.dot(up)
+	if not _air_anchor_valid:
+		_air_anchor_height = player_height
+		_air_anchor_valid = true
+	var height_delta := player_height - _air_anchor_height
+	var target_height := player_height
+	if absf(height_delta) <= air_vertical_dead_zone:
+		target_height = _air_anchor_height
+	else:
+		target_height = player_height - signf(height_delta) * air_vertical_dead_zone
+	_air_anchor_height = lerpf(_air_anchor_height, target_height, 1.0 - exp(-air_vertical_anchor_response * delta))
+	return player_position + up * (_air_anchor_height - player_height)
 
 func _update_profile(skier: SkierController, delta: float) -> void:
 	var distance_delta := 0.0

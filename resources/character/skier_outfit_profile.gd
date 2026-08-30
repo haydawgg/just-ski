@@ -14,9 +14,9 @@ extends Resource
 @export var goggle_lens_color := Color("#c46d32")
 
 @export_group("Equipment")
-@export var ski_base_color := Color("#263741")
+@export var ski_base_color := Color("#314e5b")
 @export var ski_accent_color := Color("#d79a35")
-@export var pole_color := Color("#18242c")
+@export var pole_color := Color("#263d49")
 
 @export_group("Surface Response")
 @export_range(0.0, 1.0) var cloth_roughness := 0.82
@@ -25,4 +25,3 @@ extends Resource
 @export_range(0.0, 1.0) var ski_roughness := 0.38
 @export_range(0.0, 1.0) var hardgoods_metallic := 0.12
 @export_range(0.0, 1.0) var lens_metallic := 0.48
-

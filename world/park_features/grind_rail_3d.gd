@@ -88,45 +88,84 @@ func tangent_at(offset: float) -> Vector3:
 
 func _build_visual_and_collision() -> void:
 	var samples := path.get_baked_points()
+	if samples.size() < 2:
+		return
+	var visual := MeshInstance3D.new()
+	visual.name = "ContinuousRailVisual"
+	visual.mesh = _build_continuous_visual_mesh(samples)
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color("#b9784e") if rail_type == RailType.BOX else Color("#536d78")
+	material.metallic = 0.48 if rail_type != RailType.BOX else 0.08
+	material.roughness = 0.46 if rail_type != RailType.BOX else 0.58
+	material.emission_enabled = false
+	visual.material_override = material
+	visual.visibility_range_end = 190.0
+	visual.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	add_child(visual)
 	for index: int in range(samples.size() - 1):
 		var a := samples[index]
 		var b := samples[index + 1]
 		var delta := b - a
 		var midpoint := (a + b) * 0.5
-		var visual := MeshInstance3D.new()
 		var collision := CollisionShape3D.new()
 		var body := StaticBody3D.new()
 		body.collision_layer = 8
 		body.collision_mask = 2
+		body.set_meta("ski_surface_class", "metal")
 		if rail_type == RailType.BOX:
-			var box_mesh := BoxMesh.new()
-			box_mesh.size = Vector3(1.15, 0.22, delta.length())
-			visual.mesh = box_mesh
 			var box_shape := BoxShape3D.new()
-			box_shape.size = box_mesh.size
+			box_shape.size = Vector3(1.15, 0.22, delta.length())
 			collision.shape = box_shape
 		else:
-			var cylinder := CylinderMesh.new()
-			cylinder.top_radius = 0.075
-			cylinder.bottom_radius = 0.075
-			cylinder.height = delta.length()
-			visual.mesh = cylinder
 			var cylinder_shape := CylinderShape3D.new()
 			cylinder_shape.radius = 0.075
 			cylinder_shape.height = delta.length()
 			collision.shape = cylinder_shape
-		var material := StandardMaterial3D.new()
-		material.albedo_color = Color("#b9784e") if rail_type == RailType.BOX else Color("#536d78")
-		material.metallic = 0.48 if rail_type != RailType.BOX else 0.08
-		material.roughness = 0.46 if rail_type != RailType.BOX else 0.58
-		material.emission_enabled = false
-		visual.material_override = material
-		visual.visibility_range_end = 190.0
-		visual.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
-		visual.position = midpoint
-		visual.basis = Basis.looking_at(delta.normalized(), Vector3.UP).rotated(Vector3.RIGHT, PI * 0.5)
 		body.position = midpoint
-		body.basis = visual.basis
+		body.basis = _segment_basis(delta)
 		body.add_child(collision)
-		add_child(visual)
 		add_child(body)
+
+func _build_continuous_visual_mesh(samples: PackedVector3Array) -> ArrayMesh:
+	var section_count := 8 if rail_type != RailType.BOX else 4
+	var section_width := 0.075 if rail_type != RailType.BOX else 0.575
+	var section_height := 0.075 if rail_type != RailType.BOX else 0.11
+	var rings: Array[PackedVector3Array] = []
+	var ring_normals: Array[PackedVector3Array] = []
+	for index: int in range(samples.size()):
+		var previous := samples[maxi(index - 1, 0)]
+		var next := samples[mini(index + 1, samples.size() - 1)]
+		var tangent := (next - previous).normalized()
+		if tangent.length_squared() < 0.001:
+			tangent = Vector3.FORWARD
+		var reference_up := Vector3.UP if absf(tangent.dot(Vector3.UP)) < 0.94 else Vector3.FORWARD
+		var across := tangent.cross(reference_up).normalized()
+		var ring_up := across.cross(tangent).normalized()
+		var ring := PackedVector3Array()
+		var normals := PackedVector3Array()
+		for section: int in range(section_count):
+			var angle := TAU * float(section) / float(section_count) + (PI * 0.25 if rail_type == RailType.BOX else 0.0)
+			var normal := (across * cos(angle) + ring_up * sin(angle)).normalized()
+			ring.append(samples[index] + across * cos(angle) * section_width + ring_up * sin(angle) * section_height)
+			normals.append(normal)
+		rings.append(ring)
+		ring_normals.append(normals)
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for index: int in range(samples.size() - 1):
+		for section: int in range(section_count):
+			var next_section := (section + 1) % section_count
+			_add_surface_triangle(surface, rings[index][section], ring_normals[index][section], rings[index + 1][section], ring_normals[index + 1][section], rings[index + 1][next_section], ring_normals[index + 1][next_section])
+			_add_surface_triangle(surface, rings[index][section], ring_normals[index][section], rings[index + 1][next_section], ring_normals[index + 1][next_section], rings[index][next_section], ring_normals[index][next_section])
+	return surface.commit()
+
+func _add_surface_triangle(surface: SurfaceTool, a: Vector3, normal_a: Vector3, b: Vector3, normal_b: Vector3, c: Vector3, normal_c: Vector3) -> void:
+	surface.set_normal(normal_a)
+	surface.add_vertex(a)
+	surface.set_normal(normal_b)
+	surface.add_vertex(b)
+	surface.set_normal(normal_c)
+	surface.add_vertex(c)
+
+func _segment_basis(delta: Vector3) -> Basis:
+	return Basis.looking_at(delta.normalized(), Vector3.UP).rotated(Vector3.RIGHT, PI * 0.5)

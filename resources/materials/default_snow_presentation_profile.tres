@@ -5,10 +5,10 @@
 [resource]
 script = ExtResource("1")
 form_light_direction_world_xz = Vector2(-0.34, 0.94)
-packed_form_contrast = 0.14
-groomed_form_contrast = 0.135
-powder_form_contrast = 0.12
-steepness_contrast = 0.075
+packed_form_contrast = 0.115
+groomed_form_contrast = 0.11
+powder_form_contrast = 0.1
+steepness_contrast = 0.055
 medium_variation_scale = 0.028
 packed_medium_variation = 0.09
 groomed_medium_variation = 0.08
@@ -31,5 +31,5 @@ packed_roughness = 0.72
 groomed_roughness = 0.76
 powder_roughness = 0.84
 roughness_variation = 0.09
-detail_near_distance = 12.0
-detail_far_distance = 38.0
+detail_near_distance = 10.0
+detail_far_distance = 58.0

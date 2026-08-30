@@ -101,16 +101,16 @@ target = 2
 body_compactness = 0.84
 contact_acquire_distance = 0.7
 contact_maintain_distance = 0.8
-pelvis_offset = Vector3(-0.09, -0.1, 0.095)
+pelvis_offset = Vector3(-0.14, -0.13, 0.14)
 pelvis_rotation = Vector3(-0.1, -0.1, -0.12)
-spine_rotation = Vector3(-0.34, -0.2, -0.24)
-chest_rotation = Vector3(-0.18, -0.18, -0.23)
+spine_rotation = Vector3(-0.4, -0.26, -0.3)
+chest_rotation = Vector3(-0.24, -0.24, -0.3)
 left_hip_rotation = Vector3(-1.1, 0.02, -0.16)
 right_hip_rotation = Vector3(-0.1, 0.0, 0.03)
 left_knee_rotation = Vector3(1.75, 0.0, -0.04)
 right_knee_rotation = Vector3(0.14, 0.0, 0.0)
-left_ski_rotation = Vector3(0.65, -0.2, -0.5)
-left_shoulder_rotation = Vector3(-0.22, 0.12, -0.46)
+left_ski_rotation = Vector3(0.75, -0.2, -0.58)
+left_shoulder_rotation = Vector3(-0.42, 0.18, -0.62)
 right_shoulder_rotation = Vector3(0.02, 0.08, 0.46)
 
 [sub_resource type="Resource" id="JapanRight"]
@@ -123,17 +123,17 @@ target = 2
 body_compactness = 0.84
 contact_acquire_distance = 0.7
 contact_maintain_distance = 0.8
-pelvis_offset = Vector3(0.06, -0.085, 0.085)
+pelvis_offset = Vector3(0.11, -0.12, 0.13)
 pelvis_rotation = Vector3(-0.1, 0.1, 0.12)
-spine_rotation = Vector3(-0.34, 0.2, 0.24)
-chest_rotation = Vector3(-0.18, 0.18, 0.23)
+spine_rotation = Vector3(-0.4, 0.26, 0.3)
+chest_rotation = Vector3(-0.24, 0.24, 0.3)
 left_hip_rotation = Vector3(-0.1, 0.0, -0.03)
 right_hip_rotation = Vector3(-1.1, -0.02, 0.16)
 left_knee_rotation = Vector3(0.14, 0.0, 0.0)
 right_knee_rotation = Vector3(1.75, 0.0, 0.04)
-right_ski_rotation = Vector3(0.2, 0.08, 0.16)
+right_ski_rotation = Vector3(0.28, 0.08, 0.22)
 left_shoulder_rotation = Vector3(0.02, -0.08, -0.46)
-right_shoulder_rotation = Vector3(-0.22, -0.12, 0.46)
+right_shoulder_rotation = Vector3(-0.42, -0.18, 0.62)
 
 [sub_resource type="Resource" id="Tail"]
 script = ExtResource("2")

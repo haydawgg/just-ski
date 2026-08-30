@@ -22,10 +22,16 @@ func _ready() -> void:
 	title_label = Label.new()
 	title_label.position = Vector2(8.0, 3.0)
 	title_label.add_theme_font_size_override("font_size", 13)
+	title_label.add_theme_color_override("font_color", Color("#d9eef2"))
+	title_label.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.09, 0.42))
+	title_label.add_theme_constant_override("outline_size", 2)
 	add_child(title_label)
 	detail_label = Label.new()
 	detail_label.position = Vector2(8.0, 130.0)
 	detail_label.add_theme_font_size_override("font_size", 10)
+	detail_label.add_theme_color_override("font_color", Color("#b6d1d7"))
+	detail_label.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.09, 0.34))
+	detail_label.add_theme_constant_override("outline_size", 2)
 	add_child(detail_label)
 	visible = false
 	set_process(true)
@@ -46,9 +52,9 @@ func apply_snapshot(data: Dictionary) -> void:
 	var gesture_event := phase in ["PRELOAD", "FLICK", "ROTATE"] and strength > 0.2
 	var active := direct_input or gesture_event
 	if active:
-		linger_time = 0.28
+		linger_time = 0.16
 	visible = bool(GameSettings.active.get("trick_visualizer_enabled", true)) and (active or linger_time > 0.0)
-	modulate.a = 0.82 if active else clampf(linger_time / 0.28, 0.0, 0.5)
+	modulate.a = 0.62 if active else clampf(linger_time / 0.16, 0.0, 0.34)
 	title_label.text = _pretty(kind)
 	detail_label.text = "%s  •  %d%%  •  %s" % [_pretty(phase), roundi(strength * 100.0), grab if not grab.is_empty() else "NO GRAB"]
 	queue_redraw()
@@ -66,8 +72,8 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var center := Vector2(95.0, 78.0)
 	var radius := 39.0
-	draw_circle(center, radius + 6.0, Color(0.02, 0.06, 0.09, 0.46))
-	draw_arc(center, radius, 0.0, TAU, 40, Color(0.75, 0.89, 0.92, 0.72), 1.5, true)
+	draw_circle(center, radius + 6.0, Color(0.02, 0.06, 0.09, 0.34))
+	draw_arc(center, radius, 0.0, TAU, 40, Color(0.75, 0.89, 0.92, 0.54), 1.25, true)
 	draw_line(center + Vector2(-radius, 0.0), center + Vector2(radius, 0.0), Color(0.5, 0.7, 0.78, 0.35), 1.0)
 	draw_line(center + Vector2(0.0, -radius), center + Vector2(0.0, radius), Color(0.5, 0.7, 0.78, 0.35), 1.0)
 	if path.size() > 1:

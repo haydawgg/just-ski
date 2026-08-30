@@ -6,6 +6,7 @@ var camera_rig: SkiCameraController
 var hud_overlay: Control
 var speed_label: Label
 var trick_label: Label
+var trick_result_label: Label
 var score_label: Label
 var hint_label: Label
 var landing_cue_label: Label
@@ -27,12 +28,15 @@ var total_score := 0
 var combo_count := 0
 var combo_multiplier := 1.0
 var notice_time := 0.0
+var trick_result_time := 0.0
 var onboarding_remaining := 8.0
+var clean_capture_mode := false
 const ONBOARDING_FADE_TIME := 2.5
 var _stored_mouse_mode := Input.MOUSE_MODE_VISIBLE
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	clean_capture_mode = OS.get_cmdline_user_args().has("--clean-capture")
 	_build_hud()
 	_build_menu_backdrop()
 	_build_pause_menu()
@@ -85,6 +89,11 @@ func _process(delta: float) -> void:
 	if notice_time > 0.0:
 		notice_time -= delta
 		notice_label.modulate.a = clampf(notice_time, 0.0, 1.0)
+	if trick_result_time > 0.0:
+		trick_result_time -= delta
+		trick_result_label.modulate.a = clampf(trick_result_time / 0.55, 0.0, 1.0)
+		if trick_result_time <= 0.0:
+			trick_result_label.visible = false
 	if recording_label != null and recording_label.visible:
 		recording_pulse += delta * 3.2
 		recording_label.modulate.a = 0.55 + 0.45 * sin(recording_pulse)
@@ -116,9 +125,17 @@ func _build_hud() -> void:
 	trick_label.position = Vector2(360, 36)
 	trick_label.size = Vector2(800, 54)
 	hud_overlay.add_child(trick_label)
+	trick_result_label = _label("", 20)
+	trick_result_label.name = "TrickResult"
+	trick_result_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	trick_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	trick_result_label.position = Vector2(360, 96)
+	trick_result_label.size = Vector2(800, 42)
+	trick_result_label.add_theme_color_override("font_color", Color("#f0cf87"))
+	trick_result_label.visible = false
+	hud_overlay.add_child(trick_result_label)
 	landing_cue_label = _label("", 17)
 	landing_cue_label.name = "LandingCue"
-	landing_cue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	landing_cue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	landing_cue_label.position = Vector2(1120, 500)
 	landing_cue_label.size = Vector2(410, 36)
@@ -179,7 +196,7 @@ func _build_notice_overlay() -> void:
 	notice_label.name = "NoticeLabel"
 	notice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	notice_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	notice_label.position = Vector2(460, 72)
+	notice_label.position = Vector2(460, 148)
 	notice_label.size = Vector2(600, 40)
 	notice_label.z_index = 20
 	add_child(notice_label)
@@ -518,8 +535,10 @@ func _label(text: String, size: int) -> Label:
 	label.add_theme_font_size_override("font_size", size)
 	label.add_theme_color_override("font_color", Color("#f4fbff"))
 	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
+	label.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.09, 0.42))
 	label.add_theme_constant_override("shadow_offset_x", 2)
 	label.add_theme_constant_override("shadow_offset_y", 2)
+	label.add_theme_constant_override("outline_size", 2)
 	return label
 
 func _named_button(button_name: String, text: String, callback: Callable) -> Button:
@@ -691,7 +710,17 @@ func _on_telemetry(data: Dictionary) -> void:
 	var flick_data: Dictionary = data.get("flick", {})
 	var crash_data: Dictionary = data.get("crash", {})
 	var landing_time := float(data.get("predicted_landing_time", -1.0))
-	var landing_imminent := bool(data.get("landing_feedback_armed", false)) and str(data.get("state", "")) == "AIR" and landing_time >= 0.0 and landing_time < 0.55
+	var landing_readiness_valid := bool(animation.get("landing_readiness_valid", false))
+	var pre_bail_weight := float(animation.get("pre_bail_weight", 0.0))
+	var landing_imminent := (
+		bool(data.get("landing_feedback_armed", false))
+		and bool(data.get("predicted_landing_valid", false))
+		and str(data.get("state", "")) == "AIR"
+		and landing_time >= 0.0
+		and landing_time < 0.55
+		and pre_bail_weight < 0.62
+		and landing_readiness_valid
+	)
 	landing_cue_label.visible = landing_imminent
 	if landing_imminent:
 		var ready := bool(animation.get("landing_ready", false))
@@ -738,6 +767,7 @@ func _on_telemetry(data: Dictionary) -> void:
 		animation.get("grab_type", "—"), animation.get("grab_phase", "IDLE"), animation.get("grab_hand", "NONE"),
 		animation.get("grab_target_ski", "NONE"), animation.get("grab_pose_weight", 0.0),
 		animation.get("grab_contact_weight", 0.0), animation.get("grab_reach_error", 0.0), animation.get("grab_hold_time", 0.0)]
+	debug_label.text += "\nContact class %s  snow VFX %s" % [data.get("surface_class", "UNKNOWN"), data.get("snow_contact", true)]
 	debug_label.text += "\nRig %s (requested %s)%s" % [
 		animation.get("rig_adapter", "none"), animation.get("rig_requested", "none"),
 		(" fallback: " + str(animation.get("rig_fallback_reason", ""))) if not str(animation.get("rig_fallback_reason", "")).is_empty() else ""]
@@ -769,11 +799,14 @@ func _on_telemetry(data: Dictionary) -> void:
 func _on_trick_changed(text: String) -> void:
 	trick_label.text = text
 	trick_label.visible = not text.is_empty()
+	if not text.is_empty():
+		trick_result_time = 0.0
+		trick_result_label.visible = false
 
 func _on_score_awarded(text: String, awarded: int, quality: float, snapshot: Dictionary) -> void:
 	_on_score_changed(snapshot)
 	var link_note := "  LINE" if text.begins_with("Line Link") else ""
-	_show_notice("%s  +%d  [%s]%s" % [text, awarded, _quality_name(quality), link_note])
+	_show_trick_result("%s  +%d  [%s]%s" % [text, awarded, _quality_name(quality), link_note])
 
 func _on_score_changed(snapshot: Dictionary) -> void:
 	total_score = int(snapshot.get("total_score", 0))
@@ -818,7 +851,7 @@ func _on_run_finished(snapshot: Dictionary) -> void:
 		retry.grab_focus()
 
 func _on_landed(result: Dictionary) -> void:
-	_show_notice(_quality_name(float(result.score)) + " LANDING")
+	_show_trick_result(_quality_name(float(result.score)) + " LANDING")
 
 func _on_crashed() -> void:
 	_show_notice("BAIL — recover on snow")
@@ -842,34 +875,38 @@ func notify_course_recovery() -> void:
 
 func _on_recorder_armed(value: bool) -> void:
 	if recording_label != null:
-		recording_label.visible = value
+		# Arming is an internal capture state; keep the gameplay HUD quiet until
+		# frames are actually being recorded or encoded.
+		recording_label.visible = false
 		recording_label.text = "● REC ARMED"
 		recording_label.add_theme_color_override("font_color", Color("#ffc857"))
 	recording_pulse = 0.0
 
 func _on_recording_changed(active: bool) -> void:
 	if recording_label != null:
-		recording_label.visible = active
+		recording_label.visible = active and not clean_capture_mode
 		recording_label.text = "● REC"
 		recording_label.add_theme_color_override("font_color", Color("#ff3b30"))
 	recording_pulse = 0.0
-	if active:
+	if active and not clean_capture_mode:
 		_show_notice("RECORDING — F9 TO STOP")
 
 func _on_clip_encoding_changed(active: bool) -> void:
 	if recording_label != null:
-		recording_label.visible = active
+		recording_label.visible = active and not clean_capture_mode
 		recording_label.text = "● ENC"
 		recording_label.add_theme_color_override("font_color", Color("#ffc857"))
 	recording_pulse = 0.0
-	if active:
+	if active and not clean_capture_mode:
 		_show_notice("ENCODING CLIP — SAVES TO DOWNLOADS WHEN DONE")
 
 func _on_clip_saved(path: String) -> void:
-	_show_notice("CLIP SAVED — %s" % path.get_file())
+	if not clean_capture_mode:
+		_show_notice("CLIP SAVED — %s" % path.get_file())
 
 func _on_clip_failed(reason: String) -> void:
-	_show_notice("CLIP CAPTURE FAILED — %s" % reason)
+	if not clean_capture_mode:
+		_show_notice("CLIP CAPTURE FAILED — %s" % reason)
 
 func _on_device_changed(_device: String) -> void:
 	_update_hint()
@@ -883,6 +920,12 @@ func _show_notice(text: String) -> void:
 	notice_label.text = text
 	notice_label.modulate.a = 1.0
 	notice_time = 2.0
+
+func _show_trick_result(text: String) -> void:
+	trick_result_label.text = text
+	trick_result_label.modulate.a = 1.0
+	trick_result_time = 1.25
+	trick_result_label.visible = true
 
 func _quality_name(quality: float) -> String:
 	if quality >= 0.72: return "CLEAN"

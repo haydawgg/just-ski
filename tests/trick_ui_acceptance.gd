@@ -70,6 +70,23 @@ func _test_game_ui_teaching_surfaces() -> void:
 	if trick.live_name() != "Straight Air":
 		failures.append("A sustained straight air lost useful trick feedback")
 	trick.free()
+	var grab_trick := TrickController.new()
+	add_child(grab_trick)
+	grab_trick.begin_air(false, TrickCommand.Kind.SPIN_LEFT)
+	var grab_command := TrickCommand.new()
+	grab_command.grab_pose = TrickController.GrabPose.SAFETY_LEFT
+	grab_command.grab_amount = 1.0
+	grab_trick.update_air(Vector3.ZERO, 0.1, grab_command)
+	if "Safety Grab Left" in grab_trick.live_name():
+		failures.append("Grab intent appeared before visual contact qualification")
+	grab_trick.set_grab_contact(1.0, "HOLD", 0.12)
+	if "Safety Grab Left" not in grab_trick.live_name():
+		failures.append("Qualified visual grab contact did not reach live trick feedback")
+	grab_command.reset()
+	grab_trick.update_air(Vector3.ZERO, 0.1, grab_command)
+	if "Safety Grab Left" in grab_trick.live_name():
+		failures.append("Released visual grab remained in live trick feedback")
+	grab_trick.free()
 	ui.queue_free()
 
 func _test_scoring_finish_contract() -> void:

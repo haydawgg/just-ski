@@ -136,13 +136,13 @@ static func _ski_mesh(surface: Material) -> ArrayMesh:
 	# Cross-sections run tail-to-tip. The waist narrows underfoot, the shovel
 	# widens, and the last two sections rise to form a real upturned tip.
 	var sections := [
-		Vector3(0.050, 0.000, 0.81),
-		Vector3(0.055, 0.000, 0.65),
-		Vector3(0.046, 0.000, 0.08),
-		Vector3(0.044, 0.000, -0.18),
-		Vector3(0.052, 0.000, -0.72),
-		Vector3(0.0575, 0.006, -0.92),
-		Vector3(0.050, 0.010, -1.01),
+		Vector3(0.055, 0.000, 0.81),
+		Vector3(0.061, 0.000, 0.65),
+		Vector3(0.051, 0.000, 0.08),
+		Vector3(0.049, 0.000, -0.18),
+		Vector3(0.057, 0.000, -0.72),
+		Vector3(0.063, 0.006, -0.92),
+		Vector3(0.055, 0.010, -1.01),
 	]
 	var top := PackedVector3Array()
 	var bottom := PackedVector3Array()

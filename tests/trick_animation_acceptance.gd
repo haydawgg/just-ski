@@ -108,7 +108,7 @@ func _test_mirrored_spin_counts() -> void:
 		if absf(absf(left_chest) - absf(right_chest)) > 0.08:
 			failures.append("Left/right %.0f spin magnitudes diverged unexpectedly" % degrees)
 		if float(left.ski_yaw_separation) > 0.08 or float(right.ski_yaw_separation) > 0.08:
-			failures.append("%.0f spin allowed unsafe ski yaw separation" % degrees)
+			failures.append("%.0f spin allowed unsafe ski yaw separation (left %.3f right %.3f)" % [degrees, float(left.ski_yaw_separation), float(right.ski_yaw_separation)])
 
 func _test_higher_spin_compactness() -> void:
 	var low := _sample_spin(1.0, 180.0, 2.2)

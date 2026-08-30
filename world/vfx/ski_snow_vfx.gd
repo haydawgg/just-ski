@@ -2,7 +2,9 @@ class_name SkiSnowVFX
 extends Node3D
 
 const TRACK_SHADER: Shader = preload("res://shaders/ski_tracks.gdshader")
+const PARTICLE_SHADER: Shader = preload("res://shaders/snow_particle.gdshader")
 const MAX_TRACK_SAMPLES := 180
+const TRACK_MAX_AGE := 6.0
 const TRACK_SAMPLE_INTERVAL := 0.045
 const TRACK_SAMPLE_DISTANCE := 0.16
 const TRACK_BREAK_DISTANCE := 3.0
@@ -17,6 +19,7 @@ var track_sample_time := 0.0
 var last_left_position := Vector3.ZERO
 var last_right_position := Vector3.ZERO
 var last_track_valid := false
+var contact_presentation := SkiContactPresentation.new()
 
 var carve_spray: GPUParticles3D
 var skid_spray: GPUParticles3D
@@ -47,14 +50,18 @@ func _ready() -> void:
 func update_from_existing_contact(delta: float) -> void:
 	if skier == null:
 		return
+	# SkiContactPresentation captures skier.contact.left_hit_position and
+	# skier.contact.right_hit_position once for every presentation adapter.
+	contact_presentation.capture(skier.contact)
+	_age_track_samples(delta)
 	var speed := skier.velocity.length()
 	var grounded := skier.state == SkierController.State.GROUND and skier.contact.grounded
 	track_sample_time += delta
-	if grounded and speed >= MIN_TRACK_SPEED:
+	if grounded and contact_presentation.allows_snow_effects() and speed >= MIN_TRACK_SPEED:
 		_update_tracks(speed)
 		_update_continuous_spray(speed)
 		bail_scrape.emitting = false
-	elif skier.state == SkierController.State.BAIL and skier.contact.grounded and speed >= 0.9:
+	elif skier.state == SkierController.State.BAIL and skier.contact.grounded and contact_presentation.allows_snow_effects() and speed >= 0.9:
 		last_track_valid = false
 		carve_spray.emitting = false
 		skid_spray.emitting = false
@@ -86,6 +93,8 @@ func debug_snapshot() -> Dictionary:
 		"brake_response": last_brake_response,
 		"bail_surface_speed": last_bail_surface_speed,
 		"bail_scrape_active": bail_scrape.emitting if bail_scrape != null else false,
+		"surface_class": contact_presentation.surface_class,
+		"snow_contact": contact_presentation.allows_snow_effects(),
 		"uses_existing_contact": skier != null,
 	}
 
@@ -110,28 +119,49 @@ func _build_particles(label: String, amount: int, lifetime: float, velocity_rang
 	particles.randomness = 0.38
 	particles.explosiveness = 0.08
 	particles.visibility_aabb = AABB(Vector3(-9.0, -3.0, -9.0), Vector3(18.0, 11.0, 18.0))
+	particles.visibility_range_begin = 0.18
+	particles.visibility_range_end = 72.0
+	particles.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	particles.local_coords = false
 	particles.top_level = true
 	var process_material := ParticleProcessMaterial.new()
-	process_material.direction = Vector3(0.0, 0.72, 0.55)
+	process_material.direction = Vector3(0.0, 0.42, 0.55)
 	process_material.spread = 42.0
 	process_material.initial_velocity_min = velocity_range.x
 	process_material.initial_velocity_max = velocity_range.y
-	process_material.gravity = Vector3(0.0, -5.8, 0.0)
+	process_material.gravity = Vector3(0.0, -8.0, 0.0)
 	process_material.damping_min = 0.35
 	process_material.damping_max = 1.15
 	process_material.scale_min = scale_range.x
 	process_material.scale_max = scale_range.y
 	process_material.color = color
+	var scale_curve := Curve.new()
+	scale_curve.min_value = 0.0
+	scale_curve.max_value = 1.0
+	scale_curve.add_point(Vector2(0.0, 0.46))
+	scale_curve.add_point(Vector2(0.16, 1.0))
+	scale_curve.add_point(Vector2(0.72, 0.82))
+	scale_curve.add_point(Vector2(1.0, 0.18))
+	var scale_curve_texture := CurveTexture.new()
+	scale_curve_texture.curve = scale_curve
+	process_material.scale_curve = scale_curve_texture
+	var alpha_gradient := Gradient.new()
+	alpha_gradient.colors = PackedColorArray([
+		Color(1.0, 1.0, 1.0, 0.0),
+		Color(1.0, 1.0, 1.0, 0.94),
+		Color(1.0, 1.0, 1.0, 0.0),
+	])
+	alpha_gradient.offsets = PackedFloat32Array([0.0, 0.12, 1.0])
+	var alpha_ramp := GradientTexture1D.new()
+	alpha_ramp.gradient = alpha_gradient
+	process_material.color_ramp = alpha_ramp
 	particles.process_material = process_material
 	var quad := QuadMesh.new()
-	quad.size = Vector2(0.14, 0.14)
+	quad.size = Vector2(0.1, 0.1)
 	quad.orientation = PlaneMesh.FACE_Z
-	var particle_material := StandardMaterial3D.new()
-	particle_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	particle_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	particle_material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	particle_material.albedo_color = color
+	var particle_material := ShaderMaterial.new()
+	particle_material.shader = PARTICLE_SHADER
+	particle_material.set_shader_parameter("snow_tint", color)
 	quad.material = particle_material
 	particles.draw_pass_1 = quad
 	add_child(particles)
@@ -148,13 +178,13 @@ func _apply_quality() -> void:
 func _update_tracks(speed: float) -> void:
 	if track_sample_time < TRACK_SAMPLE_INTERVAL:
 		return
-	var left_valid := skier.contact.left_grounded and skier.contact.left_contact_confidence > 0.2
-	var right_valid := skier.contact.right_grounded and skier.contact.right_contact_confidence > 0.2
+	var left_valid := contact_presentation.left_valid
+	var right_valid := contact_presentation.right_valid
 	if not left_valid and not right_valid:
 		last_track_valid = false
 		return
-	var left_position := skier.contact.left_hit_position
-	var right_position := skier.contact.right_hit_position
+	var left_position := contact_presentation.left_position
+	var right_position := contact_presentation.right_position
 	var moved_enough := not last_track_valid
 	if left_valid and last_track_valid:
 		moved_enough = moved_enough or left_position.distance_to(last_left_position) >= TRACK_SAMPLE_DISTANCE
@@ -165,15 +195,15 @@ func _update_tracks(speed: float) -> void:
 	track_sample_time = 0.0
 	var skid := clampf(skier.skid_amount, 0.0, 1.0)
 	var carve_strength := clampf(skier.current_carve_ratio * absf(skier.edge_amount), 0.0, 1.0)
-	var width := lerpf(0.055, 0.23, skid)
+	var width := lerpf(0.045, 0.18, skid)
 	width += clampf(speed / maxf(skier.profile.maximum_speed, 1.0), 0.0, 1.0) * 0.015
 	if left_valid:
 		var connected_left := last_track_valid and left_position.distance_to(last_left_position) <= TRACK_BREAK_DISTANCE
-		_append_track_sample(track_samples_left, left_position, skier.contact.left_normal, width, skid, carve_strength, connected_left)
+		_append_track_sample(track_samples_left, left_position, contact_presentation.left_normal, width, skid, carve_strength, connected_left)
 		last_left_position = left_position
 	if right_valid:
 		var connected_right := last_track_valid and right_position.distance_to(last_right_position) <= TRACK_BREAK_DISTANCE
-		_append_track_sample(track_samples_right, right_position, skier.contact.right_normal, width, skid, carve_strength, connected_right)
+		_append_track_sample(track_samples_right, right_position, contact_presentation.right_normal, width, skid, carve_strength, connected_right)
 		last_right_position = right_position
 	last_track_valid = left_valid and right_valid
 	_rebuild_track_mesh()
@@ -186,6 +216,8 @@ func _append_track_sample(samples: Array[Dictionary], position: Vector3, normal:
 		"width": width,
 		"skid": skid,
 		"carve": carve,
+		"disturbance": clampf(maxf(skid, carve * 0.46), 0.0, 1.0),
+		"age": 0.0,
 		"connected": connected,
 	})
 	if samples.size() > MAX_TRACK_SAMPLES:
@@ -228,22 +260,22 @@ func _add_track_ribbon(surface: SurfaceTool, samples: Array[Dictionary]) -> void
 		var a_right := a + across_a * half_width_a
 		var b_left := b - across_b * half_width_b
 		var b_right := b + across_b * half_width_b
-		_add_track_triangle(surface, a_left, b_left, b_right, normal_a, normal_b, float(previous.skid), float(current.skid), age_alpha_a, age_alpha_b)
-		_add_track_triangle(surface, a_left, b_right, a_right, normal_a, normal_b, float(previous.skid), float(current.skid), age_alpha_a, age_alpha_b)
+		_add_track_triangle(surface, a_left, b_left, b_right, normal_a, normal_b, float(previous.disturbance), float(current.disturbance), float(previous.carve), float(current.carve), age_alpha_a, age_alpha_b)
+		_add_track_triangle(surface, a_left, b_right, a_right, normal_a, normal_b, float(previous.disturbance), float(current.disturbance), float(previous.carve), float(current.carve), age_alpha_a, age_alpha_b)
 
-func _add_track_triangle(surface: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, normal_a: Vector3, normal_b: Vector3, skid_a: float, skid_b: float, alpha_a: float, alpha_b: float) -> void:
-	_add_track_vertex(surface, a, normal_a, skid_a, alpha_a)
-	_add_track_vertex(surface, b, normal_b, skid_b, alpha_b)
-	_add_track_vertex(surface, c, normal_b, skid_b, alpha_b)
+func _add_track_triangle(surface: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, normal_a: Vector3, normal_b: Vector3, disturbance_a: float, disturbance_b: float, carve_a: float, carve_b: float, alpha_a: float, alpha_b: float) -> void:
+	_add_track_vertex(surface, a, normal_a, disturbance_a, carve_a, alpha_a)
+	_add_track_vertex(surface, b, normal_b, disturbance_b, carve_b, alpha_b)
+	_add_track_vertex(surface, c, normal_b, disturbance_b, carve_b, alpha_b)
 
-func _add_track_vertex(surface: SurfaceTool, position: Vector3, normal: Vector3, skid: float, alpha: float) -> void:
+func _add_track_vertex(surface: SurfaceTool, position: Vector3, normal: Vector3, disturbance: float, carve: float, alpha: float) -> void:
 	surface.set_normal(normal)
-	surface.set_color(Color(skid, 0.0, 0.0, alpha))
+	surface.set_color(Color(disturbance, carve, 0.0, alpha))
 	surface.add_vertex(position)
 
 func _update_continuous_spray(speed: float) -> void:
-	var contact_position := skier.contact.average_hit_position + skier.contact.average_normal * 0.08
-	var normal := skier.contact.average_normal.normalized()
+	var contact_position := _presentation_center() + _presentation_normal() * 0.08
+	var normal := _presentation_normal()
 	var travel := skier.velocity.slide(normal)
 	if travel.length_squared() < 0.01:
 		travel = -skier.global_basis.z
@@ -254,16 +286,18 @@ func _update_continuous_spray(speed: float) -> void:
 	var brake := clampf(skier.brake_amount, 0.0, 1.0)
 	last_brake_response = brake
 	var speed_ratio := clampf((speed - 3.0) / 20.0, 0.0, 1.0)
-	carve_spray.global_position = contact_position - travel * 0.45
-	skid_spray.global_position = contact_position - travel * 0.3
+	var left_contact := contact_presentation.left_position if contact_presentation.left_valid else contact_position
+	var right_contact := contact_presentation.right_position if contact_presentation.right_valid else contact_position
+	carve_spray.global_position = left_contact + normal * 0.08 - travel * 0.45
+	skid_spray.global_position = right_contact + normal * 0.08 - travel * 0.3
 	var carve_material := carve_spray.process_material as ParticleProcessMaterial
-	carve_material.direction = normal * 0.58 - travel * 0.82
+	carve_material.direction = normal * 0.42 - travel * 0.82
 	carve_material.spread = 24.0
 	var lateral_sign := signf(skier.lateral_slip)
 	if is_zero_approx(lateral_sign):
 		lateral_sign = signf(skier.edge_amount)
 	var skid_material := skid_spray.process_material as ParticleProcessMaterial
-	skid_material.direction = (normal * 0.62 + right * lateral_sign * 0.92 - travel * 0.18).normalized()
+	skid_material.direction = (normal * 0.44 + right * lateral_sign * 0.92 - travel * 0.18).normalized()
 	skid_material.spread = lerpf(34.0, 62.0, maxf(skid, brake))
 	skid_material.initial_velocity_min = lerpf(1.8, 2.8, brake)
 	skid_material.initial_velocity_max = lerpf(6.8, 8.2, brake)
@@ -275,7 +309,7 @@ func _update_continuous_spray(speed: float) -> void:
 	last_mode = "brake" if skid_spray.emitting and brake > 0.2 else ("skid" if skid_spray.emitting else ("carve" if carve_spray.emitting else "track"))
 
 func _update_bail_scrape(speed: float) -> void:
-	var normal := skier.contact.average_normal.normalized()
+	var normal := _presentation_normal()
 	if normal.length_squared() < 0.001:
 		normal = Vector3.UP
 	var surface_velocity := skier.velocity.slide(normal)
@@ -284,7 +318,7 @@ func _update_bail_scrape(speed: float) -> void:
 		bail_scrape.emitting = false
 		return
 	var travel := surface_velocity.normalized()
-	bail_scrape.global_position = skier.contact.average_hit_position + normal * 0.12 - travel * 0.24
+	bail_scrape.global_position = _presentation_center() + normal * 0.12 - travel * 0.24
 	var process_material := bail_scrape.process_material as ParticleProcessMaterial
 	process_material.direction = (normal * 0.52 - travel * 0.86).normalized()
 	process_material.spread = 54.0
@@ -296,7 +330,8 @@ func _update_bail_scrape(speed: float) -> void:
 
 func _update_speed_snow(speed: float) -> void:
 	var speed_ratio := clampf((speed - 18.0) / 15.0, 0.0, 1.0)
-	speed_snow.emitting = speed_ratio > 0.02 and skier.state != SkierController.State.BAIL
+	var surface_allows_effects := skier.state != SkierController.State.GROUND or contact_presentation.allows_snow_effects()
+	speed_snow.emitting = speed_ratio > 0.02 and skier.state != SkierController.State.BAIL and surface_allows_effects
 	speed_snow.amount_ratio = speed_ratio * 0.48
 	speed_snow.global_position = skier.global_position + Vector3.UP * 1.0
 	var process_material := speed_snow.process_material as ParticleProcessMaterial
@@ -309,8 +344,11 @@ func _on_landed(result: Dictionary) -> void:
 	last_landing_severity = severity
 	if severity < 0.08:
 		return
-	var normal := skier.contact.average_normal.normalized()
-	landing_spray.global_position = skier.contact.average_hit_position + normal * 0.1
+	contact_presentation.capture(skier.contact)
+	if not contact_presentation.allows_snow_effects():
+		return
+	var normal := _presentation_normal()
+	landing_spray.global_position = _presentation_center() + normal * 0.1
 	var process_material := landing_spray.process_material as ParticleProcessMaterial
 	var lateral := float(result.get("lateral_velocity", 0.0))
 	var travel := skier.velocity.slide(normal).normalized()
@@ -322,3 +360,32 @@ func _on_landed(result: Dictionary) -> void:
 	landing_spray.amount_ratio = lerpf(0.28, 1.0, severity)
 	landing_spray.emitting = true
 	landing_spray.restart()
+
+func _age_track_samples(delta: float) -> void:
+	_age_track_sample_array(track_samples_left, delta)
+	_age_track_sample_array(track_samples_right, delta)
+
+func _age_track_sample_array(samples: Array[Dictionary], delta: float) -> void:
+	var changed := false
+	for index: int in range(samples.size() - 1, -1, -1):
+		var sample: Dictionary = samples[index]
+		sample["age"] = float(sample.get("age", 0.0)) + delta
+		if float(sample.get("age", 0.0)) > TRACK_MAX_AGE:
+			samples.remove_at(index)
+			changed = true
+	if changed:
+		_rebuild_track_mesh()
+
+func _presentation_center() -> Vector3:
+	if contact_presentation.left_valid and contact_presentation.right_valid:
+		return (contact_presentation.left_position + contact_presentation.right_position) * 0.5
+	if contact_presentation.left_valid:
+		return contact_presentation.left_position
+	return contact_presentation.right_position
+
+func _presentation_normal() -> Vector3:
+	if contact_presentation.left_valid and contact_presentation.right_valid:
+		return (contact_presentation.left_normal + contact_presentation.right_normal).normalized()
+	if contact_presentation.left_valid:
+		return contact_presentation.left_normal
+	return contact_presentation.right_normal

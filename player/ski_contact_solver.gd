@@ -1,6 +1,8 @@
 class_name SkiContactSolver
 extends RefCounted
 
+enum SurfaceClass { SNOW, FEATURE, METAL, UNKNOWN }
+
 const TERRAIN_MASK := 1
 const HEIGHT_DISAGREEMENT_SOFT := 0.12
 const HEIGHT_DISAGREEMENT_HARD := 0.48
@@ -23,6 +25,7 @@ var hit_points: Array[Vector3] = []
 var last_normal := Vector3.UP
 var tip_load := 0.0
 var surface_kind := 0
+var surface_class := SurfaceClass.UNKNOWN
 var grounded_band := 0.5
 var average_hit_position := Vector3.ZERO
 var left_distance := 2.0
@@ -78,8 +81,11 @@ func sample(body: CharacterBody3D, distance: float = 1.45, band: float = 0.5) ->
 	var left_hits := 0
 	var right_hits := 0
 	var surface_counts := [0, 0, 0]
+	var surface_class_counts := [0, 0, 0, 0]
 	hit_points.clear()
 	tip_load = 0.0
+	surface_kind = 0
+	surface_class = SurfaceClass.UNKNOWN
 	left_distance = distance
 	right_distance = distance
 	left_normal = average_normal
@@ -151,9 +157,17 @@ func sample(body: CharacterBody3D, distance: float = 1.45, band: float = 0.5) ->
 					right_rear_position = hit_position
 					right_rear_normal = hit_normal
 			var collider := hit.get("collider") as Object
-			if collider != null and collider.has_meta("ski_surface_kind"):
-				var hit_surface := clampi(int(collider.get_meta("ski_surface_kind")), 0, surface_counts.size() - 1)
-				surface_counts[hit_surface] += 1
+			if collider != null:
+				if collider.has_meta("ski_surface_kind"):
+					var hit_surface := clampi(int(collider.get_meta("ski_surface_kind")), 0, surface_counts.size() - 1)
+					surface_counts[hit_surface] += 1
+				if collider.has_meta("ski_surface_class"):
+					var hit_class := _surface_class_value(collider.get_meta("ski_surface_class"))
+					surface_class_counts[hit_class] += 1
+				elif collider.has_meta("ski_surface_kind"):
+					# Existing authored terrain is snow unless it explicitly opts into
+					# another presentation class.
+					surface_class_counts[SurfaceClass.SNOW] += 1
 			if local_offset.z < 0.0:
 				front_distance += hit_distance
 				front_hits += 1
@@ -202,6 +216,11 @@ func sample(body: CharacterBody3D, distance: float = 1.45, band: float = 0.5) ->
 			if surface_counts[kind] > most_hits:
 				most_hits = surface_counts[kind]
 				surface_kind = kind
+		var most_surface_class := 0
+		for class_id: int in range(surface_class_counts.size()):
+			if surface_class_counts[class_id] > most_surface_class:
+				most_surface_class = surface_class_counts[class_id]
+				surface_class = class_id
 		if front_hits > 0 and rear_hits > 0:
 			tip_load = (rear_distance / float(rear_hits)) - (front_distance / float(front_hits))
 
@@ -268,3 +287,12 @@ func merge_capsule_floor(on_floor: bool, floor_normal: Vector3) -> void:
 func downhill(gravity_direction: Vector3 = Vector3.DOWN) -> Vector3:
 	var tangent := gravity_direction.slide(average_normal)
 	return tangent.normalized() if tangent.length_squared() > 0.0001 else Vector3.ZERO
+
+func _surface_class_value(value: Variant) -> int:
+	if value is String:
+		match str(value).to_lower():
+			"snow": return SurfaceClass.SNOW
+			"feature": return SurfaceClass.FEATURE
+			"metal": return SurfaceClass.METAL
+			_: return SurfaceClass.UNKNOWN
+	return clampi(int(value), SurfaceClass.SNOW, SurfaceClass.UNKNOWN)

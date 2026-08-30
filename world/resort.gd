@@ -107,6 +107,7 @@ func _build_resort() -> void:
 	_add_lodge(lodge_pos)
 	_add_tree_clusters()
 	_add_course_dressing()
+	_add_distant_terrain_skirt()
 	_add_distant_ridges()
 
 func _build_player() -> void:
@@ -178,6 +179,7 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 	body.collision_mask = 2
 	if surface_kind >= 0:
 		body.set_meta("ski_surface_kind", surface_kind)
+		body.set_meta("ski_surface_class", "snow")
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = size
@@ -245,12 +247,13 @@ func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: fl
 		root.add_child(crown)
 	if variant % 3 != 2:
 		var cap := MeshInstance3D.new()
-		var cap_mesh := SphereMesh.new()
-		cap_mesh.radius = 0.72 + float(variant % 2) * 0.12
-		cap_mesh.height = 0.38 + float(variant % 2) * 0.11
+		var cap_mesh := CylinderMesh.new()
+		cap_mesh.top_radius = 0.14
+		cap_mesh.bottom_radius = 0.86 + float(variant % 2) * 0.12
+		cap_mesh.height = 0.34 + float(variant % 2) * 0.11
+		cap_mesh.radial_segments = 8
 		cap.mesh = cap_mesh
-		cap.position = Vector3(0.1 * float(variant % 2), tier_heights[-1] + 0.78, -0.06)
-		cap.scale = Vector3(1.15, 0.72, 0.88 + float(variant % 2) * 0.2)
+		cap.position = Vector3(0.1 * float(variant % 2), tier_heights[-1] + 1.14, -0.06)
 		cap.visibility_range_end = 245.0
 		cap.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER)
@@ -270,9 +273,45 @@ func _add_tree_clusters() -> void:
 		Vector4(44.0, -91.0, 0.86, -35.0), Vector4(51.0, -99.0, 1.2, 17.0), Vector4(43.0, -107.0, 0.96, 38.0), Vector4(48.0, -114.0, 0.72, -8.0),
 		Vector4(-44.0, -130.0, 1.22, 25.0), Vector4(-51.0, -138.0, 0.9, -17.0), Vector4(-42.0, -145.0, 1.05, 6.0),
 	]
+	var jitter := RandomNumberGenerator.new()
+	jitter.seed = 3817
 	for index: int in range(tree_specs.size()):
 		var spec := tree_specs[index]
-		_add_tree(ParkLayout.snow_at(spec.x, spec.y), spec.z, spec.w, index % 3)
+		var x_offset := jitter.randf_range(-1.8, 1.8)
+		var z_offset := jitter.randf_range(-2.6, 2.6)
+		_add_tree(ParkLayout.snow_at(spec.x + x_offset, spec.y + z_offset), spec.z * jitter.randf_range(0.92, 1.08), spec.w + jitter.randf_range(-7.0, 7.0), index % 3)
+
+func _add_distant_terrain_skirt() -> void:
+	var columns := 11
+	var rows := 6
+	var skirt_mesh := SurfaceTool.new()
+	skirt_mesh.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var points: Array[PackedVector3Array] = []
+	for row: int in range(rows):
+		var row_points := PackedVector3Array()
+		var z := lerpf(-132.0, -760.0, float(row) / float(rows - 1))
+		for column: int in range(columns):
+			var x := lerpf(-360.0, 360.0, float(column) / float(columns - 1))
+			var height := -3.0 - float(row) * 0.38 + sin(x * 0.021 + z * 0.014) * 2.2 + cos(x * 0.047 - z * 0.009) * 0.9
+			row_points.append(Vector3(x, height, z))
+		points.append(row_points)
+	for row: int in range(rows - 1):
+		for column: int in range(columns - 1):
+			var a := points[row][column]
+			var b := points[row][column + 1]
+			var c := points[row + 1][column + 1]
+			var d := points[row + 1][column]
+			skirt_mesh.add_vertex(a); skirt_mesh.add_vertex(b); skirt_mesh.add_vertex(c)
+			skirt_mesh.add_vertex(a); skirt_mesh.add_vertex(c); skirt_mesh.add_vertex(d)
+	skirt_mesh.generate_normals()
+	var instance := MeshInstance3D.new()
+	instance.name = "DistantTerrainSkirt"
+	instance.mesh = skirt_mesh.commit()
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	instance.visibility_range_end = 900.0
+	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	instance.material_override = _simple_material(Color("#647c8b"), 0.98)
+	add_child(instance)
 
 func _add_distant_ridges() -> void:
 	# Layered low-poly peaks give the downhill view a destination and a useful
@@ -312,8 +351,8 @@ func _create_mountain_mesh(radius: float, height: float, seed: int) -> ArrayMesh
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
 	var segments := 7 + seed % 3
-	var ring_heights := [0.0, height * 0.38, height * 0.72, height]
-	var ring_scales := [1.0, 0.72, 0.34, 0.035]
+	var ring_heights := [-height * 0.55, 0.0, height * 0.34, height * 0.7, height]
+	var ring_scales := [1.2, 1.04, 0.72, 0.34, 0.035]
 	var ring_points: Array[PackedVector3Array] = []
 	var peak_offset := Vector2(rng.randf_range(-0.14, 0.14), rng.randf_range(-0.12, 0.12)) * radius
 	for ring_index: int in range(ring_heights.size()):
@@ -351,6 +390,35 @@ func _add_course_dressing() -> void:
 	_add_snowmaker(ParkLayout.snow_at(45.0, -75.0), -12.0)
 	_add_trail_board(ParkLayout.snow_at(-42.0, 119.0), Color("#5d8891"))
 	_add_trail_board(ParkLayout.snow_at(42.0, -47.0), Color("#c08a55"))
+	_add_lift_tower(ParkLayout.snow_at(-30.0, 126.0), 6.5)
+	_add_lift_tower(ParkLayout.snow_at(31.0, 42.0), 5.5)
+
+func _add_lift_tower(position: Vector3, height: float) -> void:
+	var root := Node3D.new()
+	root.name = "LiftTower"
+	root.position = position + Vector3(0.0, height * 0.5, 0.0)
+	var metal := _simple_material(Color("#435b68"), 0.64)
+	for side: float in [-1.0, 1.0]:
+		var leg := MeshInstance3D.new()
+		var leg_mesh := CylinderMesh.new()
+		leg_mesh.top_radius = 0.055
+		leg_mesh.bottom_radius = 0.075
+		leg_mesh.height = height
+		leg_mesh.radial_segments = 6
+		leg.mesh = leg_mesh
+		leg.position = Vector3(side * 0.72, 0.0, 0.0)
+		leg.material_override = metal
+		leg.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		root.add_child(leg)
+	var crossbar := MeshInstance3D.new()
+	var crossbar_mesh := BoxMesh.new()
+	crossbar_mesh.size = Vector3(2.0, 0.12, 0.16)
+	crossbar.mesh = crossbar_mesh
+	crossbar.position.y = height * 0.5
+	crossbar.material_override = metal
+	crossbar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(crossbar)
+	add_child(root)
 
 func _add_boundary_fence(position: Vector3, length: float, yaw_degrees: float) -> void:
 	var root := Node3D.new()

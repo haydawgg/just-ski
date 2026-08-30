@@ -464,7 +464,7 @@ func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE, normalized_charge: f
 	angular_velocity = Vector3.ZERO
 	air_time = 0.0
 	active_trick_kind = takeoff_kind
-	trick.begin_air(velocity.dot(-global_basis.z) < 0.0, takeoff_kind)
+	trick.begin_air(velocity.dot(-global_basis.z) < 0.0, takeoff_kind, takeoff_kind != TrickCommand.Kind.NONE)
 	state_changed.emit("Air")
 
 func _handle_landing() -> void:
@@ -1030,6 +1030,8 @@ func telemetry() -> Dictionary:
 		"contact_confidence": contact.confidence,
 		"surface_kind": contact.surface_kind,
 		"surface": _surface_name(),
+		"surface_class": SkiContactSolver.SurfaceClass.keys()[contact.surface_class],
+		"snow_contact": contact.surface_class == SkiContactSolver.SurfaceClass.SNOW,
 		"surface_normal": contact.average_normal,
 		"edge": edge_amount,
 		"steering_raw": steering_input_raw,
@@ -1311,6 +1313,12 @@ func _update_animation(delta: float) -> void:
 		balance_side = signf(velocity.dot(global_basis.x))
 	animation_frame.pre_bail_side = balance_side
 	animation_controller.apply_frame(animation_frame, delta)
+	var animation_snapshot := animation_controller.debug_snapshot()
+	trick.set_grab_contact(
+		float(animation_snapshot.get("grab_contact_weight", 0.0)),
+		str(animation_snapshot.get("grab_phase", "IDLE")),
+		delta
+	)
 	if animation_controller.is_landing_idle() and bool(landing_context.get("active", false)):
 		landing_context["active"] = false
 

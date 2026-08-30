@@ -210,6 +210,7 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 	command.grab_amount = 1.0
 	command.grab_tweak = Vector2(0.0, 0.8)
 	tricks.update_air(Vector3.ZERO, 0.6, command)
+	tricks.set_grab_contact(1.0, "HOLD", 0.12)
 	command.reset()
 	tricks.update_air(Vector3.ZERO, 0.2, command)
 	if "Safety Grab Left" not in tricks.current_name():

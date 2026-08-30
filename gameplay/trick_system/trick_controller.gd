@@ -2,6 +2,7 @@ class_name TrickController
 extends Node
 
 const MIN_STRAIGHT_AIR_PRESENTATION_TIME := 0.45
+const MIN_GRAB_QUALIFY_TIME := 0.1
 
 signal trick_changed(text: String)
 signal trick_landed(text: String, points: int, quality: float)
@@ -31,6 +32,9 @@ const STYLE_NAMES: Array[String] = ["", "Spread Eagle", "Daffy", "Shifty Left", 
 var active := false
 var accumulated_rotation := Vector3.ZERO
 var grab_name := ""
+var live_grab_name := ""
+var grab_contact_seconds := 0.0
+var grab_qualified := false
 var grab_pose := GrabPose.NONE
 var style_name := ""
 var style_pose := StylePose.NONE
@@ -43,11 +47,15 @@ var tweak_integral := 0.0
 var dominant_kind := TrickCommand.Kind.NONE
 var rail_pose := 0
 var had_trick_intent := false
+var air_presentation_eligible := true
 
-func begin_air(is_switch: bool, takeoff_kind: int = TrickCommand.Kind.POP) -> void:
+func begin_air(is_switch: bool, takeoff_kind: int = TrickCommand.Kind.POP, presentation_eligible: bool = true) -> void:
 	active = true
 	accumulated_rotation = Vector3.ZERO
 	grab_name = ""
+	live_grab_name = ""
+	grab_contact_seconds = 0.0
+	grab_qualified = false
 	grab_pose = GrabPose.NONE
 	style_name = ""
 	style_pose = StylePose.NONE
@@ -60,10 +68,12 @@ func begin_air(is_switch: bool, takeoff_kind: int = TrickCommand.Kind.POP) -> vo
 	dominant_kind = takeoff_kind
 	rail_pose = 0
 	had_trick_intent = takeoff_kind != TrickCommand.Kind.NONE
+	air_presentation_eligible = presentation_eligible
 
 func update_air(local_angular_velocity: Vector3, delta: float, command: TrickCommand = null) -> void:
 	if not active:
 		return
+	var previous_grab_name := grab_name
 	air_seconds += delta
 	accumulated_rotation += local_angular_velocity * delta
 	if command != null:
@@ -88,9 +98,30 @@ func update_air(local_angular_velocity: Vector3, delta: float, command: TrickCom
 	# non-neutral name for scoring and the landing callout.
 	if grab_pose != GrabPose.NONE:
 		grab_name = GRAB_NAMES[grab_pose]
+		if grab_name != previous_grab_name:
+			live_grab_name = ""
+			grab_contact_seconds = 0.0
+			grab_qualified = false
+	else:
+		live_grab_name = ""
 	if style_pose != StylePose.NONE:
 		style_name = STYLE_NAMES[style_pose]
 	trick_changed.emit(live_name())
+
+func set_grab_contact(contact_weight: float, phase: String, delta: float) -> void:
+	if not active or grab_name.is_empty():
+		return
+	var previous_live_name := live_grab_name
+	var contact := contact_weight >= 0.48 and phase in ["CONTACT", "HOLD"]
+	if contact:
+		grab_contact_seconds += maxf(delta, 0.0)
+		live_grab_name = grab_name
+		if grab_contact_seconds >= MIN_GRAB_QUALIFY_TIME:
+			grab_qualified = true
+	elif phase in ["RELEASE", "RECOVER", "IDLE"] or grab_pose == GrabPose.NONE:
+		live_grab_name = ""
+	if previous_live_name != live_grab_name:
+		trick_changed.emit(live_name())
 
 func update_grind(delta: float, selected_pose: int = 0) -> void:
 	active = true
@@ -113,7 +144,7 @@ func land(quality: float, switch_landing: bool, link_bonus: int = 0) -> void:
 	else:
 		motion_points = spin_degrees * 2 + int(float(flip_degrees) / 360.0 * 500.0)
 	var points: int = motion_points + int(grind_seconds * 300.0)
-	if not grab_name.is_empty():
+	if grab_qualified and not grab_name.is_empty():
 		points += 150 + int(grab_seconds * 120.0) + int(tweak_integral * 80.0)
 	if not style_name.is_empty():
 		points += 150 + int(style_seconds * 120.0) + int(tweak_integral * 80.0)
@@ -148,7 +179,7 @@ func current_name() -> String:
 			parts.append("%s %d" % ["Left" if accumulated_rotation.y < 0.0 else "Right", spin_degrees])
 		if flip_degrees >= 360:
 			parts.append("%s%s" % ["Frontflip" if accumulated_rotation.x > 0.0 else "Backflip", " x%d" % int(flip_degrees / 360) if flip_degrees >= 720 else ""])
-	if not grab_name.is_empty():
+	if grab_qualified and not grab_name.is_empty():
 		parts.append(grab_name)
 	if not style_name.is_empty():
 		parts.append(style_name)
@@ -163,30 +194,34 @@ func live_name() -> String:
 	var cork_degrees := maxi(yaw_degrees, int(round(rad_to_deg(absf(accumulated_rotation.z)))))
 	if dominant_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT]:
 		parts.append("%s Cork %d°" % ["Left" if dominant_kind == TrickCommand.Kind.CORK_LEFT else "Right", cork_degrees])
-	elif dominant_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT] or yaw_degrees >= 5:
-		var spin_left := dominant_kind == TrickCommand.Kind.SPIN_LEFT or (
-			dominant_kind not in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT]
-			and accumulated_rotation.y < 0.0
-		)
-		parts.append("%s %d°" % ["Left" if spin_left else "Right", yaw_degrees])
-	elif dominant_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP] or flip_degrees >= 5:
-		var frontflip := dominant_kind == TrickCommand.Kind.FRONTFLIP or (
-			dominant_kind not in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP]
-			and accumulated_rotation.x > 0.0
-		)
-		parts.append("%s %d°" % ["Frontflip" if frontflip else "Backflip", flip_degrees])
-	if not grab_name.is_empty():
-		parts.append(grab_name)
+	else:
+		if dominant_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT] or yaw_degrees >= 5:
+			var spin_left := dominant_kind == TrickCommand.Kind.SPIN_LEFT or (
+				dominant_kind not in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT]
+				and accumulated_rotation.y < 0.0
+			)
+			parts.append("%s %d°" % ["Left" if spin_left else "Right", yaw_degrees])
+		if dominant_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP] or flip_degrees >= 5:
+			var frontflip := dominant_kind == TrickCommand.Kind.FRONTFLIP or (
+				dominant_kind not in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP]
+				and accumulated_rotation.x > 0.0
+			)
+			parts.append("%s %d°" % ["Frontflip" if frontflip else "Backflip", flip_degrees])
+	if not live_grab_name.is_empty():
+		parts.append(live_grab_name)
 	if not style_name.is_empty():
 		parts.append(style_name)
 	if parts.is_empty():
-		return "Straight Air" if air_seconds >= MIN_STRAIGHT_AIR_PRESENTATION_TIME else ""
+		return "Straight Air" if air_presentation_eligible and air_seconds >= MIN_STRAIGHT_AIR_PRESENTATION_TIME else ""
 	return " + ".join(parts)
 
 func reset() -> void:
 	active = false
 	accumulated_rotation = Vector3.ZERO
 	grab_name = ""
+	live_grab_name = ""
+	grab_contact_seconds = 0.0
+	grab_qualified = false
 	grab_pose = GrabPose.NONE
 	style_name = ""
 	style_pose = StylePose.NONE
@@ -198,6 +233,7 @@ func reset() -> void:
 	dominant_kind = TrickCommand.Kind.NONE
 	rail_pose = 0
 	had_trick_intent = false
+	air_presentation_eligible = true
 	trick_changed.emit("")
 
 func _spin_degrees() -> int:

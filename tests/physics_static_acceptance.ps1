@@ -32,6 +32,7 @@ $controller = Read-RequiredFile "player/skier_controller.gd"
 $crashContext = Read-RequiredFile "player/crash_context.gd"
 $animationController = Read-RequiredFile "player/animation/skier_animation_controller.gd"
 $animationFrame = Read-RequiredFile "player/animation/skier_animation_frame.gd"
+$trick = Read-RequiredFile "gameplay/trick_system/trick_controller.gd"
 $contact = Read-RequiredFile "player/ski_contact_solver.gd"
 $camera = Read-RequiredFile "player/camera_controller.gd"
 $resort = Read-RequiredFile "world/resort.gd"
@@ -100,6 +101,14 @@ foreach ($spec in $railSpecs) {
 
 Reject-Match $camera '1\s*\|\s*4\s*\|\s*8' "Camera collision cannot include the Grind layer."
 Require-Match $camera 'PhysicsRayQueryParameters3D\.create\(from,\s*desired,\s*1\s*\|\s*4\)' "Camera collision must retain Terrain and Features layers."
+Require-Match $camera 'air_vertical_dead_zone' "Airborne camera framing must have a vertical dead zone."
+Require-Match $camera 'func _air_framing_target' "Airborne camera framing must use a filtered target seam."
+Require-Match $camera 'predicted_landing_look_weight' "Airborne camera must look toward predicted landings during descent."
+Require-Match $camera '_collision_reframed' "Camera collision corrections must be damped separately from pose limits."
+
+Require-Match $trick 'func set_grab_contact' "Trick scoring must consume visual grab contact."
+Require-Match $trick 'grab_qualified' "Grab scoring must require a qualified visual contact latch."
+Require-Match $trick 'air_presentation_eligible' "Straight Air presentation must distinguish meaningful takeoffs from reseats."
 
 Require-Match $controller 'brake_amount\s*=\s*Input\.get_action_strength\("brake"\)' "Ground braking must preserve analog action strength."
 Reject-Match $controller 'braking\s*=\s*Input\.is_action_pressed\("brake"\)' "Braking cannot collapse analog input to a boolean."
@@ -133,8 +142,11 @@ Require-Match $animationController 'CrashContext\.Stage\.RELEASE' "Animation mus
 Require-Match $animationController 'CrashContext\.Stage\.IMPACT' "Animation must present the crash impact stage."
 Require-Match $animationController 'CrashContext\.Stage\.FALL' "Animation must present the crash fall stage."
 Require-Match $animationController 'CrashContext\.Stage\.REST' "Animation must present the crash rest stage."
+Require-Match $animationController 'MIN_LANDING_PRESENTATION_TIME' "Landing impact presentation must have a minimum visible hold."
+Require-Match $animationController '_capture_crash_handoff' "Crash presentation must seed from the current procedural pose."
 Reject-Match "$controller`n$animationController" 'PhysicalBone|RigidBody3D|Skeleton3D|PhysicalBoneSimulator3D' "The primitive rig must use controlled fall rather than a new ragdoll framework."
 Require-Match $ui 'crash_reason' "Development HUD must expose crash telemetry."
+Require-Match $ui 'clean_capture_mode' "HUD must provide a clean capture mode without disabling recording."
 
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
