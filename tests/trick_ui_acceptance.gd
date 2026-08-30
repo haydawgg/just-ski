@@ -37,6 +37,10 @@ func _test_visualizer_contract() -> void:
 		failures.append("Visualizer did not present the recognized gesture and phase")
 	if int(snapshot.path_points) < 1:
 		failures.append("Visualizer did not retain the recent stick path")
+	visualizer.apply_snapshot({"stick": Vector2.ZERO, "kind": "NONE", "phase": "NEUTRAL", "strength": 0.0})
+	visualizer._process(1.0)
+	if visualizer.visible:
+		failures.append("Neutral trick input kept the full visualizer on screen")
 
 func _test_game_ui_teaching_surfaces() -> void:
 	var ui := GameUI.new()
@@ -54,6 +58,18 @@ func _test_game_ui_teaching_surfaces() -> void:
 		failures.append("Options menu is missing shadow quality control")
 	if ui.find_child("RunResultsPanel", true, false) == null:
 		failures.append("Gameplay UI is missing the run results panel")
+	ui._process(10.0)
+	if ui.hint_label.visible:
+		failures.append("Onboarding controls remained permanently visible during normal play")
+	var trick := TrickController.new()
+	trick.begin_air(false, TrickCommand.Kind.POP)
+	trick.update_air(Vector3.ZERO, 0.1)
+	if not trick.live_name().is_empty():
+		failures.append("A micro-hop presented Straight Air feedback")
+	trick.update_air(Vector3.ZERO, 0.4)
+	if trick.live_name() != "Straight Air":
+		failures.append("A sustained straight air lost useful trick feedback")
+	trick.free()
 	ui.queue_free()
 
 func _test_scoring_finish_contract() -> void:

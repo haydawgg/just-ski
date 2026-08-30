@@ -5,9 +5,11 @@ extends Resource
 @export var sky_top_color := Color(0.20, 0.39, 0.64)
 @export var sky_horizon_color := Color(0.78, 0.86, 0.92)
 @export_range(0.5, 2.0, 0.01) var sky_energy := 1.02
+@export_range(0.01, 1.0, 0.01) var sky_curve := 0.32
 @export var ground_bottom_color := Color(0.68, 0.75, 0.82)
 @export var ground_horizon_color := Color(0.88, 0.91, 0.94)
 @export_range(0.5, 2.0, 0.01) var ground_energy := 0.88
+@export_range(0.01, 1.0, 0.01) var ground_curve := 0.28
 
 @export_category("Sun and Shadows")
 @export var sun_rotation_degrees := Vector3(-36.0, -48.0, 0.0)

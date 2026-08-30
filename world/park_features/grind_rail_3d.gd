@@ -116,12 +116,10 @@ func _build_visual_and_collision() -> void:
 			cylinder_shape.height = delta.length()
 			collision.shape = cylinder_shape
 		var material := StandardMaterial3D.new()
-		material.albedo_color = Color("#ff9b32") if rail_type == RailType.BOX else Color("#315a70")
-		material.metallic = 0.68 if rail_type != RailType.BOX else 0.12
-		material.roughness = 0.27 if rail_type != RailType.BOX else 0.38
-		material.emission_enabled = true
-		material.emission = Color("#132b37") if rail_type != RailType.BOX else Color("#7a2f0b")
-		material.emission_energy_multiplier = 0.12
+		material.albedo_color = Color("#b9784e") if rail_type == RailType.BOX else Color("#536d78")
+		material.metallic = 0.48 if rail_type != RailType.BOX else 0.08
+		material.roughness = 0.46 if rail_type != RailType.BOX else 0.58
+		material.emission_enabled = false
 		visual.material_override = material
 		visual.visibility_range_end = 190.0
 		visual.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF

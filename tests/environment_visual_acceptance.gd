@@ -31,6 +31,10 @@ func _physics_process(_delta: float) -> void:
 	var snow_profile := SnowMaterial.PRESENTATION
 	if snow_profile.groomed_form_contrast < 0.1 or snow_profile.groomed_broad_variation < 0.1:
 		failures.append("Groomed snow lost its large-scale normal/value separation")
+	if snow_profile.minimum_albedo_luminance < 0.4:
+		failures.append("Snow lost the minimum value floor that protects skier and feature readability")
+	if snow_profile.steepness_contrast > 0.1:
+		failures.append("Steep snow response can become charcoal again (%.3f)" % snow_profile.steepness_contrast)
 	var marked_jump_specs := 0
 	var course_profile := resort.get("course_profile") as ParkCourseProfile
 	if course_profile != null:
@@ -50,17 +54,59 @@ func _physics_process(_delta: float) -> void:
 		if marker.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
 			failures.append("A snow jump readability marker casts an unnecessary shadow")
 		var marker_material := marker.material_override as StandardMaterial3D
-		if marker_material == null or marker_material.shading_mode != BaseMaterial3D.SHADING_MODE_UNSHADED:
-			failures.append("Snow jump guide did not preserve its restrained dye color through changing snow light")
+		if marker_material == null or marker_material.shading_mode != BaseMaterial3D.SHADING_MODE_PER_PIXEL:
+			failures.append("Snow jump guide is not integrated into scene lighting")
+		elif marker_material.albedo_color.a > 0.7 or marker_material.emission_enabled:
+			failures.append("Snow jump guide returned to an opaque or emissive UI-like treatment")
 		if not marker.find_children("*", "CollisionShape3D", true, false).is_empty():
 			failures.append("A presentation-only snow jump marker created collision")
 	var world_signs := resort.find_children("*", "Label3D", true, false)
-	if world_signs.is_empty():
-		failures.append("Resort did not build any world-space wayfinding signs")
-	for sign_node: Node in world_signs:
-		var sign := sign_node as Label3D
-		if sign != null and sign.pixel_size > 0.0048:
-			failures.append("World-space wayfinding sign exceeds the skier-safe screen hierarchy (%.4f)" % sign.pixel_size)
+	if not world_signs.is_empty():
+		failures.append("Normal play still contains %d world labels that can cover the skier" % world_signs.size())
+	var authored_gates := 0
+	if course_profile != null:
+		for spec: Dictionary in course_profile.feature_specs():
+			if str(spec.get("kind", "")) == "gate":
+				authored_gates += 1
+	var route_gates := get_tree().get_nodes_in_group("park_gates")
+	var route_flags := get_tree().get_nodes_in_group("route_guide_flags")
+	if route_gates.size() != authored_gates:
+		failures.append("Minimal route flags do not match the authored gate count")
+	if route_flags.size() != authored_gates * 2:
+		failures.append("Minimal route guidance did not create exactly two flags per gate")
+	for gate_node: Node in route_gates:
+		var gate := gate_node as Node3D
+		if gate == null or str(gate.get_meta("guidance_style", "")) != "minimal_flag_posts":
+			failures.append("A route gate did not use the minimal flag-post language")
+			continue
+		if not gate.find_children("*", "CollisionShape3D", true, false).is_empty():
+			failures.append("A route guide created collision")
+		for flag_node: Node in route_flags:
+			if not gate.is_ancestor_of(flag_node):
+				continue
+			var flag := flag_node as MeshInstance3D
+			if flag.visibility_range_begin < 2.0 or flag.visibility_range_end > 90.0:
+				failures.append("Route flag lost its proximity/distance fade budget")
+	var trees := get_tree().get_nodes_in_group("park_trees")
+	if trees.size() < 24:
+		failures.append("Environment lacks enough trees to form intentional clusters")
+	var tree_scales: Dictionary = {}
+	for tree_node: Node in trees:
+		var tree := tree_node as Node3D
+		if tree != null:
+			tree_scales[snappedf(tree.scale.x, 0.05)] = true
+	if tree_scales.size() < 5:
+		failures.append("Tree scale variation is too uniform")
+	var mountain_meshes := resort.find_children("*", "MeshInstance3D", true, false).filter(func(node: Node) -> bool: return node.get_parent() != null and (node.get_parent().name.begins_with("FarPeak") or node.get_parent().name.begins_with("HazePeak")))
+	if mountain_meshes.size() < 8:
+		failures.append("Layered mountain composition was not built")
+	for mountain_node: Node in mountain_meshes:
+		var mountain := mountain_node as MeshInstance3D
+		if mountain != null and not mountain.mesh is ArrayMesh:
+			failures.append("A distant ridge returned to a repeated primitive silhouette")
+	var landmarks := get_tree().get_nodes_in_group("course_landmarks")
+	if landmarks.size() < 8:
+		failures.append("Course edge lacks sparse resort scale landmarks")
 	var skier := resort.get_node_or_null("Skier") as SkierController
 	if skier == null:
 		failures.append("Resort did not create the skier")
@@ -93,8 +139,17 @@ func _physics_process(_delta: float) -> void:
 				failures.append("Landing severity did not reach the one-shot landing burst")
 			if not vfx.landing_spray.emitting:
 				failures.append("Hard landing did not restart the one-shot landing emitter")
+			skier.state = SkierController.State.BAIL
+			skier.contact.grounded = true
+			skier.contact.average_normal = Vector3.UP
+			skier.contact.average_hit_position = skier.global_position
+			skier.velocity = Vector3(0.0, 0.0, -7.0)
+			vfx.update_from_existing_contact(1.0 / 60.0)
+			var bail_snapshot := vfx.debug_snapshot()
+			if not bool(bail_snapshot.bail_scrape_active) or float(bail_snapshot.bail_surface_speed) < 6.5:
+				failures.append("Surface-velocity bail scrape did not activate")
 	if failures.is_empty():
-		print("ENVIRONMENT_VISUAL_PASS: bounded collision-free jump guides plus existing-contact tracks and restrained snow spray")
+		print("ENVIRONMENT_VISUAL_PASS: minimal route flags, readable snow, layered scenery, and state-specific snow contact feedback")
 		AudioManager.shutdown_audio()
 		get_tree().quit(0)
 	else:

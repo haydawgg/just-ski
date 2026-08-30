@@ -311,7 +311,7 @@ static func add_cannon(parent: Node3D, label: String, x: float, z: float, length
 	root.add_to_group("park_cannons")
 	return root
 
-static func add_gate(parent: Node3D, label: String, x: float, z: float, width: float, color: Color) -> Node3D:
+static func add_gate(parent: Node3D, label: String, x: float, z: float, width: float, color: Color, tuning: Dictionary = {}) -> Node3D:
 	var root := Node3D.new()
 	root.name = label
 	root.add_to_group("park_gates")
@@ -319,15 +319,20 @@ static func add_gate(parent: Node3D, label: String, x: float, z: float, width: f
 	var normal := snow_normal()
 	var center := snow_at(x, z)
 	var destination_gate := width >= 30.0
-	var post_height := 5.4 if destination_gate else 3.6
-	var beam_thickness := 0.64 if destination_gate else 0.28
-	var post_thickness := 0.52 if destination_gate else 0.22
-	_add_gate_mesh(root, center + Vector3.LEFT * width * 0.5 + normal * (post_height * 0.5), Vector3(post_thickness, post_height, post_thickness), color)
-	_add_gate_mesh(root, center + Vector3.RIGHT * width * 0.5 + normal * (post_height * 0.5), Vector3(post_thickness, post_height, post_thickness), color)
-	_add_gate_mesh(root, center + normal * (post_height - beam_thickness * 0.5), Vector3(width + post_thickness, beam_thickness, beam_thickness), color)
+	var visual_width := minf(width, 18.0 if destination_gate else 13.0)
+	var post_height := 2.25 if destination_gate else 1.8
+	var post_thickness := 0.11
+	var flag_size := Vector2(0.72 if destination_gate else 0.58, 0.42 if destination_gate else 0.34)
+	var guide_color := color.lerp(Color("#d8eef2"), 0.28)
+	for side: float in [-1.0, 1.0]:
+		var anchor := center + Vector3.RIGHT * visual_width * 0.5 * side
+		_add_gate_post(root, anchor + normal * (post_height * 0.5), Vector3(post_thickness, post_height, post_thickness), Color("#35515d"))
+		_add_gate_flag(root, anchor + normal * (post_height - flag_size.y * 0.55), flag_size, guide_color, side)
+	root.set_meta("guidance_style", "minimal_flag_posts")
+	root.set_meta("non_colliding", true)
 	return root
 
-static func _add_gate_mesh(parent: Node3D, position: Vector3, size: Vector3, color: Color) -> void:
+static func _add_gate_post(parent: Node3D, position: Vector3, size: Vector3, color: Color) -> void:
 	var instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = size
@@ -335,11 +340,37 @@ static func _add_gate_mesh(parent: Node3D, position: Vector3, size: Vector3, col
 	instance.position = position
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
-	material.emission_enabled = true
-	material.emission = color
-	material.emission_energy_multiplier = 0.42
+	material.roughness = 0.78
 	instance.material_override = material
+	_configure_guide_visibility(instance)
 	parent.add_child(instance)
+
+static func _add_gate_flag(parent: Node3D, position: Vector3, size: Vector2, color: Color, side: float) -> void:
+	var instance := MeshInstance3D.new()
+	instance.name = "RouteFlag"
+	var mesh := QuadMesh.new()
+	mesh.size = size
+	mesh.orientation = PlaneMesh.FACE_Z
+	instance.mesh = mesh
+	instance.position = position + Vector3.RIGHT * side * size.x * 0.46
+	instance.rotation_degrees.y = -8.0 * side
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(color, 0.78)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.roughness = 0.86
+	instance.material_override = material
+	_configure_guide_visibility(instance)
+	instance.add_to_group("route_guide_flags")
+	parent.add_child(instance)
+
+static func _configure_guide_visibility(instance: GeometryInstance3D) -> void:
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	instance.visibility_range_begin = 2.5
+	instance.visibility_range_begin_margin = 3.0
+	instance.visibility_range_end = 82.0
+	instance.visibility_range_end_margin = 22.0
+	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 
 static func add_slope_box(parent: Node3D, label: String, x: float, z: float, size: Vector3, yaw_deg: float, color: Color, surface_kind: int, collision_enabled: bool, extra_height: float = 0.0, visual_surface_kind: int = -1) -> StaticBody3D:
 	var body := StaticBody3D.new()
@@ -416,8 +447,9 @@ static func material_for_surface(color: Color, surface_kind: int, groom_directio
 	if surface_kind >= 0:
 		return SnowSurface.create(surface_kind, groom_direction_world_xz)
 	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.roughness = 0.5
+	material.albedo_color = color.lerp(Color("#75858a"), 0.16)
+	material.roughness = 0.68
+	material.metallic = 0.03
 	return material
 
 static func _add_jump_readability_markers(
@@ -485,9 +517,10 @@ static func _add_jump_readability_markers(
 	marker.visibility_range_end = 125.0
 	marker.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	var material := StandardMaterial3D.new()
-	material.albedo_color = marker_color
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.roughness = 0.82
+	material.albedo_color = Color(marker_color.lerp(Color("#d9e9e7"), 0.34), 0.62)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	material.roughness = 0.9
 	material.metallic = 0.0
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	marker.material_override = material

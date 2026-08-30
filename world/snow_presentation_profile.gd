@@ -26,6 +26,7 @@ extends Resource
 @export var powder_color := Color(0.965, 0.975, 0.98)
 @export var powder_shadow_tint := Color(0.73, 0.755, 0.775)
 @export_range(0.0, 1.0, 0.01) var temperature_amount := 0.72
+@export_range(0.2, 0.8, 0.01) var minimum_albedo_luminance := 0.44
 
 @export_category("Surface Response")
 @export_range(0.2, 1.0, 0.01) var packed_roughness := 0.72

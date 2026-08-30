@@ -27,6 +27,8 @@ var total_score := 0
 var combo_count := 0
 var combo_multiplier := 1.0
 var notice_time := 0.0
+var onboarding_remaining := 8.0
+const ONBOARDING_FADE_TIME := 2.5
 var _stored_mouse_mode := Input.MOUSE_MODE_VISIBLE
 
 func _ready() -> void:
@@ -76,6 +78,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
+	if hint_label != null and onboarding_remaining > 0.0 and not get_tree().paused:
+		onboarding_remaining = maxf(0.0, onboarding_remaining - delta)
+		hint_label.modulate.a = clampf(onboarding_remaining / ONBOARDING_FADE_TIME, 0.0, 0.82)
+		hint_label.visible = onboarding_remaining > 0.0
 	if notice_time > 0.0:
 		notice_time -= delta
 		notice_label.modulate.a = clampf(notice_time, 0.0, 1.0)
@@ -104,17 +110,19 @@ func _build_hud() -> void:
 	speed_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	speed_label.position = Vector2(0, 0)
 	hud_overlay.add_child(speed_label)
-	trick_label = _label("", 30)
+	trick_label = _label("", 24)
 	trick_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	trick_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	trick_label.position = Vector2(360, 36)
 	trick_label.size = Vector2(800, 54)
 	hud_overlay.add_child(trick_label)
-	landing_cue_label = _label("", 24)
+	landing_cue_label = _label("", 17)
 	landing_cue_label.name = "LandingCue"
 	landing_cue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	landing_cue_label.position = Vector2(560, 650)
-	landing_cue_label.size = Vector2(480, 44)
+	landing_cue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	landing_cue_label.position = Vector2(1120, 500)
+	landing_cue_label.size = Vector2(410, 36)
+	landing_cue_label.modulate.a = 0.82
 	landing_cue_label.visible = false
 	hud_overlay.add_child(landing_cue_label)
 	score_label = _label("SCORE 000000", 20)
@@ -131,10 +139,11 @@ func _build_hud() -> void:
 	combo_timer_bar.visible = false
 	combo_timer_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_overlay.add_child(combo_timer_bar)
-	hint_label = _label("", 17)
+	hint_label = _label("", 15)
 	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint_label.position = Vector2(0, 780)
 	hint_label.size = Vector2(900, 40)
+	hint_label.modulate.a = 0.82
 	hud_overlay.add_child(hint_label)
 	debug_label = _label("", 14)
 	debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -682,12 +691,12 @@ func _on_telemetry(data: Dictionary) -> void:
 	var flick_data: Dictionary = data.get("flick", {})
 	var crash_data: Dictionary = data.get("crash", {})
 	var landing_time := float(data.get("predicted_landing_time", -1.0))
-	var landing_imminent := bool(data.get("landing_feedback_armed", false)) and str(data.get("state", "")) == "AIR" and landing_time >= 0.0 and landing_time < 0.7
+	var landing_imminent := bool(data.get("landing_feedback_armed", false)) and str(data.get("state", "")) == "AIR" and landing_time >= 0.0 and landing_time < 0.55
 	landing_cue_label.visible = landing_imminent
 	if landing_imminent:
 		var ready := bool(animation.get("landing_ready", false))
-		landing_cue_label.text = "LANDING READY" if ready else "OPEN UP FOR LANDING"
-		landing_cue_label.add_theme_color_override("font_color", Color("#55d6be") if ready else Color("#ffc857"))
+		landing_cue_label.text = "LANDING SET" if ready else "PREPARE LANDING"
+		landing_cue_label.add_theme_color_override("font_color", Color("#8fd5cd") if ready else Color("#e4c37b"))
 	if trick_visualizer != null:
 		trick_visualizer.apply_snapshot(flick_data)
 	var score_data: Dictionary = data.get("scoring", {})
@@ -759,6 +768,7 @@ func _on_telemetry(data: Dictionary) -> void:
 
 func _on_trick_changed(text: String) -> void:
 	trick_label.text = text
+	trick_label.visible = not text.is_empty()
 
 func _on_score_awarded(text: String, awarded: int, quality: float, snapshot: Dictionary) -> void:
 	_on_score_changed(snapshot)
@@ -866,6 +876,8 @@ func _on_device_changed(_device: String) -> void:
 
 func _update_hint() -> void:
 	hint_label.text = "%s pop/tricks   •   LT/RT grabs in air   •   %s marker   •   %s return   •   F3 debug" % [InputManager.glyph(&"jump"), InputManager.glyph(&"set_marker"), InputManager.glyph(&"respawn")]
+	if onboarding_remaining > 0.0:
+		hint_label.visible = true
 
 func _show_notice(text: String) -> void:
 	notice_label.text = text

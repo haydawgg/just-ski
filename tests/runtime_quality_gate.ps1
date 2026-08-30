@@ -14,6 +14,7 @@ $env:LOCALAPPDATA = (Resolve-Path (Join-Path $RepoRoot ".godot_user/local")).Pat
 $scenes = @(
 	"res://tests/runtime_smoke.tscn",
 	"res://tests/environment_visual_acceptance.tscn",
+	"res://tests/camera_low_speed_acceptance.tscn",
 	"res://tests/gameplay_acceptance.tscn",
 	"res://tests/physics_benchmark.tscn",
 	"res://tests/physics_collision_acceptance.tscn",

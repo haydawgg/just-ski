@@ -11,12 +11,14 @@ extends Node3D
 enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 
 @export_group("Framing")
-@export var follow_distance := 4.0
+@export var follow_distance := 4.3
 @export var follow_height := 1.45
-@export var speed_distance_gain := 0.04
-@export var speed_distance_cap := 1.4
-@export var speed_height_gain := 0.008
-@export var speed_height_cap := 0.25
+@export var speed_distance_gain := 0.018
+@export var speed_distance_cap := 0.62
+@export var speed_distance_response := 1.35
+@export var speed_height_gain := 0.005
+@export var speed_height_cap := 0.16
+@export var speed_height_response := 1.6
 @export var look_height_offset := 0.12
 @export var air_height := 0.82
 @export var air_height_rise_rate := 5.0
@@ -40,8 +42,14 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export_group("Collision Safety")
 @export var collision_clearance := 0.35
 @export var collision_probe_height := 1.0
-@export var minimum_camera_distance := 1.8
-@export var minimum_camera_up_offset := 0.35
+@export var minimum_camera_distance := 3.35
+@export var maximum_camera_distance := 7.4
+@export var minimum_camera_up_offset := 0.7
+@export var minimum_behind_distance := 2.6
+@export var collision_reframe_lift := 1.35
+@export var collision_shoulder_offset := 1.25
+@export var collision_correction_speed := 8.0
+@export var maximum_position_speed := 30.0
 
 @export_group("Carve Look")
 @export var look_heading_weight_min := 0.15
@@ -98,6 +106,8 @@ var _filtered_surface_up := Vector3.UP
 var _yaw_dir := Vector3.FORWARD
 var _pitch := 0.0
 var _smoothed_air_height := 0.0
+var _smoothed_speed_distance := 0.0
+var _smoothed_speed_height := 0.0
 var _smoothed_look_ahead := look_ahead_min
 var _trajectory_dir := Vector3.FORWARD
 var _air_time := 0.0
@@ -114,6 +124,7 @@ var _desired_camera_position := Vector3.ZERO
 var _desired_camera_forward := Vector3.FORWARD
 var _debug_horizontal_velocity := Vector3.ZERO
 var _debug_facing_forward := Vector3.FORWARD
+var _collision_reframed := false
 
 func _ready() -> void:
 	camera = Camera3D.new()
@@ -147,6 +158,8 @@ func reset_immediate() -> void:
 	spring_velocity_horizontal = Vector3.ZERO
 	spring_velocity_vertical = Vector3.ZERO
 	_smoothed_air_height = air_height if (skier != null and skier.state == SkierController.State.AIR) else 0.0
+	_smoothed_speed_distance = clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
+	_smoothed_speed_height = clampf(speed * speed_height_gain, 0.0, speed_height_cap)
 	_smoothed_look_ahead = clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max)
 	_desired_camera_forward = global_position.direction_to(target.global_position + _yaw_dir * _smoothed_look_ahead + up * look_height_offset)
 	var planar := target.velocity.slide(up)
@@ -173,6 +186,7 @@ func reset_immediate() -> void:
 func _physics_process(delta: float) -> void:
 	if target == null:
 		return
+	var frame_start_position := global_position
 	var skier := target as SkierController
 	var speed := target.velocity.length()
 
@@ -218,8 +232,12 @@ func _physics_process(delta: float) -> void:
 	var air_rate := air_height_rise_rate if air_target > _smoothed_air_height else air_height_fall_rate
 	_smoothed_air_height = lerpf(_smoothed_air_height, air_target, 1.0 - exp(-air_rate * delta))
 
-	var distance := follow_distance + clampf(speed * speed_distance_gain, 0.0, speed_distance_cap) + _profile_distance
-	var desired_height := follow_height + clampf(speed * speed_height_gain, 0.0, speed_height_cap) + _smoothed_air_height + _profile_height
+	var speed_distance_target := clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
+	var speed_height_target := clampf(speed * speed_height_gain, 0.0, speed_height_cap)
+	_smoothed_speed_distance = lerpf(_smoothed_speed_distance, speed_distance_target, 1.0 - exp(-speed_distance_response * delta))
+	_smoothed_speed_height = lerpf(_smoothed_speed_height, speed_height_target, 1.0 - exp(-speed_height_response * delta))
+	var distance := follow_distance + _smoothed_speed_distance + _profile_distance
+	var desired_height := follow_height + _smoothed_speed_height + _smoothed_air_height + _profile_height
 	var desired := target.global_position - travel * distance + up * desired_height
 	_desired_camera_position = desired
 	var error := desired - global_position
@@ -228,8 +246,20 @@ func _physics_process(delta: float) -> void:
 	spring_velocity_horizontal += (error_horizontal * spring_strength - spring_velocity_horizontal * damping) * delta
 	spring_velocity_vertical += (error_vertical * vertical_spring_strength - spring_velocity_vertical * vertical_damping) * delta
 	global_position += (spring_velocity_horizontal + spring_velocity_vertical) * delta
-	var collision_safe := _avoid_collision(target.global_position + up * collision_probe_height, global_position)
-	global_position = _stabilize_camera_position(collision_safe, up)
+	var pre_collision_position := global_position
+	var collision_safe := _avoid_collision(target.global_position + up * collision_probe_height, global_position, up, travel)
+	var stabilized := _stabilize_camera_position(collision_safe, up, travel)
+	var correction := stabilized - pre_collision_position
+	var correction_limit := collision_correction_speed * delta
+	if correction.length() > correction_limit and correction_limit > 0.0:
+		stabilized = pre_collision_position + correction.normalized() * correction_limit
+	global_position = _stabilize_camera_position(stabilized, up, travel)
+	var frame_translation := global_position - frame_start_position
+	var frame_translation_limit := maximum_position_speed * delta
+	if frame_translation.length() > frame_translation_limit and frame_translation_limit > 0.0:
+		global_position = frame_start_position + frame_translation.normalized() * frame_translation_limit
+	# Translation limiting must never erode the minimum playable frame.
+	global_position = _stabilize_camera_position(global_position, up, travel)
 
 	var look_ahead_target := maxf(clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max), _profile_look_ahead)
 	_smoothed_look_ahead = lerpf(_smoothed_look_ahead, look_ahead_target, 1.0 - exp(-look_ahead_rate * delta))
@@ -358,6 +388,8 @@ func debug_snapshot() -> Dictionary:
 		"horizontal_velocity": _debug_horizontal_velocity,
 		"horizontal_speed": _debug_horizontal_velocity.length(),
 		"player_facing": _debug_facing_forward,
+		"collision_reframed": _collision_reframed,
+		"speed_distance_offset": _smoothed_speed_distance,
 	}
 
 func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
@@ -369,15 +401,42 @@ func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
 		return from.lerp(to, weight).normalized()
 	return from.slerp(to, weight).normalized()
 
-func _avoid_collision(from: Vector3, desired: Vector3) -> Vector3:
+func _avoid_collision(from: Vector3, desired: Vector3, up: Vector3, travel: Vector3) -> Vector3:
+	_collision_reframed = false
+	var direct := _trace_camera_candidate(from, desired)
+	if not bool(direct.hit):
+		return direct.position
+	_collision_reframed = true
+	var right := travel.cross(up).normalized()
+	if right.length_squared() < 0.001:
+		right = global_basis.x
+	var alternatives: Array[Vector3] = [
+		desired + up * collision_reframe_lift,
+		desired + right * collision_shoulder_offset + up * collision_reframe_lift * 0.45,
+		desired - right * collision_shoulder_offset + up * collision_reframe_lift * 0.45,
+	]
+	var best_position: Vector3 = direct.position
+	var best_distance := best_position.distance_to(target.global_position)
+	for alternative: Vector3 in alternatives:
+		var result := _trace_camera_candidate(from, alternative)
+		var candidate_position: Vector3 = result.position
+		var candidate_distance := candidate_position.distance_to(target.global_position)
+		if not bool(result.hit) and candidate_distance >= minimum_camera_distance:
+			return candidate_position
+		if candidate_distance > best_distance:
+			best_distance = candidate_distance
+			best_position = candidate_position
+	return best_position
+
+func _trace_camera_candidate(from: Vector3, desired: Vector3) -> Dictionary:
 	var query := PhysicsRayQueryParameters3D.create(from, desired, 1 | 4)
 	query.exclude = [target.get_rid()]
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
-		return desired
-	return hit.position + hit.normal * collision_clearance
+		return {"hit": false, "position": desired}
+	return {"hit": true, "position": hit.position + hit.normal * collision_clearance}
 
-func _stabilize_camera_position(candidate: Vector3, up: Vector3) -> Vector3:
+func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3 = Vector3.FORWARD) -> Vector3:
 	if target == null:
 		return candidate
 	if not candidate.is_finite() or not up.is_finite() or up.length_squared() < 0.001:
@@ -393,8 +452,17 @@ func _stabilize_camera_position(candidate: Vector3, up: Vector3) -> Vector3:
 		planar_offset = Vector3.BACK
 	var safe_up_offset := maxf(up_offset, minimum_camera_up_offset)
 	var required_planar_distance := sqrt(maxf(minimum_camera_distance * minimum_camera_distance - safe_up_offset * safe_up_offset, 0.0))
-	if offset.length() < minimum_camera_distance or up_offset < minimum_camera_up_offset:
-		candidate = target_position + planar_offset.normalized() * maxf(planar_offset.length(), required_planar_distance) + up * safe_up_offset
+	var safe_planar := planar_offset.normalized() * maxf(planar_offset.length(), required_planar_distance)
+	var safe_travel := travel.slide(up).normalized()
+	if _collision_reframed and safe_travel.length_squared() > 0.001:
+		var behind_distance := safe_planar.dot(-safe_travel)
+		if behind_distance < minimum_behind_distance:
+			safe_planar += -safe_travel * (minimum_behind_distance - behind_distance)
+	if offset.length() < minimum_camera_distance or up_offset < minimum_camera_up_offset or safe_planar != planar_offset:
+		candidate = target_position + safe_planar + up * safe_up_offset
+	var candidate_offset := candidate - target_position
+	if candidate_offset.length() > maximum_camera_distance:
+		candidate = target_position + candidate_offset.normalized() * maximum_camera_distance
 	if not candidate.is_finite() or candidate.distance_to(target_position) < minimum_camera_distance - 0.001:
 		return _last_stable_camera_position
 	_last_stable_camera_position = candidate

@@ -7,9 +7,10 @@ var failures: Array[String] = []
 
 func _ready() -> void:
 	_run_low_speed_pivot_reproduction()
+	_run_raised_feature_occlusion_reproduction()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("CAMERA_LOW_SPEED_PASS: slow pivots retained stable framing and clearance")
+		print("CAMERA_LOW_SPEED_PASS: slow pivots and raised-feature occlusion retained stable framing and clearance")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
@@ -77,6 +78,58 @@ func _run_low_speed_pivot_reproduction() -> void:
 	skier.queue_free()
 	remove_child(floor)
 	floor.queue_free()
+
+func _run_raised_feature_occlusion_reproduction() -> void:
+	var skier := SkierController.new()
+	skier.set_physics_process(false)
+	add_child(skier)
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_position = Vector3.ZERO
+	skier.velocity = Vector3(0.0, 0.0, -12.0)
+
+	var camera_controller := SkiCameraController.new()
+	camera_controller.set_physics_process(false)
+	add_child(camera_controller)
+	camera_controller.set_target(skier)
+	_step_and_measure(camera_controller, skier, 90, "raised-feature settle")
+
+	var feature := StaticBody3D.new()
+	feature.collision_layer = 4
+	feature.collision_mask = 0
+	feature.position = Vector3(0.0, 1.25, 2.65)
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(3.8, 2.5, 1.2)
+	shape_node.shape = shape
+	feature.add_child(shape_node)
+	add_child(feature)
+
+	for frame_index: int in 150:
+		if not failures.is_empty():
+			break
+		var previous := camera_controller.global_position
+		camera_controller._physics_process(STEP)
+		var snapshot := camera_controller.debug_snapshot()
+		var distance := float(snapshot.target_distance)
+		var travel := camera_controller.global_position.distance_to(previous)
+		if distance < camera_controller.minimum_camera_distance - 0.01:
+			failures.append("Raised feature forced an unusably close %.2f m camera pose" % distance)
+			break
+		if distance > camera_controller.maximum_camera_distance + 0.01:
+			failures.append("Raised feature pushed the camera outside its playable framing bound")
+			break
+		if travel > MAXIMUM_FRAME_TRAVEL:
+			failures.append("Raised feature caused a %.3f m camera framing discontinuity" % travel)
+			break
+
+	remove_child(feature)
+	feature.queue_free()
+	remove_child(camera_controller)
+	camera_controller.queue_free()
+	remove_child(skier)
+	skier.queue_free()
 
 func _step_and_measure(camera_controller: SkiCameraController, skier: SkierController, frames: int, phase: String) -> void:
 	for _index: int in frames:

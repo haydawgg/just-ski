@@ -17,15 +17,15 @@ var detail_label: Label
 
 func _ready() -> void:
 	name = "TrickVisualizer"
-	custom_minimum_size = Vector2(250.0, 200.0)
+	custom_minimum_size = Vector2(190.0, 150.0)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	title_label = Label.new()
-	title_label.position = Vector2(8.0, 5.0)
-	title_label.add_theme_font_size_override("font_size", 16)
+	title_label.position = Vector2(8.0, 3.0)
+	title_label.add_theme_font_size_override("font_size", 13)
 	add_child(title_label)
 	detail_label = Label.new()
-	detail_label.position = Vector2(8.0, 174.0)
-	detail_label.add_theme_font_size_override("font_size", 12)
+	detail_label.position = Vector2(8.0, 130.0)
+	detail_label.add_theme_font_size_override("font_size", 10)
 	add_child(detail_label)
 	visible = false
 	set_process(true)
@@ -42,10 +42,13 @@ func apply_snapshot(data: Dictionary) -> void:
 		path.append(stick)
 		if path.size() > MAX_PATH_POINTS:
 			path.remove_at(0)
-	var active := stick.length() > 0.08 or left_trigger > 0.05 or right_trigger > 0.05 or phase not in ["NEUTRAL", "LANDING"]
+	var direct_input := stick.length() > 0.14 or left_trigger > 0.08 or right_trigger > 0.08
+	var gesture_event := phase in ["PRELOAD", "FLICK", "ROTATE"] and strength > 0.2
+	var active := direct_input or gesture_event
 	if active:
-		linger_time = 0.55
+		linger_time = 0.28
 	visible = bool(GameSettings.active.get("trick_visualizer_enabled", true)) and (active or linger_time > 0.0)
+	modulate.a = 0.82 if active else clampf(linger_time / 0.28, 0.0, 0.5)
 	title_label.text = _pretty(kind)
 	detail_label.text = "%s  •  %d%%  •  %s" % [_pretty(phase), roundi(strength * 100.0), grab if not grab.is_empty() else "NO GRAB"]
 	queue_redraw()
@@ -55,26 +58,26 @@ func debug_snapshot() -> Dictionary:
 
 func _process(delta: float) -> void:
 	if linger_time > 0.0:
-		linger_time -= delta
-	elif stick.length() <= 0.08 and left_trigger <= 0.05 and right_trigger <= 0.05:
+		linger_time = maxf(0.0, linger_time - delta)
+	if linger_time <= 0.0 and stick.length() <= 0.14 and left_trigger <= 0.08 and right_trigger <= 0.08:
 		visible = false
 		path.clear()
 
 func _draw() -> void:
-	var center := Vector2(125.0, 104.0)
-	var radius := 54.0
-	draw_circle(center, radius + 7.0, Color(0.02, 0.06, 0.09, 0.78))
-	draw_arc(center, radius, 0.0, TAU, 48, Color("#d8f4ff"), 2.0, true)
+	var center := Vector2(95.0, 78.0)
+	var radius := 39.0
+	draw_circle(center, radius + 6.0, Color(0.02, 0.06, 0.09, 0.46))
+	draw_arc(center, radius, 0.0, TAU, 40, Color(0.75, 0.89, 0.92, 0.72), 1.5, true)
 	draw_line(center + Vector2(-radius, 0.0), center + Vector2(radius, 0.0), Color(0.5, 0.7, 0.78, 0.35), 1.0)
 	draw_line(center + Vector2(0.0, -radius), center + Vector2(0.0, radius), Color(0.5, 0.7, 0.78, 0.35), 1.0)
 	if path.size() > 1:
 		var points := PackedVector2Array()
 		for value: Vector2 in path:
 			points.append(center + Vector2(value.x, value.y) * radius)
-		draw_polyline(points, Color("#ffc857"), 3.0, true)
-	draw_circle(center + Vector2(stick.x, stick.y) * radius, 6.0, Color("#ff6b7d"))
-	draw_rect(Rect2(18.0, 156.0 - left_trigger * 38.0, 13.0, left_trigger * 38.0), Color("#5ac8fa"))
-	draw_rect(Rect2(219.0, 156.0 - right_trigger * 38.0, 13.0, right_trigger * 38.0), Color("#5ac8fa"))
+		draw_polyline(points, Color("#dbc077"), 2.0, true)
+	draw_circle(center + Vector2(stick.x, stick.y) * radius, 4.5, Color("#d4777f"))
+	draw_rect(Rect2(14.0, 118.0 - left_trigger * 28.0, 9.0, left_trigger * 28.0), Color("#73aebe"))
+	draw_rect(Rect2(167.0, 118.0 - right_trigger * 28.0, 9.0, right_trigger * 28.0), Color("#73aebe"))
 
 func _pretty(value: String) -> String:
 	return value.replace("_", " ").capitalize()

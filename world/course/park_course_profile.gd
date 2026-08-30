@@ -7,7 +7,6 @@ extends Resource
 @export_range(1.0, 6.0, 0.1) var landing_marker_length := 4.5
 @export_range(0.04, 0.3, 0.01) var landing_marker_width := 0.18
 @export_range(0.005, 0.08, 0.005) var marker_surface_offset := 0.025
-@export_range(0.0025, 0.0065, 0.0001) var world_sign_pixel_size := 0.0042
 
 func feature_readability() -> Dictionary:
 	return {

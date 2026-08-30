@@ -22,8 +22,11 @@ var carve_spray: GPUParticles3D
 var skid_spray: GPUParticles3D
 var landing_spray: GPUParticles3D
 var speed_snow: GPUParticles3D
+var bail_scrape: GPUParticles3D
 var last_mode := "none"
 var last_landing_severity := 0.0
+var last_brake_response := 0.0
+var last_bail_surface_speed := 0.0
 
 func _ready() -> void:
 	skier = get_parent() as SkierController
@@ -35,6 +38,7 @@ func _ready() -> void:
 	landing_spray.explosiveness = 1.0
 	landing_spray.emitting = false
 	speed_snow = _build_particles("SpeedSnow", 32, 0.42, Vector2(7.0, 13.0), Vector2(0.012, 0.032), Color(0.92, 0.97, 1.0, 0.46))
+	bail_scrape = _build_particles("BailScrape", 44, 0.68, Vector2(0.9, 4.6), Vector2(0.024, 0.085), Color(0.83, 0.91, 0.95, 0.72))
 	if skier != null:
 		skier.landed.connect(_on_landed)
 	GameSettings.settings_applied.connect(_apply_quality)
@@ -49,10 +53,17 @@ func update_from_existing_contact(delta: float) -> void:
 	if grounded and speed >= MIN_TRACK_SPEED:
 		_update_tracks(speed)
 		_update_continuous_spray(speed)
+		bail_scrape.emitting = false
+	elif skier.state == SkierController.State.BAIL and skier.contact.grounded and speed >= 0.9:
+		last_track_valid = false
+		carve_spray.emitting = false
+		skid_spray.emitting = false
+		_update_bail_scrape(speed)
 	else:
 		last_track_valid = false
 		carve_spray.emitting = false
 		skid_spray.emitting = false
+		bail_scrape.emitting = false
 		last_mode = "none"
 	_update_speed_snow(speed)
 
@@ -61,6 +72,7 @@ func clear_transient_effects() -> void:
 	carve_spray.emitting = false
 	skid_spray.emitting = false
 	speed_snow.emitting = false
+	bail_scrape.emitting = false
 	landing_spray.emitting = false
 
 func debug_snapshot() -> Dictionary:
@@ -71,6 +83,9 @@ func debug_snapshot() -> Dictionary:
 		"continuous_particle_cap": MAX_CONTINUOUS_PARTICLES,
 		"mode": last_mode,
 		"landing_severity": last_landing_severity,
+		"brake_response": last_brake_response,
+		"bail_surface_speed": last_bail_surface_speed,
+		"bail_scrape_active": bail_scrape.emitting if bail_scrape != null else false,
 		"uses_existing_contact": skier != null,
 	}
 
@@ -124,10 +139,11 @@ func _build_particles(label: String, amount: int, lifetime: float, velocity_rang
 
 func _apply_quality() -> void:
 	var premium := int(GameSettings.active.get("snow_quality", 1)) == 1
-	carve_spray.amount = 48 if premium else 28
-	skid_spray.amount = 96 if premium else 56
+	carve_spray.amount = 38 if premium else 22
+	skid_spray.amount = 78 if premium else 44
 	landing_spray.amount = 64 if premium else 38
-	speed_snow.amount = 32 if premium else 18
+	speed_snow.amount = 24 if premium else 14
+	bail_scrape.amount = 44 if premium else 24
 
 func _update_tracks(speed: float) -> void:
 	if track_sample_time < TRACK_SAMPLE_INTERVAL:
@@ -235,6 +251,8 @@ func _update_continuous_spray(speed: float) -> void:
 	var right := travel.cross(normal).normalized()
 	var skid := clampf(skier.skid_amount, 0.0, 1.0)
 	var carve := clampf(skier.current_carve_ratio * absf(skier.edge_amount), 0.0, 1.0)
+	var brake := clampf(skier.brake_amount, 0.0, 1.0)
+	last_brake_response = brake
 	var speed_ratio := clampf((speed - 3.0) / 20.0, 0.0, 1.0)
 	carve_spray.global_position = contact_position - travel * 0.45
 	skid_spray.global_position = contact_position - travel * 0.3
@@ -246,12 +264,35 @@ func _update_continuous_spray(speed: float) -> void:
 		lateral_sign = signf(skier.edge_amount)
 	var skid_material := skid_spray.process_material as ParticleProcessMaterial
 	skid_material.direction = (normal * 0.62 + right * lateral_sign * 0.92 - travel * 0.18).normalized()
-	skid_material.spread = lerpf(34.0, 58.0, skid)
+	skid_material.spread = lerpf(34.0, 62.0, maxf(skid, brake))
+	skid_material.initial_velocity_min = lerpf(1.8, 2.8, brake)
+	skid_material.initial_velocity_max = lerpf(6.8, 8.2, brake)
 	carve_spray.amount_ratio = clampf(carve * speed_ratio * (1.0 - skid * 0.78), 0.0, 0.52)
-	skid_spray.amount_ratio = clampf((skid - 0.16) / 0.84 * speed_ratio, 0.0, 1.0)
+	var skid_demand := maxf((skid - 0.16) / 0.84, brake * 0.82)
+	skid_spray.amount_ratio = clampf(skid_demand * speed_ratio, 0.0, 1.0)
 	carve_spray.emitting = carve_spray.amount_ratio > 0.04
 	skid_spray.emitting = skid_spray.amount_ratio > 0.04
-	last_mode = "skid" if skid_spray.emitting else ("carve" if carve_spray.emitting else "track")
+	last_mode = "brake" if skid_spray.emitting and brake > 0.2 else ("skid" if skid_spray.emitting else ("carve" if carve_spray.emitting else "track"))
+
+func _update_bail_scrape(speed: float) -> void:
+	var normal := skier.contact.average_normal.normalized()
+	if normal.length_squared() < 0.001:
+		normal = Vector3.UP
+	var surface_velocity := skier.velocity.slide(normal)
+	last_bail_surface_speed = surface_velocity.length()
+	if last_bail_surface_speed < 0.9:
+		bail_scrape.emitting = false
+		return
+	var travel := surface_velocity.normalized()
+	bail_scrape.global_position = skier.contact.average_hit_position + normal * 0.12 - travel * 0.24
+	var process_material := bail_scrape.process_material as ParticleProcessMaterial
+	process_material.direction = (normal * 0.52 - travel * 0.86).normalized()
+	process_material.spread = 54.0
+	process_material.initial_velocity_min = lerpf(0.9, 2.0, clampf(last_bail_surface_speed / 14.0, 0.0, 1.0))
+	process_material.initial_velocity_max = lerpf(3.2, 6.5, clampf(last_bail_surface_speed / 14.0, 0.0, 1.0))
+	bail_scrape.amount_ratio = clampf((last_bail_surface_speed - 0.9) / 9.0, 0.12, 0.78)
+	bail_scrape.emitting = true
+	last_mode = "bail_scrape"
 
 func _update_speed_snow(speed: float) -> void:
 	var speed_ratio := clampf((speed - 18.0) / 15.0, 0.0, 1.0)

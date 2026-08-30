@@ -95,7 +95,7 @@ Require-Match $material 'snow_premium\.gdshader' "SnowMaterial must own the prem
 Require-Match $material 'groom_direction_world_xz' "SnowMaterial.create must accept groom direction."
 Require-Match $material 'feature_emphasis' "SnowMaterial must support subtle jump and landing emphasis."
 Require-Match $material 'default_snow_presentation_profile\.tres' "SnowMaterial must source important readability tuning from an editable resource."
-Require-Match $material 'albedo_texture_strength"\s*,\s*0\.10' "Groomed snow must keep the footprint-heavy source albedo subtle."
+Require-Match $material 'albedo_texture_strength"\s*,\s*0\.055' "Groomed snow must keep the footprint-heavy source albedo subtle."
 Require-Match $material 'sparkle_amount"\s*,\s*0\.05' "Premium snow sparkle must remain restrained."
 Require-Match $resort 'MainSnowFace[^\r\n]+SnowSurface\.Kind\.POWDER[^\r\n]+SnowSurface\.Kind\.GROOMED' "The main resort face must read as groomed snow without changing established ski physics."
 Require-Match $resort 'default_resort_environment_profile\.tres' "The resort must source environment readability tuning from an editable resource."

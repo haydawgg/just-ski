@@ -9,4 +9,3 @@ takeoff_marker_depth = 0.36
 landing_marker_length = 4.5
 landing_marker_width = 0.18
 marker_surface_offset = 0.025
-world_sign_pixel_size = 0.0042

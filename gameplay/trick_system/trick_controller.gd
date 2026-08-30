@@ -1,6 +1,8 @@
 class_name TrickController
 extends Node
 
+const MIN_STRAIGHT_AIR_PRESENTATION_TIME := 0.45
+
 signal trick_changed(text: String)
 signal trick_landed(text: String, points: int, quality: float)
 
@@ -177,7 +179,9 @@ func live_name() -> String:
 		parts.append(grab_name)
 	if not style_name.is_empty():
 		parts.append(style_name)
-	return "Straight Air" if parts.is_empty() else " + ".join(parts)
+	if parts.is_empty():
+		return "Straight Air" if air_seconds >= MIN_STRAIGHT_AIR_PRESENTATION_TIME else ""
+	return " + ".join(parts)
 
 func reset() -> void:
 	active = false

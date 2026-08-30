@@ -95,6 +95,6 @@ static func _build_feature(parent: Node3D, spec: Dictionary, physics_profile: Sk
 			var gate_color: Color = spec.get("color", Color("#55d6be"))
 			return ParkLayout.add_gate(
 				parent, label, float(spec.x), float(spec.z), float(spec.width),
-				gate_color
+				gate_color, readability
 			)
 	return null

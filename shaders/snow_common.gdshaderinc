@@ -21,6 +21,7 @@ uniform float slope_contrast_strength : hint_range(0.0, 0.25) = 0.07;
 uniform vec2 form_light_direction_world_xz = vec2(-0.34, 0.94);
 uniform float form_contrast_strength : hint_range(0.0, 0.3) = 0.1;
 uniform float steepness_contrast_strength : hint_range(0.0, 0.3) = 0.1;
+uniform float minimum_albedo_luminance : hint_range(0.2, 0.8) = 0.44;
 uniform vec2 wind_direction_world_xz = vec2(0.82, -0.57);
 uniform float wind_crust_amount : hint_range(0.0, 0.2) = 0.035;
 uniform vec3 feature_tint : source_color = vec3(0.86, 0.9, 0.94);
@@ -178,6 +179,15 @@ void snow_surface(
 		surface_roughness += (detail.roughness - 0.5) * roughness_texture_strength * detail_visibility * 0.32;
 		surface_translucency = mix(0.5, detail.translucency, detail_visibility);
 	}
+
+	// Snow can describe steep and shadowed form without becoming charcoal.
+	// Preserve chroma while lifting only values that fall below the gameplay
+	// readability floor after all authored and texture modulation.
+	float albedo_luminance = dot(surface_albedo, vec3(0.2126, 0.7152, 0.0722));
+	if (albedo_luminance < minimum_albedo_luminance) {
+		surface_albedo *= minimum_albedo_luminance / max(albedo_luminance, 0.001);
+	}
+	surface_albedo = min(surface_albedo, vec3(1.0));
 
 	detailed_normal = snow_apply_corduroy(detailed_normal, detail_visibility, disturbance);
 	surface_roughness = clamp(surface_roughness, 0.28, 0.98);
