@@ -102,21 +102,29 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 		lip_centers.append(lip_start + down * distance_along + n * height)
 		lip_widths.append(width * lerpf(1.38, 1.0, smoothstep(0.0, 1.0, t)))
 		lip_shoulders.append(maxf(height - 0.001, 0.0))
-	_add_profiled_snow_body(root, "Lip", lip_centers, lip_widths, lip_shoulders, n, 0.58, SnowSurface.Kind.GROOMED, 0.18, true)
-
-	# The table is a rounded knuckle mound rather than a raised rectangular slab.
+	# The table is a rounded knuckle mound. Fix wedge by merging lip+table into a single C1-continuous deck with no internal wall.
 	var table_centers: Array[Vector3] = []
 	var table_widths := PackedFloat32Array()
 	var table_shoulders := PackedFloat32Array()
 	var table_samples := 10
 	for sample: int in range(table_samples):
 		var t := float(sample) / float(table_samples - 1)
-		var distance_along := lip_length + 0.32 + table_length * t
-		var knuckle_height := lerpf(maxf(lip_rise - 0.34, 0.18), 0.055, _smootherstep(t))
+		var distance_along := lip_length + table_length * t
+		var knuckle_height := _hermite(t, lip_rise, 0.055, tan(extra), 0.0, table_length)
 		table_centers.append(lip_start + down * distance_along + n * knuckle_height)
-		table_widths.append(width * lerpf(1.08, 1.34, _smootherstep(t)))
+		table_widths.append(width * lerpf(1.0, 1.34, _smootherstep(t)))
 		table_shoulders.append(maxf(knuckle_height - 0.001, 0.0))
-	_add_profiled_snow_body(root, "Table", table_centers, table_widths, table_shoulders, n, 0.62, SnowSurface.Kind.PACKED, 0.42, true)
+	var deck_centers: Array[Vector3] = []
+	var deck_widths := PackedFloat32Array()
+	var deck_shoulders := PackedFloat32Array()
+	deck_centers.append_array(lip_centers)
+	deck_widths.append_array(lip_widths)
+	deck_shoulders.append_array(lip_shoulders)
+	for i: int in range(1, table_centers.size()):
+		deck_centers.append(table_centers[i])
+		deck_widths.append(table_widths[i])
+		deck_shoulders.append(table_shoulders[i])
+	_add_profiled_snow_body(root, "Table", deck_centers, deck_widths, deck_shoulders, n, 0.60, SnowSurface.Kind.GROOMED, 0.28, true)
 
 	# A raised knuckle rolls progressively back into the piste, giving both the
 	# touchdown and run-out a matched tangent instead of a landing slab edge.
@@ -126,9 +134,10 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 	var run_out_length := clampf(landing_length * 0.28, 3.5, 6.0)
 	var landing_samples := 14
 	var landing_crown := clampf(0.28 + lip_rise * 0.22, 0.42, 0.82)
+	var flat_gap := 1.8
 	for sample: int in range(landing_samples):
 		var t := float(sample) / float(landing_samples - 1)
-		var distance_along := lip_length + table_length + (landing_length + run_out_length) * t
+		var distance_along := lip_length + table_length + flat_gap + (landing_length + run_out_length) * t
 		var landing_t := clampf((landing_length + run_out_length) * t / landing_length, 0.0, 1.0)
 		var height := 0.001 + landing_crown * (1.0 - _smootherstep(landing_t))
 		landing_centers.append(lip_start + down * distance_along + n * height)
@@ -139,7 +148,7 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 	root.set_meta("lip_z", lip_z)
 	root.set_meta("table_length", table_length)
 	root.set_meta("range", sizing.range)
-	root.set_meta("profile_samples", lip_samples + table_samples + landing_samples)
+	root.set_meta("profile_samples", deck_centers.size() + landing_samples)
 	return root
 
 static func add_roller(parent: Node3D, label: String, x: float, z: float, length: float = 8.0, height: float = 0.8, width: float = 9.0) -> Node3D:
@@ -264,6 +273,7 @@ static func add_wallride(parent: Node3D, label: String, x: float, z: float, leng
 	snow_base.material_override = SnowSurface.create(SnowSurface.Kind.PACKED, Vector2(feature_basis.z.x, feature_basis.z.z), 0.28)
 	snow_base.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(snow_base)
+	_add_feature_snow_collar(root, feature_basis, snow_at(x, z) + snow_normal() * 0.026, Vector3(1.14, 0.1, length + 0.7))
 	var body := StaticBody3D.new()
 	body.name = "RideSurface"
 	body.collision_layer = 1
@@ -293,6 +303,9 @@ static func add_wallride(parent: Node3D, label: String, x: float, z: float, leng
 	snow_cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER, Vector2(feature_basis.z.x, feature_basis.z.z), 0.34)
 	snow_cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(snow_cap)
+	_add_feature_trim(root, feature_basis, snow_at(x, z) + feature_basis.y * (height + 0.012), Vector3(0.56, 0.06, length + 0.18), color.darkened(0.18))
+	for support_offset: float in [-length * 0.36, 0.0, length * 0.36]:
+		_add_feature_trim(root, feature_basis, snow_at(x, z) + feature_basis.y * (height * 0.18) + feature_basis.z * support_offset, Vector3(0.13, height * 0.34, 0.13), color.darkened(0.25))
 	return root
 
 static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: float, radius: float, color: Color) -> Node3D:
@@ -328,6 +341,18 @@ static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: 
 	material.roughness = 0.28
 	mesh_instance.material_override = material
 	body.add_child(mesh_instance)
+	var snow_cap := MeshInstance3D.new()
+	var cap_mesh := CylinderMesh.new()
+	cap_mesh.top_radius = radius * 0.72
+	cap_mesh.bottom_radius = radius * 1.08
+	cap_mesh.height = 0.1
+	cap_mesh.radial_segments = 10
+	snow_cap.mesh = cap_mesh
+	snow_cap.position = snow_at(x, z) + snow_normal() * (height + 0.045)
+	snow_cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER, Vector2(0.0, -1.0), 0.22)
+	snow_cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(snow_cap)
+	_add_feature_snow_collar(root, downhill_basis(), snow_at(x, z) + snow_normal() * 0.026, Vector3(radius * 3.2, 0.1, radius * 3.2))
 	var shape_node := CollisionShape3D.new()
 	var shape := CylinderShape3D.new()
 	shape.radius = radius
@@ -336,6 +361,32 @@ static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: 
 	body.add_child(shape_node)
 	root.add_child(body)
 	return root
+
+static func _add_feature_snow_collar(parent: Node3D, basis: Basis, center: Vector3, size: Vector3) -> void:
+	var collar := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	collar.mesh = mesh
+	collar.position = center
+	collar.basis = basis
+	collar.material_override = SnowSurface.create(SnowSurface.Kind.PACKED, Vector2(basis.z.x, basis.z.z), 0.2)
+	collar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(collar)
+
+static func _add_feature_trim(parent: Node3D, basis: Basis, center: Vector3, size: Vector3, color: Color) -> void:
+	var trim := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	trim.mesh = mesh
+	trim.position = center
+	trim.basis = basis
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.metallic = 0.2
+	material.roughness = 0.42
+	trim.material_override = material
+	trim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(trim)
 
 static func add_cannon(parent: Node3D, label: String, x: float, z: float, length: float, width: float, height: float) -> Node3D:
 	var root := add_side_hit(parent, label, x, z, length, height, width, 0.0)
@@ -351,9 +402,9 @@ static func add_gate(parent: Node3D, label: String, x: float, z: float, width: f
 	var center := snow_at(x, z)
 	var destination_gate := width >= 30.0
 	var visual_width := minf(width, 18.0 if destination_gate else 13.0)
-	var post_height := 2.25 if destination_gate else 1.8
+	var post_height := 2.45 if destination_gate else 2.0
 	var post_thickness := 0.14
-	var flag_size := Vector2(0.86 if destination_gate else 0.72, 0.5 if destination_gate else 0.42)
+	var flag_size := Vector2(0.98 if destination_gate else 0.84, 0.56 if destination_gate else 0.48)
 	var guide_color := color.lerp(Color("#d8eef2"), 0.28)
 	for side: float in [-1.0, 1.0]:
 		var anchor := center + Vector3.RIGHT * visual_width * 0.5 * side
@@ -399,8 +450,8 @@ static func _configure_guide_visibility(instance: GeometryInstance3D) -> void:
 	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	instance.visibility_range_begin = 2.5
 	instance.visibility_range_begin_margin = 3.0
-	instance.visibility_range_end = 82.0
-	instance.visibility_range_end_margin = 22.0
+	instance.visibility_range_end = 88.0
+	instance.visibility_range_end_margin = 24.0
 	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 
 static func add_slope_box(parent: Node3D, label: String, x: float, z: float, size: Vector3, yaw_deg: float, color: Color, surface_kind: int, collision_enabled: bool, extra_height: float = 0.0, visual_surface_kind: int = -1) -> StaticBody3D:
@@ -454,9 +505,32 @@ static func add_rail_contours(parent: Node3D, label: String, points: Array[Vecto
 	var normal := snow_normal()
 	var entry_tangent := (points[1] - points[0]).normalized()
 	var exit_tangent := (points[-1] - points[-2]).normalized()
+	for support_index: int in range(points.size()):
+		_add_rail_support(root, points[support_index], normal, support_index)
 	_add_rail_apron(root, "Approach", points[0], entry_tangent, normal, true)
 	_add_rail_apron(root, "Runout", points[-1], exit_tangent, normal, false)
 	return root
+
+static func _add_rail_support(parent: Node3D, anchor: Vector3, normal: Vector3, support_index: int) -> void:
+	var snow_position := snow_at(anchor.x, anchor.z)
+	var above_snow := anchor.y - snow_position.y
+	if above_snow < 0.34:
+		return
+	var support_height := clampf(above_snow - 0.14, 0.24, 4.5)
+	var support := MeshInstance3D.new()
+	support.name = "RailSupport_%02d" % support_index
+	var support_mesh := BoxMesh.new()
+	support_mesh.size = Vector3(0.14, support_height, 0.14)
+	support.mesh = support_mesh
+	support.position = Vector3(anchor.x, snow_position.y + support_height * 0.5 + 0.035, anchor.z)
+	var support_material := StandardMaterial3D.new()
+	support_material.albedo_color = Color("#55676c")
+	support_material.metallic = 0.22
+	support_material.roughness = 0.62
+	support.material_override = support_material
+	support.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(support)
+	_add_feature_snow_collar(parent, Basis.IDENTITY, snow_position + normal * 0.028, Vector3(0.42, 0.07, 0.42))
 
 static func _add_rail_apron(parent: Node3D, label: String, anchor: Vector3, tangent: Vector3, normal: Vector3, approach: bool) -> void:
 	var centers: Array[Vector3] = []
@@ -549,10 +623,10 @@ static func _add_jump_readability_markers(
 	marker.visibility_range_end = 145.0
 	marker.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(marker_color.lerp(Color("#d9e9e7"), 0.34), 0.62)
+	material.albedo_color = Color(marker_color.lerp(Color("#d9e9e7"), 0.24), 0.68)
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
-	material.roughness = 0.9
+	material.roughness = 0.86
 	material.metallic = 0.0
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	marker.material_override = material
@@ -612,6 +686,15 @@ static func _add_profile_marker_quad(
 	var d := _profile_marker_point(start_center, start_width, start_drop, right, normal, start_across_right, surface_offset)
 	_add_smooth_tri(st, a, d, c, normal, normal, normal, Vector2.ZERO, Vector2.RIGHT, Vector2.ONE)
 	_add_smooth_tri(st, a, c, b, normal, normal, normal, Vector2.ZERO, Vector2.ONE, Vector2.DOWN)
+	var wall_height := 0.032
+	var a_low := a - normal * wall_height
+	var b_low := b - normal * wall_height
+	var c_low := c - normal * wall_height
+	var d_low := d - normal * wall_height
+	_add_flat_quad(st, a, b, b_low, a_low)
+	_add_flat_quad(st, b, c, c_low, b_low)
+	_add_flat_quad(st, c, d, d_low, c_low)
+	_add_flat_quad(st, d, a, a_low, d_low)
 
 static func _profile_marker_point(center: Vector3, width: float, edge_drop: float, right: Vector3, normal: Vector3, across: float, surface_offset: float) -> Vector3:
 	var clamped_across := clampf(across, -0.96, 0.96)

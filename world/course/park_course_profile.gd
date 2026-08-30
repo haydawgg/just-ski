@@ -3,10 +3,10 @@ extends Resource
 
 @export_category("Feature Readability")
 @export var snow_feature_marker_color := Color("#2aa6bd")
-@export_range(0.08, 0.5, 0.01) var takeoff_marker_depth := 0.36
+@export_range(0.08, 0.5, 0.01) var takeoff_marker_depth := 0.44
 @export_range(1.0, 6.0, 0.1) var landing_marker_length := 4.5
-@export_range(0.04, 0.3, 0.01) var landing_marker_width := 0.18
-@export_range(0.005, 0.08, 0.005) var marker_surface_offset := 0.025
+@export_range(0.04, 0.3, 0.01) var landing_marker_width := 0.22
+@export_range(0.005, 0.08, 0.005) var marker_surface_offset := 0.032
 
 func feature_readability() -> Dictionary:
 	return {

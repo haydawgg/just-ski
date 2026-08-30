@@ -6,6 +6,7 @@ const SnowSurface := preload("res://world/snow_material.gd")
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
 const ParkCourseBuilderModule := preload("res://world/course/park_course_builder.gd")
 const CourseRecoveryModule := preload("res://world/course/course_recovery.gd")
+const DISTANT_MOUNTAIN_SHADER: Shader = preload("res://shaders/distant_mountain.gdshader")
 
 @export var course_profile: ParkCourseProfile = preload("res://resources/course/default_course_profile.tres")
 @export var physics_profile: SkiPhysicsProfile = preload("res://resources/physics/default_ski_profile.tres")
@@ -292,7 +293,8 @@ func _add_distant_terrain_skirt() -> void:
 		var z := lerpf(-132.0, -760.0, float(row) / float(rows - 1))
 		for column: int in range(columns):
 			var x := lerpf(-360.0, 360.0, float(column) / float(columns - 1))
-			var height := -3.0 - float(row) * 0.38 + sin(x * 0.021 + z * 0.014) * 2.2 + cos(x * 0.047 - z * 0.009) * 0.9
+			var broad_roll := sin(x * 0.007 + z * 0.004) * 4.2 + cos(x * 0.013 - z * 0.002) * 2.6
+			var height := -3.0 - float(row) * 0.38 + broad_roll + sin(x * 0.021 + z * 0.014) * 1.4 + cos(x * 0.047 - z * 0.009) * 0.6
 			row_points.append(Vector3(x, height, z))
 		points.append(row_points)
 	for row: int in range(rows - 1):
@@ -334,10 +336,13 @@ func _add_mountain_peak(label: String, position: Vector3, radius: float, height:
 	root.rotation_degrees.y = yaw_degrees
 	var mountain := MeshInstance3D.new()
 	mountain.mesh = _create_mountain_mesh(radius, height, seed)
-	var rock_material := StandardMaterial3D.new()
-	rock_material.albedo_color = color.lightened(0.08)
-	rock_material.roughness = 0.96
-	rock_material.metallic = 0.0
+	var rock_material := ShaderMaterial.new()
+	rock_material.shader = DISTANT_MOUNTAIN_SHADER
+	rock_material.set_shader_parameter("base_color", color.lightened(0.08))
+	rock_material.set_shader_parameter("haze_color", Color("#b4c2ca"))
+	rock_material.set_shader_parameter("haze_start_distance", 170.0)
+	rock_material.set_shader_parameter("haze_end_distance", 620.0)
+	rock_material.set_shader_parameter("facet_value_range", 0.055)
 	mountain.material_override = rock_material
 	root.add_child(mountain)
 	var cap := MeshInstance3D.new()

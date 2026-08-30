@@ -156,14 +156,19 @@ func _build_particles(label: String, amount: int, lifetime: float, velocity_rang
 	alpha_ramp.gradient = alpha_gradient
 	process_material.color_ramp = alpha_ramp
 	particles.process_material = process_material
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.1, 0.1)
-	quad.orientation = PlaneMesh.FACE_Z
+	var particle_mesh := SphereMesh.new()
+	particle_mesh.radius = 0.5
+	particle_mesh.height = 1.0
+	particle_mesh.radial_segments = 8
+	particle_mesh.rings = 4
 	var particle_material := ShaderMaterial.new()
 	particle_material.shader = PARTICLE_SHADER
 	particle_material.set_shader_parameter("snow_tint", color)
-	quad.material = particle_material
-	particles.draw_pass_1 = quad
+	particle_material.set_shader_parameter("height_limit", 2.25)
+	particle_material.set_shader_parameter("height_fade_range", 0.65)
+	particle_material.set_shader_parameter("emitter_base_height", 0.0)
+	particle_mesh.material = particle_material
+	particles.draw_pass_1 = particle_mesh
 	add_child(particles)
 	return particles
 
@@ -273,6 +278,14 @@ func _add_track_vertex(surface: SurfaceTool, position: Vector3, normal: Vector3,
 	surface.set_color(Color(disturbance, carve, 0.0, alpha))
 	surface.add_vertex(position)
 
+func _set_particle_emitter_height(particles: GPUParticles3D, height: float) -> void:
+	if particles == null or particles.draw_pass_1 == null:
+		return
+	var mesh: Mesh = particles.draw_pass_1
+	var mat: Material = mesh.material if mesh is Mesh else null
+	if mat is ShaderMaterial:
+		(mat as ShaderMaterial).set_shader_parameter("emitter_base_height", height)
+
 func _update_continuous_spray(speed: float) -> void:
 	var contact_position := _presentation_center() + _presentation_normal() * 0.08
 	var normal := _presentation_normal()
@@ -290,6 +303,8 @@ func _update_continuous_spray(speed: float) -> void:
 	var right_contact := contact_presentation.right_position if contact_presentation.right_valid else contact_position
 	carve_spray.global_position = left_contact + normal * 0.08 - travel * 0.45
 	skid_spray.global_position = right_contact + normal * 0.08 - travel * 0.3
+	_set_particle_emitter_height(carve_spray, carve_spray.global_position.y)
+	_set_particle_emitter_height(skid_spray, skid_spray.global_position.y)
 	var carve_material := carve_spray.process_material as ParticleProcessMaterial
 	carve_material.direction = normal * 0.42 - travel * 0.82
 	carve_material.spread = 24.0
@@ -319,6 +334,7 @@ func _update_bail_scrape(speed: float) -> void:
 		return
 	var travel := surface_velocity.normalized()
 	bail_scrape.global_position = _presentation_center() + normal * 0.12 - travel * 0.24
+	_set_particle_emitter_height(bail_scrape, bail_scrape.global_position.y)
 	var process_material := bail_scrape.process_material as ParticleProcessMaterial
 	process_material.direction = (normal * 0.52 - travel * 0.86).normalized()
 	process_material.spread = 54.0
@@ -334,6 +350,7 @@ func _update_speed_snow(speed: float) -> void:
 	speed_snow.emitting = speed_ratio > 0.02 and skier.state != SkierController.State.BAIL and surface_allows_effects
 	speed_snow.amount_ratio = speed_ratio * 0.48
 	speed_snow.global_position = skier.global_position + Vector3.UP * 1.0
+	_set_particle_emitter_height(speed_snow, speed_snow.global_position.y)
 	var process_material := speed_snow.process_material as ParticleProcessMaterial
 	var direction := -skier.velocity.normalized() if speed > 0.1 else Vector3.BACK
 	process_material.direction = direction
@@ -349,6 +366,7 @@ func _on_landed(result: Dictionary) -> void:
 		return
 	var normal := _presentation_normal()
 	landing_spray.global_position = _presentation_center() + normal * 0.1
+	_set_particle_emitter_height(landing_spray, landing_spray.global_position.y)
 	var process_material := landing_spray.process_material as ParticleProcessMaterial
 	var lateral := float(result.get("lateral_velocity", 0.0))
 	var travel := skier.velocity.slide(normal).normalized()
@@ -356,7 +374,7 @@ func _on_landed(result: Dictionary) -> void:
 	process_material.direction = (normal * 0.9 + right * signf(lateral) * minf(absf(lateral) / 8.0, 0.65) - travel * 0.18).normalized()
 	process_material.spread = lerpf(48.0, 68.0, severity)
 	process_material.initial_velocity_min = lerpf(1.8, 4.2, severity)
-	process_material.initial_velocity_max = lerpf(4.0, 9.2, severity)
+	process_material.initial_velocity_max = lerpf(4.0, 8.6, severity)
 	landing_spray.amount_ratio = lerpf(0.28, 1.0, severity)
 	landing_spray.emitting = true
 	landing_spray.restart()

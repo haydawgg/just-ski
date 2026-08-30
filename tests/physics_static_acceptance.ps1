@@ -40,7 +40,9 @@ $layout = Read-RequiredFile "world/park_features/park_layout.gd"
 $rail = Read-RequiredFile "world/park_features/grind_rail_3d.gd"
 $builder = Read-RequiredFile "world/course/park_course_builder.gd"
 $course = Read-RequiredFile "world/course/park_course_profile.gd"
+$courseResource = Read-RequiredFile "resources/course/default_course_profile.tres"
 $ui = Read-RequiredFile "ui/hud/game_ui.gd"
+$mountainShader = Read-RequiredFile "shaders/distant_mountain.gdshader"
 
 Require-Match $inputManager 'Input\.get_action_raw_strength\(positive_action\)\s*-\s*Input\.get_action_raw_strength\(negative_action\)' "Steering must shape raw action strength exactly once."
 Reject-Match $inputManager 'Input\.get_axis\(' "InputManager cannot feed an already-deadzoned axis into its custom deadzone."
@@ -105,6 +107,8 @@ Require-Match $camera 'air_vertical_dead_zone' "Airborne camera framing must hav
 Require-Match $camera 'func _air_framing_target' "Airborne camera framing must use a filtered target seam."
 Require-Match $camera 'predicted_landing_look_weight' "Airborne camera must look toward predicted landings during descent."
 Require-Match $camera '_collision_reframed' "Camera collision corrections must be damped separately from pose limits."
+Require-Match $camera 'maximum_distance_change_rate' "Camera distance changes must have a separate rate limit from translation safety."
+Require-Match $camera 'distance_rate_limit' "Camera distance changes must be bounded before final stabilization."
 
 Require-Match $trick 'func set_grab_contact' "Trick scoring must consume visual grab contact."
 Require-Match $trick 'grab_qualified' "Grab scoring must require a qualified visual contact latch."
@@ -147,6 +151,15 @@ Require-Match $animationController '_capture_crash_handoff' "Crash presentation 
 Reject-Match "$controller`n$animationController" 'PhysicalBone|RigidBody3D|Skeleton3D|PhysicalBoneSimulator3D' "The primitive rig must use controlled fall rather than a new ragdoll framework."
 Require-Match $ui 'crash_reason' "Development HUD must expose crash telemetry."
 Require-Match $ui 'clean_capture_mode' "HUD must provide a clean capture mode without disabling recording."
+
+Require-Match $layout 'func\s+_add_feature_snow_collar\(' "Park features must receive a grounded snow collar."
+Require-Match $layout 'func\s+_add_feature_trim\(' "Park features must expose restrained manufactured trim."
+Require-Match $layout 'func\s+_add_rail_support\(' "Elevated rails must show grounded support posts."
+Require-Match $courseResource 'takeoff_marker_depth\s*=\s*0\.44' "Takeoff markers need enough bounded depth for shallow approaches."
+Require-Match $courseResource 'landing_marker_width\s*=\s*0\.22' "Landing markers need enough bounded width for gameplay readability."
+Require-Match $resort 'distant_mountain\.gdshader' "Distant mountains must use the distance-aware presentation shader."
+Require-Match $mountainShader 'distance\s*\(CAMERA_POSITION_WORLD' "Distant mountain tint must use actual camera distance."
+Require-Match $mountainShader 'smoothstep\(haze_start_distance' "Distant mountain haze must have a bounded depth ramp."
 
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"

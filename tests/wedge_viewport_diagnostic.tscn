@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://wedge_diag"]
+
+[ext_resource type="Script" path="res://tests/wedge_viewport_diagnostic.gd" id="1"]
+
+[node name="WedgeViewportDiagnostic" type="Node"]
+script = ExtResource("1")

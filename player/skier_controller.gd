@@ -1086,6 +1086,11 @@ func telemetry() -> Dictionary:
 			"right_trigger": trick_sample.right_trigger,
 			"grab": TrickController.GRAB_NAMES[trick.grab_pose],
 			"style": TrickController.STYLE_NAMES[trick.style_pose],
+			"trick_text": trick.live_name() if trick != null else "",
+			"yaw_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.y)))) if trick != null else 0,
+			"flip_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.x)))) if trick != null else 0,
+			"cork_degrees": int(round(rad_to_deg(maxf(absf(trick.accumulated_rotation.y), absf(trick.accumulated_rotation.z))))) if trick != null else 0,
+			"accumulated_rotation": trick.accumulated_rotation if trick != null else Vector3.ZERO,
 		},
 		"animation": animation_controller.debug_snapshot() if animation_controller != null else {},
 	}

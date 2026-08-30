@@ -52,6 +52,7 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var collision_shoulder_offset := 1.25
 @export var collision_correction_speed := 8.0
 @export var maximum_position_speed := 30.0
+@export var maximum_distance_change_rate := 2.4
 
 @export_group("Carve Look")
 @export var look_heading_weight_min := 0.15
@@ -275,6 +276,15 @@ func _physics_process(delta: float) -> void:
 	var correction_limit := collision_correction_speed * delta
 	if correction.length() > correction_limit and correction_limit > 0.0:
 		stabilized = pre_collision_position + correction.normalized() * correction_limit
+	var target_position := target.global_position
+	var previous_distance := frame_start_position.distance_to(target_position)
+	var current_distance := stabilized.distance_to(target_position)
+	var distance_rate_limit := maximum_distance_change_rate * delta
+	if distance_rate_limit > 0.0 and absf(current_distance - previous_distance) > distance_rate_limit:
+		var bounded_distance := previous_distance + clampf(current_distance - previous_distance, -distance_rate_limit, distance_rate_limit)
+		var radial := stabilized - target_position
+		if radial.length_squared() > 0.001:
+			stabilized = target_position + radial.normalized() * bounded_distance
 	global_position = _stabilize_camera_position(stabilized, up, travel)
 	var frame_translation := global_position - frame_start_position
 	var frame_translation_limit := maximum_position_speed * delta

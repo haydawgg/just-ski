@@ -60,8 +60,8 @@ class SnowMaterialInstance extends ShaderMaterial:
 				set_shader_parameter("slope_contrast_strength", 0.065)
 				set_shader_parameter("form_contrast_strength", SnowMaterial.PRESENTATION.packed_form_contrast)
 				set_shader_parameter("wind_crust_amount", 0.022)
-				set_shader_parameter("corduroy_amount", 0.07)
-				set_shader_parameter("corduroy_frequency", 2.35)
+				set_shader_parameter("corduroy_amount", 0.012)
+				set_shader_parameter("corduroy_frequency", 1.65)
 				if premium:
 					set_shader_parameter("sparkle_amount", 0.035)
 					set_shader_parameter("sparkle_density", 0.994)
@@ -79,8 +79,8 @@ class SnowMaterialInstance extends ShaderMaterial:
 				set_shader_parameter("slope_contrast_strength", 0.045)
 				set_shader_parameter("form_contrast_strength", SnowMaterial.PRESENTATION.groomed_form_contrast)
 				set_shader_parameter("wind_crust_amount", 0.012)
-				set_shader_parameter("corduroy_amount", 0.085)
-				set_shader_parameter("corduroy_frequency", 2.2)
+				set_shader_parameter("corduroy_amount", 0.018)
+				set_shader_parameter("corduroy_frequency", 1.8)
 				if premium:
 					set_shader_parameter("sparkle_amount", 0.025)
 					set_shader_parameter("sparkle_density", 0.995)
