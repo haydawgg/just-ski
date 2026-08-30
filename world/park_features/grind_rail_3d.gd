@@ -22,7 +22,7 @@ func _ready() -> void:
 		push_warning("Disabled invalid grind rail: %s" % name)
 		process_mode = Node.PROCESS_MODE_DISABLED
 		return
-	path.bake_interval = 0.18
+	path.bake_interval = 0.12
 	path_length = path.get_baked_length()
 	_build_visual_and_collision()
 
@@ -127,9 +127,10 @@ func _build_visual_and_collision() -> void:
 		add_child(body)
 
 func _build_continuous_visual_mesh(samples: PackedVector3Array) -> ArrayMesh:
-	var section_count := 8 if rail_type != RailType.BOX else 4
-	var section_width := 0.075 if rail_type != RailType.BOX else 0.575
-	var section_height := 0.075 if rail_type != RailType.BOX else 0.11
+	var section_count := 12 if rail_type != RailType.BOX else 8
+	var section_width := 0.068 if rail_type != RailType.BOX else 0.52
+	var section_height := 0.068 if rail_type != RailType.BOX else 0.105
+	var is_box := rail_type == RailType.BOX
 	var rings: Array[PackedVector3Array] = []
 	var ring_normals: Array[PackedVector3Array] = []
 	for index: int in range(samples.size()):
@@ -143,11 +144,36 @@ func _build_continuous_visual_mesh(samples: PackedVector3Array) -> ArrayMesh:
 		var ring_up := across.cross(tangent).normalized()
 		var ring := PackedVector3Array()
 		var normals := PackedVector3Array()
-		for section: int in range(section_count):
-			var angle := TAU * float(section) / float(section_count) + (PI * 0.25 if rail_type == RailType.BOX else 0.0)
-			var normal := (across * cos(angle) + ring_up * sin(angle)).normalized()
-			ring.append(samples[index] + across * cos(angle) * section_width + ring_up * sin(angle) * section_height)
-			normals.append(normal)
+		if is_box:
+			var half_w := section_width
+			var half_h := section_height
+			var bevel := 0.045
+			var box_points_local := PackedVector2Array([
+				Vector2(half_w - bevel, half_h),
+				Vector2(half_w, half_h - bevel),
+				Vector2(half_w, -half_h + bevel),
+				Vector2(half_w - bevel, -half_h),
+				Vector2(-half_w + bevel, -half_h),
+				Vector2(-half_w, -half_h + bevel),
+				Vector2(-half_w, half_h - bevel),
+				Vector2(-half_w + bevel, half_h),
+			])
+			var box_normals_local := PackedVector2Array([
+				Vector2(0, 1), Vector2(0.707, 0.707), Vector2(1, 0), Vector2(0.707, -0.707),
+				Vector2(0, -1), Vector2(-0.707, -0.707), Vector2(-1, 0), Vector2(-0.707, 0.707),
+			])
+			for section: int in range(section_count):
+				var pt := box_points_local[section]
+				var n2d := box_normals_local[section]
+				var normal := (across * n2d.x + ring_up * n2d.y).normalized()
+				ring.append(samples[index] + across * pt.x + ring_up * pt.y)
+				normals.append(normal)
+		else:
+			for section: int in range(section_count):
+				var angle := TAU * float(section) / float(section_count)
+				var normal := (across * cos(angle) + ring_up * sin(angle)).normalized()
+				ring.append(samples[index] + across * cos(angle) * section_width + ring_up * sin(angle) * section_height)
+				normals.append(normal)
 		rings.append(ring)
 		ring_normals.append(normals)
 	var surface := SurfaceTool.new()
