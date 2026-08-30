@@ -9,6 +9,7 @@ const CourseRecoveryModule := preload("res://world/course/course_recovery.gd")
 
 @export var course_profile: ParkCourseProfile = preload("res://resources/course/default_course_profile.tres")
 @export var physics_profile: SkiPhysicsProfile = preload("res://resources/physics/default_ski_profile.tres")
+@export var environment_profile: ResortEnvironmentProfile = preload("res://resources/environment/default_resort_environment_profile.tres")
 
 var player: SkierController
 var camera_rig: SkiCameraController
@@ -28,60 +29,71 @@ func _ready() -> void:
 func _build_environment() -> void:
 	environment = WorldEnvironment.new()
 	var env := Environment.new()
+	var profile := environment_profile
 	var sky := Sky.new()
 	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.16, 0.37, 0.66)
-	sky_mat.sky_horizon_color = Color(0.76, 0.86, 0.94)
+	sky_mat.sky_top_color = profile.sky_top_color
+	sky_mat.sky_horizon_color = profile.sky_horizon_color
 	sky_mat.sky_curve = 0.075
-	sky_mat.sky_energy_multiplier = 1.08
-	sky_mat.ground_bottom_color = Color(0.62, 0.72, 0.82)
-	sky_mat.ground_horizon_color = Color(0.87, 0.92, 0.96)
+	sky_mat.sky_energy_multiplier = profile.sky_energy
+	sky_mat.ground_bottom_color = profile.ground_bottom_color
+	sky_mat.ground_horizon_color = profile.ground_horizon_color
 	sky_mat.ground_curve = 0.12
-	sky_mat.ground_energy_multiplier = 0.85
+	sky_mat.ground_energy_multiplier = profile.ground_energy
 	sky_mat.sun_angle_max = 18.0
 	sky_mat.sun_curve = 0.07
 	sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_sky_contribution = 0.84
+	env.ambient_light_sky_contribution = profile.ambient_sky_contribution
+	env.ambient_light_energy = profile.ambient_energy
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.02
-	env.tonemap_white = 6.2
+	env.tonemap_exposure = profile.exposure
+	env.tonemap_white = profile.white_point
 	env.adjustment_enabled = true
-	env.adjustment_brightness = 1.01
-	env.adjustment_contrast = 1.07
-	env.adjustment_saturation = 0.96
+	env.adjustment_brightness = profile.brightness
+	env.adjustment_contrast = profile.contrast
+	env.adjustment_saturation = profile.saturation
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.79, 0.87, 0.94)
-	env.fog_sun_scatter = 0.24
-	env.fog_density = 0.0026
-	env.fog_aerial_perspective = 0.72
-	env.fog_sky_affect = 0.38
-	env.fog_height = -4.0
-	env.fog_height_density = 0.032
+	env.fog_light_color = profile.fog_color
+	env.fog_sun_scatter = profile.fog_sun_scatter
+	env.fog_density = profile.fog_density
+	env.fog_aerial_perspective = profile.fog_aerial_perspective
+	env.fog_sky_affect = profile.fog_sky_affect
+	env.fog_height = profile.fog_height
+	env.fog_height_density = profile.fog_height_density
 	env.glow_enabled = true
-	env.glow_intensity = 0.24
-	env.glow_strength = 0.66
-	env.glow_bloom = 0.025
-	env.glow_hdr_threshold = 0.85
-	env.ssao_radius = 1.6
-	env.ssao_intensity = 1.8
+	env.glow_intensity = profile.glow_intensity
+	env.glow_strength = profile.glow_strength
+	env.glow_bloom = profile.glow_bloom
+	env.glow_hdr_threshold = profile.glow_hdr_threshold
+	env.ssao_radius = profile.ssao_radius
+	env.ssao_intensity = profile.ssao_intensity
+	env.ssao_power = profile.ssao_power
+	env.ssao_detail = profile.ssao_detail
+	env.ssao_horizon = profile.ssao_horizon
+	env.ssao_light_affect = profile.ssao_light_affect
 	environment.environment = env
 	add_child(environment)
 	sun = DirectionalLight3D.new()
 	sun.name = "Sun"
-	sun.rotation_degrees = Vector3(-34.0, -48.0, 0.0)
-	sun.light_color = Color(1.0, 0.925, 0.8)
-	sun.light_energy = 1.58
-	sun.light_indirect_energy = 0.72
-	sun.light_specular = 0.62
+	sun.rotation_degrees = profile.sun_rotation_degrees
+	sun.light_color = profile.sun_color
+	sun.light_energy = profile.sun_energy
+	sun.light_indirect_energy = profile.sun_indirect_energy
+	sun.light_specular = profile.sun_specular
+	sun.shadow_opacity = profile.shadow_opacity
+	sun.shadow_blur = profile.shadow_blur
+	sun.light_angular_distance = profile.sun_angular_distance
 	sun.shadow_enabled = true
 	sun.shadow_bias = 0.028
 	sun.shadow_normal_bias = 0.82
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	sun.directional_shadow_max_distance = 320.0
+	sun.directional_shadow_blend_splits = true
+	sun.directional_shadow_fade_start = profile.shadow_fade_start
 	add_child(sun)
 
 func _build_resort() -> void:
@@ -151,6 +163,20 @@ func _build_finish_trigger() -> void:
 		if body == player and player.scoring != null:
 			player.scoring.finish_run()
 	)
+	player.scoring.run_finished.connect(_on_run_finished_recorder)
+	SessionManager.respawn_requested.connect(_on_respawn_requested_recorder)
+
+func _on_run_finished_recorder(_snapshot: Dictionary) -> void:
+	ClipRecorder.end_run_capture()
+
+func _on_respawn_requested_recorder(transform: Transform3D) -> void:
+	if transform == SessionManager.default_spawn:
+		# Fresh run from the summit: start the armed clip capture.
+		if ClipRecorder.armed:
+			ClipRecorder.begin_run_capture()
+	elif ClipRecorder.is_recording():
+		# Mid-run interruption (marker respawn, course recovery): save what was captured.
+		ClipRecorder.end_run_capture()
 
 func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees: Vector3, color: Color, collision_enabled: bool, surface_kind: int = -1, visual_surface_kind: int = -1) -> StaticBody3D:
 	var body := StaticBody3D.new()
@@ -295,7 +321,7 @@ func _add_sign(position: Vector3, text: String, color: Color = Color("#172a3a"))
 	label.position = position
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.fixed_size = false
-	label.pixel_size = 0.0065
+	label.pixel_size = course_profile.world_sign_pixel_size if course_profile != null else 0.0042
 	label.no_depth_test = false
 	add_child(label)
 

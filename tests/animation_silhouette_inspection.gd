@@ -167,6 +167,21 @@ func _apply_timeline(time: float, delta: float) -> void:
 		frame.predicted_landing_valid = true
 		frame.predicted_landing_normal = Vector3(0.0, 0.98, 0.2).normalized()
 		frame.trick_phase = TrickCommand.PresentationPhase.LANDING
+		# Intentional over-rotated 360 -> corrected toward 180. The root still
+		# owns the actual rotation; this only supplies the presentation inputs
+		# used to compare projected heading and remaining maneuver residual.
+		var correction_progress := smoothstep(0.0, 1.0, landing_progress)
+		var corrected_rotation := lerpf(TAU, PI, correction_progress)
+		frame.trick_active = true
+		frame.trick_intent = true
+		frame.trick_kind = TrickCommand.Kind.SPIN_RIGHT
+		frame.angular_velocity = Vector3(0.0, lerpf(-2.6, -0.25, correction_progress), 0.0)
+		frame.angular_velocity_world = skier.global_basis * frame.angular_velocity
+		frame.rotation_accumulated = Vector3(0.0, corrected_rotation, 0.0)
+		frame.rotation_residual = Vector3(0.0, lerpf(PI * 0.85, 0.0, correction_progress), 0.0)
+		frame.skier_heading = Vector3.FORWARD.rotated(Vector3.UP, corrected_rotation)
+		frame.velocity_heading = Vector3.FORWARD
+		skier.rotation.y = corrected_rotation
 	else:
 		stage = 16
 		_set_ground(0.0)
@@ -178,6 +193,12 @@ func _apply_timeline(time: float, delta: float) -> void:
 		if stage == 16:
 			rig.trigger(SkierAnimationController.AnimationEvent.LAND_CLEAN, 0.22, 0.0)
 		previous_stage = stage
+	# Keep synthetic telemetry honest: these are the gameplay root's ski/body axes,
+	# not the visual rig's blended pose.
+	frame.ski_forward = -skier.global_basis.z
+	frame.ski_up = skier.global_basis.y
+	frame.body_up = skier.global_basis.y
+	frame.angular_velocity_world = skier.global_basis * frame.angular_velocity
 	rig.apply_frame(frame, delta)
 
 func _set_ground(carve: float) -> void:

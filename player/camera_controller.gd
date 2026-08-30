@@ -33,6 +33,15 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var yaw_rate_fast := 3.5
 @export var yaw_speed_reference := 30.0
 @export var pitch_rate := 3.0
+@export var trajectory_heading_speed_threshold := 1.0
+@export var trajectory_heading_full_speed := 4.0
+@export var ground_heading_response := 2.8
+
+@export_group("Collision Safety")
+@export var collision_clearance := 0.35
+@export var collision_probe_height := 1.0
+@export var minimum_camera_distance := 1.8
+@export var minimum_camera_up_offset := 0.35
 
 @export_group("Carve Look")
 @export var look_heading_weight_min := 0.15
@@ -100,6 +109,11 @@ var _profile_yaw_scale := 1.0
 var _profile_look_ahead := 0.0
 var _smoothed_heading_weight := 0.0
 var _smoothed_bank := 0.0
+var _last_stable_camera_position := Vector3.ZERO
+var _desired_camera_position := Vector3.ZERO
+var _desired_camera_forward := Vector3.FORWARD
+var _debug_horizontal_velocity := Vector3.ZERO
+var _debug_facing_forward := Vector3.FORWARD
 
 func _ready() -> void:
 	camera = Camera3D.new()
@@ -126,12 +140,17 @@ func reset_immediate() -> void:
 	_yaw_dir = horizontal.normalized() if horizontal.length_squared() > 0.001 else Vector3.FORWARD
 	_pitch = atan2(-forward.dot(up), maxf(forward.dot(_yaw_dir), 0.0001))
 	global_position = target.global_position - _yaw_dir * follow_distance + up * follow_height
+	_last_stable_camera_position = global_position
+	_desired_camera_position = global_position
+	_debug_horizontal_velocity = target.velocity.slide(up)
+	_debug_facing_forward = _yaw_dir
 	spring_velocity_horizontal = Vector3.ZERO
 	spring_velocity_vertical = Vector3.ZERO
 	_smoothed_air_height = air_height if (skier != null and skier.state == SkierController.State.AIR) else 0.0
 	_smoothed_look_ahead = clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max)
+	_desired_camera_forward = global_position.direction_to(target.global_position + _yaw_dir * _smoothed_look_ahead + up * look_height_offset)
 	var planar := target.velocity.slide(up)
-	_trajectory_dir = planar.normalized() if planar.length() > 0.5 else _yaw_dir
+	_trajectory_dir = planar.normalized() if planar.length() > trajectory_heading_speed_threshold else _yaw_dir
 	_air_time = 0.0
 	_landing_timer = 0.0
 	_smoothed_bank = 0.0
@@ -167,8 +186,26 @@ func _physics_process(delta: float) -> void:
 	_update_profile(skier, delta)
 
 	var planar := target.velocity.slide(up)
-	if planar.length() > 0.5:
-		_trajectory_dir = planar.normalized()
+	var planar_speed := planar.length()
+	var facing := (-target.global_basis.z).slide(up)
+	if facing.length_squared() > 0.001:
+		facing = facing.normalized()
+	else:
+		facing = _trajectory_dir
+	var velocity_heading := planar.normalized() if planar_speed > trajectory_heading_speed_threshold else _trajectory_dir
+	if camera_state in [CameraState.AIR, CameraState.CRASH]:
+		if planar_speed > trajectory_heading_speed_threshold:
+			_trajectory_dir = velocity_heading
+	else:
+		var velocity_weight := smoothstep(
+			trajectory_heading_speed_threshold,
+			maxf(trajectory_heading_full_speed, trajectory_heading_speed_threshold + 0.01),
+			planar_speed
+		)
+		var stable_heading_target := _slerp_direction(facing, velocity_heading, velocity_weight)
+		_trajectory_dir = _slerp_direction(_trajectory_dir, stable_heading_target, 1.0 - exp(-ground_heading_response * delta))
+	_debug_horizontal_velocity = planar
+	_debug_facing_forward = facing
 	var travel := _trajectory_dir.slide(up)
 	if travel.length_squared() < 0.05:
 		travel = (-target.global_basis.z).slide(up).normalized()
@@ -184,13 +221,15 @@ func _physics_process(delta: float) -> void:
 	var distance := follow_distance + clampf(speed * speed_distance_gain, 0.0, speed_distance_cap) + _profile_distance
 	var desired_height := follow_height + clampf(speed * speed_height_gain, 0.0, speed_height_cap) + _smoothed_air_height + _profile_height
 	var desired := target.global_position - travel * distance + up * desired_height
+	_desired_camera_position = desired
 	var error := desired - global_position
 	var error_vertical := up * error.dot(up)
 	var error_horizontal := error - error_vertical
 	spring_velocity_horizontal += (error_horizontal * spring_strength - spring_velocity_horizontal * damping) * delta
 	spring_velocity_vertical += (error_vertical * vertical_spring_strength - spring_velocity_vertical * vertical_damping) * delta
 	global_position += (spring_velocity_horizontal + spring_velocity_vertical) * delta
-	global_position = _avoid_collision(target.global_position + Vector3.UP, global_position)
+	var collision_safe := _avoid_collision(target.global_position + up * collision_probe_height, global_position)
+	global_position = _stabilize_camera_position(collision_safe, up)
 
 	var look_ahead_target := maxf(clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max), _profile_look_ahead)
 	_smoothed_look_ahead = lerpf(_smoothed_look_ahead, look_ahead_target, 1.0 - exp(-look_ahead_rate * delta))
@@ -201,6 +240,7 @@ func _physics_process(delta: float) -> void:
 			look_dir = _slerp_direction(travel, heading, _smoothed_heading_weight)
 	var look_target := target.global_position + look_dir * _smoothed_look_ahead + up * look_height_offset
 	var desired_forward := global_position.direction_to(look_target)
+	_desired_camera_forward = desired_forward
 
 	var reproj := _yaw_dir - up * _yaw_dir.dot(up)
 	_yaw_dir = reproj.normalized() if reproj.length_squared() > 0.001 else travel
@@ -299,6 +339,7 @@ func debug_summary() -> String:
 		_profile_yaw_scale, _smoothed_heading_weight]
 
 func debug_snapshot() -> Dictionary:
+	var actual_forward := -global_basis.z
 	return {
 		"state": CameraState.keys()[camera_state],
 		"fov": camera.fov if camera != null else base_fov,
@@ -306,6 +347,17 @@ func debug_snapshot() -> Dictionary:
 		"bank_degrees": rad_to_deg(_smoothed_bank),
 		"yaw_scale": _profile_yaw_scale,
 		"heading_weight": _smoothed_heading_weight,
+		"desired_forward": _desired_camera_forward,
+		"actual_forward": actual_forward,
+		"desired_yaw_degrees": rad_to_deg(atan2(-_desired_camera_forward.x, -_desired_camera_forward.z)),
+		"actual_yaw_degrees": rad_to_deg(atan2(-actual_forward.x, -actual_forward.z)),
+		"target_position": target.global_position if target != null else Vector3.ZERO,
+		"desired_position": _desired_camera_position,
+		"actual_position": global_position,
+		"target_distance": global_position.distance_to(target.global_position) if target != null else 0.0,
+		"horizontal_velocity": _debug_horizontal_velocity,
+		"horizontal_speed": _debug_horizontal_velocity.length(),
+		"player_facing": _debug_facing_forward,
 	}
 
 func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
@@ -323,4 +375,27 @@ func _avoid_collision(from: Vector3, desired: Vector3) -> Vector3:
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		return desired
-	return hit.position + hit.normal * 0.35
+	return hit.position + hit.normal * collision_clearance
+
+func _stabilize_camera_position(candidate: Vector3, up: Vector3) -> Vector3:
+	if target == null:
+		return candidate
+	if not candidate.is_finite() or not up.is_finite() or up.length_squared() < 0.001:
+		return _last_stable_camera_position
+	up = up.normalized()
+	var target_position := target.global_position
+	var offset := candidate - target_position
+	var up_offset := offset.dot(up)
+	var planar_offset := offset - up * up_offset
+	if planar_offset.length_squared() < 0.001:
+		planar_offset = -_trajectory_dir.slide(up)
+	if planar_offset.length_squared() < 0.001:
+		planar_offset = Vector3.BACK
+	var safe_up_offset := maxf(up_offset, minimum_camera_up_offset)
+	var required_planar_distance := sqrt(maxf(minimum_camera_distance * minimum_camera_distance - safe_up_offset * safe_up_offset, 0.0))
+	if offset.length() < minimum_camera_distance or up_offset < minimum_camera_up_offset:
+		candidate = target_position + planar_offset.normalized() * maxf(planar_offset.length(), required_planar_distance) + up * safe_up_offset
+	if not candidate.is_finite() or candidate.distance_to(target_position) < minimum_camera_distance - 0.001:
+		return _last_stable_camera_position
+	_last_stable_camera_position = candidate
+	return candidate

@@ -88,7 +88,7 @@ func update_air(local_angular_velocity: Vector3, delta: float, command: TrickCom
 		grab_name = GRAB_NAMES[grab_pose]
 	if style_pose != StylePose.NONE:
 		style_name = STYLE_NAMES[style_pose]
-	trick_changed.emit(current_name())
+	trick_changed.emit(live_name())
 
 func update_grind(delta: float, selected_pose: int = 0) -> void:
 	active = true
@@ -146,6 +146,33 @@ func current_name() -> String:
 			parts.append("%s %d" % ["Left" if accumulated_rotation.y < 0.0 else "Right", spin_degrees])
 		if flip_degrees >= 360:
 			parts.append("%s%s" % ["Frontflip" if accumulated_rotation.x > 0.0 else "Backflip", " x%d" % int(flip_degrees / 360) if flip_degrees >= 720 else ""])
+	if not grab_name.is_empty():
+		parts.append(grab_name)
+	if not style_name.is_empty():
+		parts.append(style_name)
+	return "Straight Air" if parts.is_empty() else " + ".join(parts)
+
+func live_name() -> String:
+	var parts: Array[String] = []
+	if grind_seconds > 0.0:
+		parts.append("50-50" if rail_pose == 0 else ("Boardslide Left" if rail_pose < 0 else "Boardslide Right"))
+	var yaw_degrees := maxi(0, int(round(rad_to_deg(absf(accumulated_rotation.y)))))
+	var flip_degrees := maxi(0, int(round(rad_to_deg(absf(accumulated_rotation.x)))))
+	var cork_degrees := maxi(yaw_degrees, int(round(rad_to_deg(absf(accumulated_rotation.z)))))
+	if dominant_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT]:
+		parts.append("%s Cork %d°" % ["Left" if dominant_kind == TrickCommand.Kind.CORK_LEFT else "Right", cork_degrees])
+	elif dominant_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT] or yaw_degrees >= 5:
+		var spin_left := dominant_kind == TrickCommand.Kind.SPIN_LEFT or (
+			dominant_kind not in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT]
+			and accumulated_rotation.y < 0.0
+		)
+		parts.append("%s %d°" % ["Left" if spin_left else "Right", yaw_degrees])
+	elif dominant_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP] or flip_degrees >= 5:
+		var frontflip := dominant_kind == TrickCommand.Kind.FRONTFLIP or (
+			dominant_kind not in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP]
+			and accumulated_rotation.x > 0.0
+		)
+		parts.append("%s %d°" % ["Frontflip" if frontflip else "Backflip", flip_degrees])
 	if not grab_name.is_empty():
 		parts.append(grab_name)
 	if not style_name.is_empty():

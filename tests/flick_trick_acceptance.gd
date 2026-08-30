@@ -11,6 +11,7 @@ func _ready() -> void:
 	_test_contextual_trigger_grabs()
 	_test_grind_gestures()
 	_test_motion_driven_recognition_and_scoring()
+	_test_live_degrees_are_not_finalized()
 	if failures.is_empty():
 		print("FLICK_PASS: takeoff, air, trigger, repeat, rejection, and rail gestures passed")
 		get_tree().quit(0)
@@ -237,3 +238,24 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 		failures.append("Shifty did not produce a separately recognized landed style")
 	if landed_points[0] < 220:
 		failures.append("Shifty did not preserve the existing style scoring path")
+
+func _test_live_degrees_are_not_finalized() -> void:
+	var tricks := TrickController.new()
+	add_child(tricks)
+	var live_text := [""]
+	var landed_text := [""]
+	tricks.trick_changed.connect(func(text: String) -> void: live_text[0] = text)
+	tricks.trick_landed.connect(func(text: String, _points: int, _quality: float) -> void: landed_text[0] = text)
+	var command := TrickCommand.new()
+	command.kind = TrickCommand.Kind.SPIN_LEFT
+	command.committed = true
+	tricks.begin_air(false, TrickCommand.Kind.SPIN_LEFT)
+	tricks.update_air(Vector3(0.0, -deg_to_rad(243.0), 0.0), 1.0, command)
+	if live_text[0] != "Left 243°":
+		failures.append("Airborne trick text did not report live degrees: %s" % live_text[0])
+	if tricks.current_name() != "Left 180":
+		failures.append("Finalized trick naming stopped using scored rotation buckets")
+	tricks.land(1.0, false)
+	if landed_text[0] != "Left 180":
+		failures.append("Contact result did not use the finalized scored trick: %s" % landed_text[0])
+	tricks.queue_free()

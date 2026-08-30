@@ -71,7 +71,7 @@ static func jump_table(physics_profile: SkiPhysicsProfile, design_speed: float, 
 		"lip_dir": lip_dir,
 	}
 
-static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhysicsProfile, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, width: float = 8.5, drop: float = 0.0, yaw_deg: float = 0.0, design_pop_strength: float = -1.0) -> Node3D:
+static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhysicsProfile, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, width: float = 8.5, drop: float = 0.0, yaw_deg: float = 0.0, design_pop_strength: float = -1.0, readability: Dictionary = {}) -> Node3D:
 	var sizing := jump_table(physics_profile, design_speed, extra_lip_deg, drop, design_pop_strength)
 	var extra := deg_to_rad(extra_lip_deg)
 	var n := snow_normal()
@@ -135,6 +135,7 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 		landing_widths.append(width * lerpf(1.28, 1.62, _smootherstep(t)))
 		landing_shoulders.append(maxf(height - 0.001, 0.0))
 	_add_profiled_snow_body(root, "Landing", landing_centers, landing_widths, landing_shoulders, n, 0.68, SnowSurface.Kind.PACKED, 0.28, true, SnowSurface.Kind.GROOMED)
+	_add_jump_readability_markers(root, lip_centers, lip_widths, lip_shoulders, landing_centers, landing_widths, landing_shoulders, n, readability)
 	root.set_meta("lip_z", lip_z)
 	root.set_meta("table_length", table_length)
 	root.set_meta("range", sizing.range)
@@ -166,8 +167,8 @@ static func add_roller(parent: Node3D, label: String, x: float, z: float, length
 	root.set_meta("profile_samples", samples)
 	return root
 
-static func add_hip(parent: Node3D, label: String, physics_profile: SkiPhysicsProfile, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, yaw_deg: float, design_pop_strength: float = -1.0) -> Node3D:
-	return add_tabletop(parent, label, physics_profile, x, lip_z, design_speed, extra_lip_deg, 9.0, 0.0, yaw_deg, design_pop_strength)
+static func add_hip(parent: Node3D, label: String, physics_profile: SkiPhysicsProfile, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, yaw_deg: float, design_pop_strength: float = -1.0, readability: Dictionary = {}) -> Node3D:
+	return add_tabletop(parent, label, physics_profile, x, lip_z, design_speed, extra_lip_deg, 9.0, 0.0, yaw_deg, design_pop_strength, readability)
 
 static func add_berm(parent: Node3D, label: String, x: float, z: float, length: float, width: float, bank_deg: float, yaw_deg: float = 0.0) -> Node3D:
 	var root := Node3D.new()
@@ -418,6 +419,139 @@ static func material_for_surface(color: Color, surface_kind: int, groom_directio
 	material.albedo_color = color
 	material.roughness = 0.5
 	return material
+
+static func _add_jump_readability_markers(
+	parent: Node3D,
+	lip_centers: Array[Vector3],
+	lip_widths: PackedFloat32Array,
+	lip_edge_drops: PackedFloat32Array,
+	landing_centers: Array[Vector3],
+	landing_widths: PackedFloat32Array,
+	landing_edge_drops: PackedFloat32Array,
+	normal: Vector3,
+	tuning: Dictionary
+) -> void:
+	if lip_centers.size() < 2 or landing_centers.size() < 2:
+		return
+	var takeoff_depth := clampf(float(tuning.get("takeoff_depth", 0.36)), 0.08, 0.5)
+	var landing_length := clampf(float(tuning.get("landing_length", 4.5)), 1.0, 6.0)
+	var landing_width := clampf(float(tuning.get("landing_width", 0.18)), 0.04, 0.3)
+	var surface_offset := clampf(float(tuning.get("surface_offset", 0.025)), 0.005, 0.08)
+	var marker_color: Color = tuning.get("color", Color("#2aa6bd"))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	var lip_last := lip_centers.size() - 1
+	var lip_row_distance := lip_centers[lip_last].distance_to(lip_centers[lip_last - 1])
+	var lip_blend := clampf(takeoff_depth / maxf(lip_row_distance, 0.001), 0.0, 1.0)
+	var band_start_center := lip_centers[lip_last].lerp(lip_centers[lip_last - 1], lip_blend)
+	var band_start_width := lerpf(lip_widths[lip_last], lip_widths[lip_last - 1], lip_blend)
+	var band_start_drop := lerpf(lip_edge_drops[lip_last], lip_edge_drops[lip_last - 1], lip_blend)
+	_add_profile_marker_quad(
+		st,
+		band_start_center, band_start_width, band_start_drop,
+		lip_centers[lip_last], lip_widths[lip_last], lip_edge_drops[lip_last],
+		-0.82, 0.82, normal, surface_offset
+	)
+
+	var marked_length := 0.0
+	for row_index: int in range(1, landing_centers.size()):
+		if marked_length >= landing_length:
+			break
+		var row_distance := landing_centers[row_index - 1].distance_to(landing_centers[row_index])
+		if row_distance <= 0.001:
+			continue
+		var remaining := landing_length - marked_length
+		var row_blend := minf(remaining / row_distance, 1.0)
+		var end_center := landing_centers[row_index - 1].lerp(landing_centers[row_index], row_blend)
+		var end_width := lerpf(landing_widths[row_index - 1], landing_widths[row_index], row_blend)
+		var end_drop := lerpf(landing_edge_drops[row_index - 1], landing_edge_drops[row_index], row_blend)
+		for side: float in [-0.72, 0.72]:
+			_add_profile_marker_strip(
+				st,
+				landing_centers[row_index - 1], landing_widths[row_index - 1], landing_edge_drops[row_index - 1],
+				end_center, end_width, end_drop,
+				side, landing_width, normal, surface_offset
+			)
+		marked_length += row_distance * row_blend
+
+	var mesh := st.commit()
+	if mesh == null or mesh.get_surface_count() == 0:
+		return
+	var marker := MeshInstance3D.new()
+	marker.name = "ReadabilityMarkers"
+	marker.mesh = mesh
+	marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	marker.visibility_range_end = 125.0
+	marker.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	var material := StandardMaterial3D.new()
+	material.albedo_color = marker_color
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.roughness = 0.82
+	material.metallic = 0.0
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	marker.material_override = material
+	marker.add_to_group("park_readability_markers")
+	parent.add_child(marker)
+
+static func _add_profile_marker_strip(
+	st: SurfaceTool,
+	start_center: Vector3,
+	start_width: float,
+	start_drop: float,
+	end_center: Vector3,
+	end_width: float,
+	end_drop: float,
+	across_center: float,
+	world_width: float,
+	normal: Vector3,
+	surface_offset: float
+) -> void:
+	var start_half_across := world_width / maxf(start_width, 0.001)
+	var end_half_across := world_width / maxf(end_width, 0.001)
+	_add_profile_marker_quad(
+		st,
+		start_center, start_width, start_drop,
+		end_center, end_width, end_drop,
+		across_center - start_half_across, across_center + start_half_across,
+		normal, surface_offset,
+		across_center - end_half_across, across_center + end_half_across
+	)
+
+static func _add_profile_marker_quad(
+	st: SurfaceTool,
+	start_center: Vector3,
+	start_width: float,
+	start_drop: float,
+	end_center: Vector3,
+	end_width: float,
+	end_drop: float,
+	start_across_left: float,
+	start_across_right: float,
+	normal: Vector3,
+	surface_offset: float,
+	end_across_left: float = INF,
+	end_across_right: float = INF
+) -> void:
+	if not is_finite(end_across_left):
+		end_across_left = start_across_left
+	if not is_finite(end_across_right):
+		end_across_right = start_across_right
+	var longitudinal := end_center - start_center
+	var right := longitudinal.cross(normal).normalized()
+	if right.length_squared() < 0.001:
+		return
+	var a := _profile_marker_point(start_center, start_width, start_drop, right, normal, start_across_left, surface_offset)
+	var b := _profile_marker_point(end_center, end_width, end_drop, right, normal, end_across_left, surface_offset)
+	var c := _profile_marker_point(end_center, end_width, end_drop, right, normal, end_across_right, surface_offset)
+	var d := _profile_marker_point(start_center, start_width, start_drop, right, normal, start_across_right, surface_offset)
+	_add_smooth_tri(st, a, d, c, normal, normal, normal, Vector2.ZERO, Vector2.RIGHT, Vector2.ONE)
+	_add_smooth_tri(st, a, c, b, normal, normal, normal, Vector2.ZERO, Vector2.ONE, Vector2.DOWN)
+
+static func _profile_marker_point(center: Vector3, width: float, edge_drop: float, right: Vector3, normal: Vector3, across: float, surface_offset: float) -> Vector3:
+	var clamped_across := clampf(across, -0.96, 0.96)
+	var shoulder := smoothstep(0.58, 1.0, absf(clamped_across))
+	return center + right * (width * 0.5 * clamped_across) - normal * edge_drop * shoulder + normal * surface_offset
 
 static func _hermite(t: float, start_height: float, end_height: float, start_slope: float, end_slope: float, length: float) -> float:
 	var t2 := t * t

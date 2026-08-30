@@ -1213,6 +1213,18 @@ func _update_animation(delta: float) -> void:
 	animation_frame.right_front_normal = contact.right_front_normal
 	animation_frame.right_rear_normal = contact.right_rear_normal
 	animation_frame.angular_velocity = angular_velocity
+	var animation_body_up := global_basis.y
+	animation_frame.body_up_valid = _finite_vector(animation_body_up) and animation_body_up.length_squared() > 0.000001
+	animation_frame.body_up = animation_body_up.normalized() if animation_frame.body_up_valid else Vector3.UP
+	var animation_ski_forward := -global_basis.z
+	animation_frame.ski_forward_valid = _finite_vector(animation_ski_forward) and animation_ski_forward.length_squared() > 0.000001
+	animation_frame.ski_forward = animation_ski_forward.normalized() if animation_frame.ski_forward_valid else Vector3.FORWARD
+	var animation_ski_up := global_basis.y
+	animation_frame.ski_up_valid = _finite_vector(animation_ski_up) and animation_ski_up.length_squared() > 0.000001
+	animation_frame.ski_up = animation_ski_up.normalized() if animation_frame.ski_up_valid else Vector3.UP
+	var world_angular_velocity := global_basis * angular_velocity
+	animation_frame.angular_velocity_world_valid = _finite_vector(world_angular_velocity)
+	animation_frame.angular_velocity_world = world_angular_velocity if animation_frame.angular_velocity_world_valid else Vector3.ZERO
 	animation_frame.vertical_velocity = velocity.y
 	animation_frame.air_time = air_time
 	animation_frame.takeoff_type = air_takeoff_type if state == State.AIR else SkierAnimationFrame.TakeoffType.NONE
@@ -1418,6 +1430,9 @@ func animation_debug_landmark(name: StringName) -> Vector3:
 func _debug_line_world(from_world: Vector3, to_world: Vector3) -> void:
 	debug_mesh.surface_add_vertex(to_local(from_world))
 	debug_mesh.surface_add_vertex(to_local(to_world))
+
+func _finite_vector(value: Vector3) -> bool:
+	return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
 
 var last_physics_delta: float:
 	get:

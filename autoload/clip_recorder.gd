@@ -1,23 +1,27 @@
 extends Node
 
-## F9 start/stop gameplay clip capture. Recordings cap at 15 seconds and
-## save to the user's Downloads folder (user:// fallback) as an
-## MJPEG-in-MP4 file. Frames are JPEG-encoded during capture and the MP4
-## is muxed on a background thread so play continues.
+## F9-armed gameplay clip capture. Pressing F9 arms the recorder; the next
+## run started from the summit spawn is recorded until the finish trigger
+## (or an early save / 90 s safety cap) and saved to the user's Downloads
+## folder (user:// fallback) as an MJPEG-in-MP4 file. Frames are
+## JPEG-encoded during capture and the MP4 is muxed on a background thread
+## so play continues.
 
 signal recording_changed(active: bool)
 signal encoding_changed(active: bool)
 signal clip_saved(path: String)
 signal clip_failed(reason: String)
 signal clip_info(message: String)
+signal armed_changed(armed: bool)
 
 const CAPTURE_FPS := 30.0
-const MAX_CLIP_FRAMES := 450          # = 15 s at 30 fps
+const MAX_CLIP_FRAMES := 2700         # = 90 s at 30 fps
 const CAPTURE_WIDTH := 960
 const CAPTURE_HEIGHT := 540
 const JPEG_QUALITY := 0.75
 const MIN_CLIP_FRAMES := 18           # ~0.6 s
 
+var armed := false
 var _recording := false
 var _encoding := false
 var _frames: Array[PackedByteArray] = []
@@ -32,8 +36,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		if _recording:
 			_stop_recording()
+		elif _encoding:
+			clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — TRY AGAIN IN A MOMENT")
 		else:
-			_start_recording()
+			arm()
 
 func _process(delta: float) -> void:
 	if not _recording or get_tree().paused:
@@ -52,6 +58,32 @@ func _process(delta: float) -> void:
 	_frames.append(image.save_jpg_to_buffer(JPEG_QUALITY))
 	if _frames.size() >= MAX_CLIP_FRAMES:
 		_stop_recording()
+
+func is_recording() -> bool:
+	return _recording
+
+func arm() -> void:
+	if _recording or armed:
+		return
+	armed = true
+	armed_changed.emit(true)
+	clip_info.emit("RECORDER ARMED — TAKE A RUN FROM THE SUMMIT")
+
+func begin_run_capture() -> void:
+	if _encoding:
+		# Previous clip is still muxing; stay armed so the next run records.
+		clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — WAIT A MOMENT")
+		return
+	if armed:
+		armed = false
+		armed_changed.emit(false)
+	_start_recording()
+
+func end_run_capture() -> void:
+	if armed:
+		armed = false
+		armed_changed.emit(false)
+	_stop_recording()
 
 func _start_recording() -> void:
 	if _encoding:

@@ -43,6 +43,7 @@ func _ready() -> void:
 	InputManager.controller_connection_changed.connect(_on_controller_connection)
 	ClipRecorder.recording_changed.connect(_on_recording_changed)
 	ClipRecorder.encoding_changed.connect(_on_clip_encoding_changed)
+	ClipRecorder.armed_changed.connect(_on_recorder_armed)
 	ClipRecorder.clip_saved.connect(_on_clip_saved)
 	ClipRecorder.clip_failed.connect(_on_clip_failed)
 	ClipRecorder.clip_info.connect(_show_notice)
@@ -158,8 +159,8 @@ func _build_hud() -> void:
 	recording_label.name = "RecordingLight"
 	recording_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	recording_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	recording_label.position = Vector2(1400, 848)
-	recording_label.size = Vector2(160, 40)
+	recording_label.position = Vector2(1300, 848)
+	recording_label.size = Vector2(260, 40)
 	recording_label.add_theme_color_override("font_color", Color("#ff3b30"))
 	recording_label.visible = false
 	hud_overlay.add_child(recording_label)
@@ -684,9 +685,7 @@ func _on_telemetry(data: Dictionary) -> void:
 	var landing_imminent := bool(data.get("landing_feedback_armed", false)) and str(data.get("state", "")) == "AIR" and landing_time >= 0.0 and landing_time < 0.7
 	landing_cue_label.visible = landing_imminent
 	if landing_imminent:
-		var upright := float(data.get("upright_dot", 0.0))
-		var angular_speed := (data.get("angular_velocity", Vector3.ZERO) as Vector3).length()
-		var ready := upright > 0.62 and angular_speed < 2.2
+		var ready := bool(animation.get("landing_ready", false))
 		landing_cue_label.text = "LANDING READY" if ready else "OPEN UP FOR LANDING"
 		landing_cue_label.add_theme_color_override("font_color", Color("#55d6be") if ready else Color("#ffc857"))
 	if trick_visualizer != null:
@@ -718,6 +717,14 @@ func _on_telemetry(data: Dictionary) -> void:
 		animation.get("trick_pose_weight", 0.0), animation.get("prewind_weight", 0.0), animation.get("spin_compactness", 0.0),
 		animation.get("spotting_weight", 0.0), animation.get("root_yaw_rate", 0.0), animation.get("root_pitch_rate", 0.0),
 		animation.get("root_roll_rate", 0.0), animation.get("rotation_residual", Vector3.ZERO), animation.get("landing_blend", 0.0)]
+	debug_label.text += "\nLanding readiness valid %s ant %.2f ready %.2f [%0.2f %0.2f %0.2f %0.2f %0.2f] projHead %.1f° projResidual %.1f°" % [
+		animation.get("landing_readiness_valid", false),
+		animation.get("landing_anticipation", 0.0), animation.get("landing_readiness", 0.0),
+		animation.get("landing_readiness_heading", 0.0), animation.get("landing_readiness_pitch", 0.0),
+		animation.get("landing_readiness_spin", 0.0), animation.get("landing_readiness_upright", 0.0),
+		animation.get("landing_readiness_residual", 0.0),
+		rad_to_deg(float(animation.get("landing_projected_heading_error", 0.0))),
+		rad_to_deg(float(animation.get("landing_projected_residual", 0.0)))]
 	debug_label.text += "\nGrab %s %s hand %s ski %s pose %.2f contact %.2f reach %.2f hold %.2f" % [
 		animation.get("grab_type", "—"), animation.get("grab_phase", "IDLE"), animation.get("grab_hand", "NONE"),
 		animation.get("grab_target_ski", "NONE"), animation.get("grab_pose_weight", 0.0),
@@ -822,6 +829,13 @@ func _on_controller_connection(connected: bool) -> void:
 
 func notify_course_recovery() -> void:
 	_show_notice("RETURNING TO THE SLOPE")
+
+func _on_recorder_armed(value: bool) -> void:
+	if recording_label != null:
+		recording_label.visible = value
+		recording_label.text = "● REC ARMED"
+		recording_label.add_theme_color_override("font_color", Color("#ffc857"))
+	recording_pulse = 0.0
 
 func _on_recording_changed(active: bool) -> void:
 	if recording_label != null:

@@ -1,0 +1,34 @@
+[gd_resource type="Resource" script_class="SnowPresentationProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://world/snow_presentation_profile.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+form_light_direction_world_xz = Vector2(-0.34, 0.94)
+packed_form_contrast = 0.18
+groomed_form_contrast = 0.17
+powder_form_contrast = 0.145
+steepness_contrast = 0.15
+medium_variation_scale = 0.028
+packed_medium_variation = 0.15
+groomed_medium_variation = 0.14
+powder_medium_variation = 0.16
+broad_variation_scale = 0.018
+packed_broad_variation = 0.2
+groomed_broad_variation = 0.18
+powder_broad_variation = 0.2
+warm_tint = Color(1, 0.985, 0.955, 1)
+cool_tint = Color(0.965, 0.982, 0.998, 1)
+packed_color = Color(0.94, 0.95, 0.955, 1)
+packed_shadow_tint = Color(0.71, 0.735, 0.75, 1)
+groomed_color = Color(0.955, 0.96, 0.96, 1)
+groomed_shadow_tint = Color(0.74, 0.755, 0.765, 1)
+powder_color = Color(0.965, 0.975, 0.98, 1)
+powder_shadow_tint = Color(0.73, 0.755, 0.775, 1)
+temperature_amount = 0.72
+packed_roughness = 0.72
+groomed_roughness = 0.76
+powder_roughness = 0.84
+roughness_variation = 0.14
+detail_near_distance = 16.0
+detail_far_distance = 50.0

@@ -47,7 +47,18 @@ var left_front_normal: Vector3 = Vector3.UP
 var left_rear_normal: Vector3 = Vector3.UP
 var right_front_normal: Vector3 = Vector3.UP
 var right_rear_normal: Vector3 = Vector3.UP
+## Body-local Euler-rate telemetry used by trick/residual presentation.
 var angular_velocity: Vector3 = Vector3.ZERO
+## World-space angular telemetry; landing projection only. Never substitute for local rates.
+var angular_velocity_world: Vector3 = Vector3.ZERO
+var angular_velocity_world_valid: bool = true
+## Gameplay body/ski axes, kept separate from the visual rig pose.
+var body_up: Vector3 = Vector3.UP
+var body_up_valid: bool = true
+var ski_forward: Vector3 = Vector3.FORWARD
+var ski_forward_valid: bool = true
+var ski_up: Vector3 = Vector3.UP
+var ski_up_valid: bool = true
 var vertical_velocity: float = 0.0
 var air_time: float = 0.0
 var takeoff_type: int = TakeoffType.NONE
@@ -160,6 +171,14 @@ func reset() -> void:
 	right_front_normal = Vector3.UP
 	right_rear_normal = Vector3.UP
 	angular_velocity = Vector3.ZERO
+	angular_velocity_world = Vector3.ZERO
+	angular_velocity_world_valid = true
+	body_up = Vector3.UP
+	body_up_valid = true
+	ski_forward = Vector3.FORWARD
+	ski_forward_valid = true
+	ski_up = Vector3.UP
+	ski_up_valid = true
 	vertical_velocity = 0.0
 	air_time = 0.0
 	takeoff_type = TakeoffType.NONE

@@ -10,6 +10,9 @@ func _ready() -> void:
 	_test_straight_air_has_deterministic_asymmetry()
 	_test_spin_changes_body_shape_through_rotation()
 	_test_landing_alignment_precedes_visible_readiness()
+	_test_landing_readiness_projection_and_recovery()
+	_test_landing_readiness_gameplay_frame_semantics()
+	_test_landing_readiness_invalid_prediction()
 	_test_grabs_separate_from_straight_air_at_gameplay_distance()
 	_test_ground_vocabulary_through_gameplay_camera()
 	_test_rotation_rail_and_stomp_vocabulary_through_gameplay_camera()
@@ -135,16 +138,157 @@ func _test_landing_alignment_precedes_visible_readiness() -> void:
 	var readiness := float(rig.debug_snapshot().get("landing_readiness", 1.0))
 	if alignment < 0.1:
 		failures.append("Landing alignment did not begin inside the 0.32 s spotting window")
-	if readiness > 0.08:
-		failures.append("Visible landing readiness took over before the final 0.18 s (%.3f at 0.24 s)" % readiness)
+	if readiness < 0.7:
+		failures.append("Landing readiness did not remain independent of anticipation for a well-aligned skier (%.3f at 0.24 s)" % readiness)
 
 	frame.predicted_landing_time = 0.09
 	_step(rig, frame, 30)
-	readiness = float(rig.debug_snapshot().get("landing_readiness", 0.0))
-	if readiness < 0.38:
-		failures.append("Landing readiness was not clearly established inside the final 0.10 s (%.3f)" % readiness)
+	var late := rig.debug_snapshot()
+	var late_anticipation := float(late.get("landing_anticipation", 0.0))
+	readiness = float(late.get("landing_readiness", 0.0))
+	if late_anticipation < 0.38 or readiness < 0.7:
+		failures.append("Landing preparation did not establish both timing and readiness near contact (anticipation %.3f readiness %.3f)" % [late_anticipation, readiness])
 	remove_child(rig)
 	rig.free()
+
+func _test_landing_readiness_projection_and_recovery() -> void:
+	var overshoot_rig := SkierAnimationController.new()
+	add_child(overshoot_rig)
+	var overshoot := _air_frame()
+	overshoot.predicted_landing_valid = true
+	overshoot.predicted_landing_time = 0.08
+	overshoot.angular_velocity = Vector3(0.0, 8.0, 0.0)
+	overshoot.angular_velocity_world = overshoot.angular_velocity
+	overshoot.body_up = Vector3.UP
+	_step(overshoot_rig, overshoot, 90)
+	var overshoot_snapshot := overshoot_rig.debug_snapshot()
+	var overshoot_readiness := float(overshoot_snapshot.get("landing_readiness", 0.0))
+	if overshoot_readiness > 0.55:
+		failures.append("Aligned high-speed overshoot was treated as ready (%.3f)" % overshoot_readiness)
+	remove_child(overshoot_rig)
+	overshoot_rig.free()
+
+	var recovery_rig := SkierAnimationController.new()
+	add_child(recovery_rig)
+	var recovery := _air_frame()
+	recovery.predicted_landing_valid = true
+	recovery.predicted_landing_time = 0.5
+	recovery.skier_heading = Vector3(0.7071, 0.0, -0.7071).normalized()
+	recovery.velocity_heading = Vector3.FORWARD
+	recovery.angular_velocity = Vector3(0.0, -0.9, 0.0)
+	recovery.angular_velocity_world = recovery.angular_velocity
+	recovery.body_up = Vector3.UP
+	_step(recovery_rig, recovery, 90)
+	var recovery_snapshot := recovery_rig.debug_snapshot()
+	var recovery_readiness := float(recovery_snapshot.get("landing_readiness", 0.0))
+	if recovery_readiness < overshoot_readiness + 0.15:
+		failures.append("A misaligned skier rotating toward the target did not outrank an overshooting skier (%.3f vs %.3f)" % [recovery_readiness, overshoot_readiness])
+	if absf(float(recovery_snapshot.get("landing_projected_heading_error", 0.0))) > deg_to_rad(30.0):
+		failures.append("Recovering heading remained too far from the target at contact")
+	remove_child(recovery_rig)
+	recovery_rig.free()
+
+func _test_landing_readiness_invalid_prediction() -> void:
+	var rig := SkierAnimationController.new()
+	add_child(rig)
+	var frame := _air_frame()
+	frame.predicted_landing_valid = false
+	frame.predicted_landing_time = 0.08
+	frame.body_up = Vector3.ZERO
+	_step(rig, frame, 60)
+	var snapshot := rig.debug_snapshot()
+	if float(snapshot.get("landing_readiness", 1.0)) > 0.02:
+		failures.append("Invalid landing prediction produced non-zero readiness")
+	if bool(snapshot.get("landing_ready", true)):
+		failures.append("Invalid landing prediction exposed LANDING READY")
+	for key: String in ["landing_readiness_heading", "landing_readiness_pitch", "landing_readiness_spin", "landing_readiness_upright", "landing_readiness_residual"]:
+		var value := float(snapshot.get(key, -1.0))
+		if value < -0.001 or value > 1.001 or not is_finite(value):
+			failures.append("Landing readiness component %s left the finite 0..1 range (%.3f)" % [key, value])
+	remove_child(rig)
+	rig.free()
+
+func _test_landing_readiness_gameplay_frame_semantics() -> void:
+	var threshold_rig := SkierAnimationController.new()
+	add_child(threshold_rig)
+	if not threshold_rig._landing_ready_for_values(true, 0.65, 0.75):
+		failures.append("Landing-ready threshold equality did not use inclusive >= semantics")
+	if threshold_rig._landing_ready_for_values(false, 0.65, 0.75):
+		failures.append("Invalid readiness inputs incorrectly satisfied landing-ready thresholds")
+	remove_child(threshold_rig)
+	threshold_rig.free()
+
+	var steep_normal := Vector3(0.0, 0.8, 0.6).normalized()
+	var tangent_forward := Vector3(0.0, steep_normal.z, -steep_normal.y).normalized()
+	var flat_ski_rig := SkierAnimationController.new()
+	add_child(flat_ski_rig)
+	var flat_ski := _air_frame()
+	flat_ski.predicted_landing_valid = true
+	flat_ski.predicted_landing_time = 0.08
+	flat_ski.predicted_landing_normal = steep_normal
+	flat_ski.body_up = steep_normal
+	flat_ski.ski_up = steep_normal
+	flat_ski.ski_forward = tangent_forward
+	flat_ski.velocity_heading = tangent_forward
+	_step(flat_ski_rig, flat_ski, 90)
+	var flat_snapshot := flat_ski_rig.debug_snapshot()
+
+	var pitched_rig := SkierAnimationController.new()
+	add_child(pitched_rig)
+	var pitched := flat_ski
+	pitched.ski_forward = Vector3.FORWARD
+	pitched.velocity_heading = tangent_forward
+	_step(pitched_rig, pitched, 90)
+	var pitched_snapshot := pitched_rig.debug_snapshot()
+	if absf(float(flat_snapshot.get("landing_readiness_upright", 0.0)) - float(pitched_snapshot.get("landing_readiness_upright", 0.0))) > 0.02:
+		failures.append("Steep-slope pitch changes incorrectly altered independent upright score")
+	if float(pitched_snapshot.get("landing_readiness_pitch", 1.0)) >= float(flat_snapshot.get("landing_readiness_pitch", 0.0)):
+		failures.append("Gameplay ski-forward pitch data did not reduce readiness on a steep landing")
+	remove_child(flat_ski_rig)
+	flat_ski_rig.free()
+	remove_child(pitched_rig)
+	pitched_rig.free()
+
+	var angular_rig := SkierAnimationController.new()
+	add_child(angular_rig)
+	var angular_frame := _air_frame()
+	angular_frame.predicted_landing_valid = true
+	angular_frame.predicted_landing_time = 0.5
+	angular_frame.predicted_landing_normal = steep_normal
+	angular_frame.body_up = steep_normal
+	angular_frame.ski_up = steep_normal
+	angular_frame.ski_forward = tangent_forward
+	angular_frame.velocity_heading = tangent_forward
+	angular_frame.angular_velocity = Vector3(0.0, 2.0, 0.0)
+	angular_frame.angular_velocity_world = steep_normal * 2.0
+	_step(angular_rig, angular_frame, 90)
+	var angular_snapshot := angular_rig.debug_snapshot()
+	var projected_heading_error := float(angular_snapshot.get("landing_projected_heading_error", 0.0))
+	if absf(projected_heading_error - 1.0) > 0.06:
+		failures.append("Heading projection did not use world angular velocity around the landing normal (%.3f)" % projected_heading_error)
+	remove_child(angular_rig)
+	angular_rig.free()
+
+	var invalid_rig := SkierAnimationController.new()
+	add_child(invalid_rig)
+	var invalid := _air_frame()
+	invalid.predicted_landing_valid = true
+	invalid.predicted_landing_time = 0.08
+	invalid.body_up_valid = false
+	invalid.body_up = Vector3.ZERO
+	invalid.ski_forward_valid = false
+	invalid.ski_forward = Vector3.ZERO
+	invalid.ski_up_valid = false
+	invalid.ski_up = Vector3.ZERO
+	invalid.velocity_heading = Vector3(INF, 0.0, 0.0)
+	_step(invalid_rig, invalid, 90)
+	var invalid_snapshot := invalid_rig.debug_snapshot()
+	if bool(invalid_snapshot.get("landing_readiness_valid", true)) or bool(invalid_snapshot.get("landing_ready", true)):
+		failures.append("Invalid readiness vectors were not handled conservatively")
+	if float(invalid_snapshot.get("landing_readiness", 1.0)) > 0.02:
+		failures.append("Invalid readiness vectors produced non-zero aggregate readiness")
+	remove_child(invalid_rig)
+	invalid_rig.free()
 
 func _test_grabs_separate_from_straight_air_at_gameplay_distance() -> void:
 	var straight := _sample_projected_pose(TrickController.GrabPose.NONE)

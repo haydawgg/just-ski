@@ -11,8 +11,9 @@ static func build(parent: Node3D, profile: ParkCourseProfile, physics_profile: S
 	if physics_profile == null:
 		push_warning("ParkCourseBuilder received no ski physics profile")
 		return built
+	var readability := profile.feature_readability()
 	for spec: Dictionary in profile.feature_specs():
-		var feature := _build_feature(parent, spec, physics_profile)
+		var feature := _build_feature(parent, spec, physics_profile, readability)
 		if feature == null:
 			push_warning("Unsupported park feature: %s" % spec.get("kind", "<missing>"))
 			continue
@@ -23,7 +24,7 @@ static func build(parent: Node3D, profile: ParkCourseProfile, physics_profile: S
 		built[feature_name] = feature
 	return built
 
-static func _build_feature(parent: Node3D, spec: Dictionary, physics_profile: SkiPhysicsProfile) -> Node3D:
+static func _build_feature(parent: Node3D, spec: Dictionary, physics_profile: SkiPhysicsProfile, readability: Dictionary) -> Node3D:
 	var kind := str(spec.get("kind", ""))
 	var label := str(spec.get("name", "ParkFeature"))
 	match kind:
@@ -31,12 +32,12 @@ static func _build_feature(parent: Node3D, spec: Dictionary, physics_profile: Sk
 			return ParkLayout.add_tabletop(
 				parent, label, physics_profile, float(spec.x), float(spec.z), float(spec.speed), float(spec.lip),
 				float(spec.get("width", 8.5)), float(spec.get("drop", 0.0)), float(spec.get("yaw", 0.0)),
-				float(spec.get("pop", physics_profile.minimum_pop_strength))
+				float(spec.get("pop", physics_profile.minimum_pop_strength)), readability
 			)
 		"hip":
 			return ParkLayout.add_hip(
 				parent, label, physics_profile, float(spec.x), float(spec.z), float(spec.speed), float(spec.lip),
-				float(spec.yaw), float(spec.get("pop", physics_profile.minimum_pop_strength))
+				float(spec.yaw), float(spec.get("pop", physics_profile.minimum_pop_strength)), readability
 			)
 		"roller":
 			return ParkLayout.add_roller(

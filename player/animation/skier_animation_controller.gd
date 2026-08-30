@@ -165,6 +165,16 @@ var _trick_intent := false
 var _trick_kind := TrickCommand.Kind.NONE
 var _landing_alignment := 0.0
 var _landing_anticipation := 0.0
+var _landing_readiness := 0.0
+var _landing_readiness_heading := 0.0
+var _landing_readiness_pitch := 0.0
+var _landing_readiness_spin := 0.0
+var _landing_readiness_upright := 0.0
+var _landing_readiness_residual := 0.0
+var _landing_projected_heading_error := 0.0
+var _landing_projected_residual := 0.0
+var _landing_readiness_valid := false
+var _landing_ready := false
 var _landing_compression := 0.0
 var _landing_compression_target := 0.0
 var _landing_severity := 0.0
@@ -391,9 +401,18 @@ func debug_snapshot() -> Dictionary:
 		"spotting_weight": _spotting_weight,
 		"landing_blend": _landing_anticipation,
 		"landing_alignment": _landing_alignment,
-		"landing_readiness": _landing_anticipation,
+		"landing_readiness": _landing_readiness,
 		"rotation_residual": _trick_rotation_residual,
 		"landing_anticipation": _landing_anticipation,
+		"landing_readiness_heading": _landing_readiness_heading,
+		"landing_readiness_pitch": _landing_readiness_pitch,
+		"landing_readiness_spin": _landing_readiness_spin,
+		"landing_readiness_upright": _landing_readiness_upright,
+		"landing_readiness_residual": _landing_readiness_residual,
+		"landing_projected_heading_error": _landing_projected_heading_error,
+		"landing_projected_residual": _landing_projected_residual,
+		"landing_readiness_valid": _landing_readiness_valid,
+		"landing_ready": _landing_ready,
 		"landing_compression": _landing_compression,
 		"landing_severity": _landing_severity,
 		"landing_balance_error": _landing_balance_error,
@@ -924,6 +943,138 @@ func _update_style_animation(frame: SkierAnimationFrame, delta: float) -> void:
 		_style_pose_id = TrickController.StylePose.NONE
 		_style_definition = null
 
+func _score_landing_error(error: float, good: float, bad: float) -> float:
+	if not is_finite(error) or not is_finite(good) or not is_finite(bad):
+		return 0.0
+	var good_limit := maxf(good, 0.0)
+	var bad_limit := maxf(bad, good_limit + 0.001)
+	return 1.0 - smoothstep(good_limit, bad_limit, absf(error))
+
+func _finite_vector(value: Vector3) -> bool:
+	return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
+
+func _landing_readiness_targets(frame: SkierAnimationFrame) -> Dictionary:
+	var empty := {
+		"valid": false,
+		"inputs_valid": false,
+		"heading": 0.0,
+		"pitch": 0.0,
+		"spin": 0.0,
+		"upright": 0.0,
+		"residual": 0.0,
+		"projected_heading_error": 0.0,
+		"projected_residual": 0.0,
+	}
+	if frame.locomotion_state != STATE_AIR or not frame.predicted_landing_valid or not is_finite(frame.predicted_landing_time) or frame.predicted_landing_time < 0.0:
+		return empty
+	var landing_normal := frame.predicted_landing_normal
+	if not _finite_vector(landing_normal) or landing_normal.length_squared() <= 0.000001:
+		return empty
+	landing_normal = landing_normal.normalized()
+	var time_to_contact := clampf(frame.predicted_landing_time, 0.0, 2.0)
+	var body_up_valid := frame.body_up_valid and _finite_vector(frame.body_up) and frame.body_up.length_squared() > 0.000001
+	var ski_forward_valid := frame.ski_forward_valid and _finite_vector(frame.ski_forward) and frame.ski_forward.length_squared() > 0.000001
+	var ski_up_valid := frame.ski_up_valid and _finite_vector(frame.ski_up) and frame.ski_up.length_squared() > 0.000001
+	var desired_heading_valid := _finite_vector(frame.velocity_heading) and frame.velocity_heading.length_squared() > 0.000001
+	var local_angular_valid := _finite_vector(frame.angular_velocity)
+	var world_angular_valid := frame.angular_velocity_world_valid and _finite_vector(frame.angular_velocity_world)
+	var residual_valid := _finite_vector(frame.rotation_residual)
+	var heading_valid := ski_forward_valid and desired_heading_valid and world_angular_valid
+	var pitch_valid := ski_forward_valid and ski_up_valid
+	var upright_valid := body_up_valid
+	var spin_valid := local_angular_valid
+	var maneuver_residual_valid := local_angular_valid and residual_valid
+	var ski_forward := frame.ski_forward.normalized() if ski_forward_valid else Vector3.FORWARD
+	var body_up := frame.body_up.normalized() if body_up_valid else Vector3.UP
+	var heading := ski_forward.slide(landing_normal)
+	var desired_heading := frame.velocity_heading.slide(landing_normal)
+	var heading_error := 0.0
+	if heading_valid and heading.length_squared() > 0.000001 and desired_heading.length_squared() > 0.000001:
+		heading_error = heading.normalized().signed_angle_to(desired_heading.normalized(), landing_normal)
+	else:
+		heading_valid = false
+	var projected_heading_error := 0.0
+	if heading_valid and is_finite(heading_error):
+		var yaw_rate_about_landing := frame.angular_velocity_world.dot(landing_normal)
+		projected_heading_error = wrapf(heading_error + yaw_rate_about_landing * time_to_contact, -PI, PI)
+	else:
+		heading_valid = false
+	var pitch_error := 0.0
+	if pitch_valid:
+		var ski_forward_plane := ski_forward.slide(landing_normal)
+		if ski_forward_plane.length_squared() > 0.000001:
+			pitch_error = absf(atan2(ski_forward.dot(landing_normal), ski_forward_plane.length()))
+		else:
+			pitch_valid = false
+	var spin_error := frame.angular_velocity.length() if spin_valid else NAN
+	var upright_error := acos(clampf(body_up.dot(landing_normal), -1.0, 1.0)) if upright_valid else NAN
+	var projected_residual := 0.0
+	if maneuver_residual_valid:
+		var projected_residual_vector := Vector3(
+			wrapf(frame.rotation_residual.x + frame.angular_velocity.x * time_to_contact, -PI, PI),
+			wrapf(frame.rotation_residual.y + frame.angular_velocity.y * time_to_contact, -PI, PI),
+			wrapf(frame.rotation_residual.z + frame.angular_velocity.z * time_to_contact, -PI, PI)
+		)
+		if _finite_vector(projected_residual_vector):
+			projected_residual = maxf(
+				absf(projected_residual_vector.x),
+				maxf(absf(projected_residual_vector.y), absf(projected_residual_vector.z))
+			)
+		else:
+			maneuver_residual_valid = false
+	var inputs_valid := heading_valid and pitch_valid and spin_valid and upright_valid and maneuver_residual_valid
+	return {
+		"valid": true,
+		"inputs_valid": inputs_valid,
+		"heading": _score_landing_error(projected_heading_error, profile.landing_readiness_heading_good, profile.landing_readiness_heading_bad) if heading_valid else 0.0,
+		"pitch": _score_landing_error(pitch_error, profile.landing_readiness_pitch_good, profile.landing_readiness_pitch_bad) if pitch_valid else 0.0,
+		"spin": _score_landing_error(spin_error, profile.landing_readiness_spin_good, profile.landing_readiness_spin_bad) if spin_valid else 0.0,
+		"upright": _score_landing_error(upright_error, profile.landing_readiness_upright_good, profile.landing_readiness_upright_bad) if upright_valid else 0.0,
+		"residual": _score_landing_error(projected_residual, profile.landing_readiness_residual_good, profile.landing_readiness_residual_bad) if maneuver_residual_valid else 0.0,
+		"projected_heading_error": projected_heading_error,
+		"projected_residual": projected_residual,
+	}
+
+func _update_landing_readiness(frame: SkierAnimationFrame, delta: float) -> void:
+	var targets := _landing_readiness_targets(frame)
+	var valid := bool(targets.valid)
+	_landing_readiness_valid = valid and bool(targets.inputs_valid)
+	var time_to_contact := frame.predicted_landing_time if valid else -1.0
+	var urgency := 1.0 - clampf(time_to_contact / maxf(profile.landing_readiness_near_contact_window, 0.01), 0.0, 1.0) if valid else 0.0
+	var rise_response := lerpf(profile.landing_readiness_rise_response, profile.landing_readiness_near_contact_response, urgency)
+	var fall_response := lerpf(profile.landing_readiness_fall_response, profile.landing_readiness_near_contact_response, urgency)
+	_landing_readiness_heading = _damp(_landing_readiness_heading, float(targets.heading), _landing_readiness_response(_landing_readiness_heading, float(targets.heading), rise_response, fall_response), delta)
+	_landing_readiness_pitch = _damp(_landing_readiness_pitch, float(targets.pitch), _landing_readiness_response(_landing_readiness_pitch, float(targets.pitch), rise_response, fall_response), delta)
+	_landing_readiness_spin = _damp(_landing_readiness_spin, float(targets.spin), _landing_readiness_response(_landing_readiness_spin, float(targets.spin), rise_response, fall_response), delta)
+	_landing_readiness_upright = _damp(_landing_readiness_upright, float(targets.upright), _landing_readiness_response(_landing_readiness_upright, float(targets.upright), rise_response, fall_response), delta)
+	_landing_readiness_residual = _damp(_landing_readiness_residual, float(targets.residual), _landing_readiness_response(_landing_readiness_residual, float(targets.residual), rise_response, fall_response), delta)
+	var weighted_total := (
+		_landing_readiness_heading * profile.landing_readiness_heading_weight
+		+ _landing_readiness_pitch * profile.landing_readiness_pitch_weight
+		+ _landing_readiness_spin * profile.landing_readiness_spin_weight
+		+ _landing_readiness_upright * profile.landing_readiness_upright_weight
+		+ _landing_readiness_residual * profile.landing_readiness_residual_weight
+	)
+	var weight_total := (
+		profile.landing_readiness_heading_weight
+		+ profile.landing_readiness_pitch_weight
+		+ profile.landing_readiness_spin_weight
+		+ profile.landing_readiness_upright_weight
+		+ profile.landing_readiness_residual_weight
+	)
+	_landing_readiness = clampf(weighted_total / maxf(weight_total, 0.001), 0.0, 1.0)
+	if not _landing_readiness_valid:
+		_landing_readiness = 0.0
+	_landing_projected_heading_error = float(targets.projected_heading_error) if valid else 0.0
+	_landing_projected_residual = float(targets.projected_residual) if valid else 0.0
+	_landing_ready = _landing_ready_for_values(_landing_readiness_valid, _landing_anticipation, _landing_readiness)
+
+func _landing_readiness_response(current: float, target: float, rise_response: float, fall_response: float) -> float:
+	return rise_response if target > current else fall_response
+
+func _landing_ready_for_values(valid: bool, anticipation: float, readiness: float) -> bool:
+	return valid and anticipation >= profile.ready_anticipation_threshold and readiness >= profile.ready_readiness_threshold
+
 func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var alignment_target := 0.0
 	var readiness_target := 0.0
@@ -938,6 +1089,7 @@ func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void
 			readiness_target *= lerpf(0.55, 1.0, _air_size)
 	_landing_alignment = _damp(_landing_alignment, alignment_target, profile.landing_anticipation_response, delta)
 	_landing_anticipation = _damp(_landing_anticipation, readiness_target, profile.landing_anticipation_response, delta)
+	_update_landing_readiness(frame, delta)
 
 	if frame.predicted_landing_valid and _landing_alignment > 0.02:
 		var local_normal := _terrain_normal_local(frame.predicted_landing_normal)
@@ -945,10 +1097,10 @@ func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void
 		var travel := frame.velocity_heading
 		var heading := frame.skier_heading
 		var yaw_target := 0.0
-		if travel.length_squared() > 0.001 and heading.length_squared() > 0.001:
+		if _finite_vector(travel) and _finite_vector(heading) and travel.length_squared() > 0.001 and heading.length_squared() > 0.001:
 			var planar_travel := Vector3(travel.x, 0.0, travel.z)
 			var planar_heading := Vector3(heading.x, 0.0, heading.z)
-			if planar_travel.length_squared() > 0.001 and planar_heading.length_squared() > 0.001:
+			if _finite_vector(planar_travel) and _finite_vector(planar_heading) and planar_travel.length_squared() > 0.001 and planar_heading.length_squared() > 0.001:
 				yaw_target = clampf(planar_heading.normalized().signed_angle_to(planar_travel.normalized(), Vector3.UP), -profile.landing_ski_align_yaw, profile.landing_ski_align_yaw)
 		_landing_ski_yaw = _damp(_landing_ski_yaw, yaw_target * _landing_alignment, profile.landing_anticipation_response, delta)
 		_landing_ski_pitch = _damp(_landing_ski_pitch, pitch_target * _landing_alignment, profile.landing_anticipation_response, delta)
@@ -1049,6 +1201,8 @@ func _seed_landing_from_frame(frame: SkierAnimationFrame) -> void:
 		_begin_landing_impact(event, maxf(_landing_severity, frame.landing_impact_severity), _landing_lateral_bias)
 
 func _clear_landing_state() -> void:
+	_landing_readiness_valid = false
+	_landing_ready = false
 	_landing_active = false
 	_landing_compressing = false
 	_landing_compression_target = 0.0
@@ -1147,11 +1301,25 @@ func _apply_rail_release_layer(frame: SkierAnimationFrame) -> void:
 func _apply_landing_layers(frame: SkierAnimationFrame) -> void:
 	var alignment := _landing_alignment
 	var anticipation := _landing_anticipation
+	var readiness := _landing_readiness
 	var compression := _landing_compression
 	if alignment <= 0.01 and anticipation <= 0.01 and compression <= 0.01 and _landing_wobble_amount <= 0.01:
 		return
 	if alignment > 0.01 and frame.locomotion_state == STATE_AIR:
 		_current_pose_name = "Air Descent / Landing Readiness" if anticipation > 0.12 else "Air Descent / Landing Alignment"
+		var correction_strength := clampf(
+			anticipation * (1.0 - readiness) * profile.landing_corrective_pose_gain if _landing_readiness_valid else 0.0,
+			0.0,
+			1.0
+		)
+		var correction_side := signf(_landing_projected_heading_error)
+		if absf(correction_side) < 0.05:
+			correction_side = signf(frame.rotation_residual.y)
+		if absf(correction_side) < 0.05:
+			correction_side = signf(_smoothed_angular_velocity.y)
+		if absf(correction_side) < 0.05:
+			correction_side = 1.0
+		var heading_correction := clampf(_landing_projected_heading_error, -0.6, 0.6) * correction_strength
 		var extend := anticipation * profile.landing_anticipation_leg_extend
 		_add_rotation(left_hip, Vector3(extend * 0.55, 0.0, -0.04 * anticipation))
 		_add_rotation(right_hip, Vector3(extend * 0.55, 0.0, 0.04 * anticipation))
@@ -1161,12 +1329,12 @@ func _apply_landing_layers(frame: SkierAnimationFrame) -> void:
 		_add_rotation(right_boot, Vector3(-anticipation * 0.06, 0.0, 0.0))
 		_add_rotation(left_ski, Vector3(_landing_ski_pitch, _landing_ski_yaw * 0.5, -0.025 * anticipation))
 		_add_rotation(right_ski, Vector3(_landing_ski_pitch, _landing_ski_yaw * 0.5, 0.025 * anticipation))
-		_add_rotation(spine, Vector3(-_landing_torso_prepare * profile.landing_anticipation_torso_pitch, _landing_ski_yaw * 0.35, 0.0))
-		_add_rotation(chest, Vector3(-_landing_torso_prepare * profile.landing_anticipation_torso_pitch * 0.65, _landing_ski_yaw * 0.45, 0.0))
+		_add_rotation(spine, Vector3(-_landing_torso_prepare * profile.landing_anticipation_torso_pitch, _landing_ski_yaw * 0.35 + heading_correction * 0.18, -correction_side * correction_strength * 0.08))
+		_add_rotation(chest, Vector3(-_landing_torso_prepare * profile.landing_anticipation_torso_pitch * 0.65, _landing_ski_yaw * 0.45 + heading_correction * 0.28, correction_side * correction_strength * 0.05))
 		_add_rotation(head, Vector3(alignment * profile.landing_anticipation_head_pitch, _landing_ski_yaw * 0.55, 0.0))
-		_add_rotation(left_shoulder, Vector3(0.08 * anticipation, 0.0, -profile.landing_anticipation_arm_open * anticipation))
-		_add_rotation(right_shoulder, Vector3(0.08 * anticipation, 0.0, profile.landing_anticipation_arm_open * anticipation))
-		_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + Vector3(0.0, anticipation * 0.03, 0.0)
+		_add_rotation(left_shoulder, Vector3(0.08 * anticipation, -correction_side * correction_strength * 0.05, -profile.landing_anticipation_arm_open * anticipation - correction_side * correction_strength * 0.12))
+		_add_rotation(right_shoulder, Vector3(0.08 * anticipation, -correction_side * correction_strength * 0.05, profile.landing_anticipation_arm_open * anticipation + correction_side * correction_strength * 0.12))
+		_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + Vector3(correction_side * correction_strength * 0.035, anticipation * 0.03, 0.0)
 	if compression > 0.01 or _landing_wobble_amount > 0.01:
 		var depth := compression
 		var left_support_headroom := 1.0 - clampf(maxf(_left_terrain_flex, 0.0) / maxf(profile.max_leg_flex, 0.01), 0.0, 0.35)
@@ -1638,12 +1806,27 @@ func _apply_trick_layer(frame: SkierAnimationFrame) -> void:
 				_current_pose_name = "Landing Ready"
 			var leg_opening := opening
 			var arm_opening := opening
+			var yaw_opening := opening if frame.trick_kind in [
+				TrickCommand.Kind.SPIN_LEFT,
+				TrickCommand.Kind.SPIN_RIGHT,
+				TrickCommand.Kind.CORK_LEFT,
+				TrickCommand.Kind.CORK_RIGHT,
+			] else 0.0
+			var yaw_open_side := _yaw_direction(frame)
+			# Opening must read as a sequence rather than a uniformly rotating
+			# mannequin: the upper body brakes first while the pelvis and skis
+			# visibly finish the maneuver. These are rig-local offsets only.
+			_add_rotation(pelvis, Vector3(0.0, yaw_open_side * profile.trick_open_pelvis_follow_yaw * yaw_opening, 0.0))
+			_add_rotation(spine, Vector3(0.0, -yaw_open_side * profile.trick_open_spine_counter_yaw * yaw_opening, 0.0))
+			_add_rotation(chest, Vector3(0.0, -yaw_open_side * profile.trick_open_chest_counter_yaw * yaw_opening, 0.0))
+			_add_rotation(left_ski, Vector3(0.0, yaw_open_side * profile.trick_open_ski_follow_yaw * yaw_opening, 0.0))
+			_add_rotation(right_ski, Vector3(0.0, yaw_open_side * profile.trick_open_ski_follow_yaw * yaw_opening, 0.0))
 			_add_rotation(left_hip, Vector3(0.12 * leg_opening, 0.0, -0.035 * leg_opening))
 			_add_rotation(right_hip, Vector3(0.12 * leg_opening, 0.0, 0.035 * leg_opening))
 			_add_rotation(left_knee, Vector3(-profile.trick_spin_knee_flex * 0.68 * leg_opening, 0.0, 0.0))
 			_add_rotation(right_knee, Vector3(-profile.trick_spin_knee_flex * 0.68 * leg_opening, 0.0, 0.0))
-			_add_rotation(left_shoulder, Vector3(0.08 * arm_opening, 0.0, -profile.trick_landing_arm_open * arm_opening))
-			_add_rotation(right_shoulder, Vector3(0.08 * arm_opening, 0.0, profile.trick_landing_arm_open * arm_opening))
+			_add_rotation(left_shoulder, Vector3(0.08 * arm_opening, -yaw_open_side * profile.trick_open_chest_counter_yaw * 0.55 * yaw_opening, -profile.trick_landing_arm_open * arm_opening))
+			_add_rotation(right_shoulder, Vector3(0.08 * arm_opening, -yaw_open_side * profile.trick_open_chest_counter_yaw * 0.45 * yaw_opening, profile.trick_landing_arm_open * arm_opening))
 
 func _apply_command_rotation_pose(frame: SkierAnimationFrame) -> void:
 	var pose := _trick_pose_weight
@@ -2504,6 +2687,16 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_clear_landing_state()
 	_landing_alignment = 0.0
 	_landing_anticipation = 0.0
+	_landing_readiness = 0.0
+	_landing_readiness_heading = 0.0
+	_landing_readiness_pitch = 0.0
+	_landing_readiness_spin = 0.0
+	_landing_readiness_upright = 0.0
+	_landing_readiness_residual = 0.0
+	_landing_projected_heading_error = 0.0
+	_landing_projected_residual = 0.0
+	_landing_readiness_valid = false
+	_landing_ready = false
 	_landing_compression = 0.0
 	_landing_arm_open = 0.0
 	_landing_pole_lag = 0.0
