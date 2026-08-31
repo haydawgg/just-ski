@@ -77,21 +77,25 @@ func integrate_world_angular_velocity(world_angular_velocity: Vector3, delta: fl
 func apply_compactness(
 	current_angular_velocity: Vector3,
 	new_compactness: float,
+	delta: float,
 	open_inertia_scale: float = 1.18,
 	compact_inertia_scale: float = 0.82,
-	maximum_speed_multiplier_per_step: float = 1.15
+	inertia_response_rate: float = 12.0
 ) -> Vector3:
 	compactness = clampf(new_compactness, 0.0, 1.0)
-	var target_inertia := lerpf(open_inertia_scale, compact_inertia_scale, compactness)
-	target_inertia = maxf(target_inertia, 0.05)
+	var target_inertia := maxf(lerpf(open_inertia_scale, compact_inertia_scale, compactness), 0.05)
+	var response := 1.0 - exp(-maxf(inertia_response_rate, 0.0) * maxf(delta, 0.0))
+	var previous_inertia := maxf(inertia_scale, 0.05)
+	var next_inertia := lerpf(previous_inertia, target_inertia, response)
 	if current_angular_velocity.length_squared() <= 0.000001:
-		inertia_scale = target_inertia
+		inertia_scale = next_inertia
 		return Vector3.ZERO
-	var maximum_multiplier := maxf(maximum_speed_multiplier_per_step, 1.0)
-	var desired_multiplier := inertia_scale / target_inertia
-	var applied_multiplier := clampf(desired_multiplier, 1.0 / maximum_multiplier, maximum_multiplier)
-	inertia_scale = inertia_scale / applied_multiplier
-	return current_angular_velocity * applied_multiplier
+	# Approximate angular-momentum conservation as body inertia changes. Because
+	# the inertia response is time based, the same held body input converges to
+	# the same result at different physics tick rates.
+	var multiplier := previous_inertia / maxf(next_inertia, 0.05)
+	inertia_scale = next_inertia
+	return current_angular_velocity * multiplier
 
 func primary_progress_radians() -> float:
 	match kind:
