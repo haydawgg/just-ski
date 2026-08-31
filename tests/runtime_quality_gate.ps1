@@ -44,6 +44,7 @@ $scenes = @(
 	"res://tests/crash_recovery_acceptance.tscn",
 	"res://tests/ski_feel_acceptance.tscn",
 	"res://tests/flick_trick_acceptance.tscn",
+	"res://tests/trick_residual_acceptance.tscn",
 	"res://tests/flick_gameplay_acceptance.tscn",
 	"res://tests/trick_ui_acceptance.tscn",
 	"res://tests/session_flow_acceptance.tscn",
