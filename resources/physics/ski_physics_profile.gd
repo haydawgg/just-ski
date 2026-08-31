@@ -59,7 +59,8 @@ extends Resource
 @export var air_landing_damping: float = 2.8
 @export var air_landing_window: float = 0.28
 @export var maximum_angular_speed: float = 7.5
-@export var air_flip_trim_acceleration: float = 1.7
+# Left-stick pitch is precision trim, not a replacement for takeoff trick authority.
+@export var air_flip_trim_acceleration: float = 0.48
 @export var air_terminal_speed: float = 45.0
 @export var landing_prediction_seconds: float = 2.2
 @export var landing_prediction_step: float = 0.06
