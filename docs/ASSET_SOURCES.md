@@ -1,13 +1,33 @@
 # Asset Sources
 
+Summit Sessions uses a small number of external CC0 sources. This file is the high-level attribution index; each imported source has a local `SOURCE.md` with the processing record.
+
 ## Snow 02
 
-The snow material uses the 2K diffuse, OpenGL normal, roughness, and translucency maps from [Poly Haven Snow 02](https://polyhaven.com/a/snow_02), created by Rob Tuytel and released under CC0 1.0 Universal.
+**Source:** Poly Haven — Snow 02  
+**Author:** Rob Tuytel  
+**License:** CC0 1.0 Universal
 
-Only the diffuse texture and a derived linear RGBA detail texture are committed. `tools/import_snow_02.py` verifies Poly Haven's published checksums and packs normal X, normal Y, roughness, and translucency. AO, displacement, DirectX normal, and specular maps are excluded. See `assets/materials/snow_02/SOURCE.md` for the complete conversion record.
+The project commits the 2K diffuse texture and a derived packed detail texture. The detail texture is generated from the source OpenGL normal, roughness, and translucency maps.
 
-All currently rendered geometry, particles, signs, character visuals, and UI remain project-created Godot primitives.
+`tools/import_snow_02.py` downloads the expected source maps, verifies the published checksums, creates the packed texture, and discards source files that are not committed.
+
+Full record: [`assets/materials/snow_02/SOURCE.md`](../assets/materials/snow_02/SOURCE.md)
 
 ## Skier body
 
-Phase 14 defines a body-only import contract at `assets/characters/skier/skier_body.glb`; the downloaded CC0 asset and checksum are recorded in `assets/characters/skier/SOURCE.md`. Its model-specific mapping is stored in `resources/animation/default_skier_skeleton_profile.tres`.
+**Source:** Mesh: 3D Male Base (Rigged) 1.0.2  
+**Creator / distributor:** orange-juice-games.itch.io; Godot package maintained by BoQsc  
+**License:** CC0
+
+The production body is stored at `assets/characters/skier/skier_body.glb`. Deterministic project tooling partitions the original skinned surface into named material regions and adds the maintained clothing-shell treatment while preserving the underlying skeleton and skinning contract.
+
+Model-specific retarget mapping lives in `resources/animation/default_skier_skeleton_profile.tres`.
+
+Full record: [`assets/characters/skier/SOURCE.md`](../assets/characters/skier/SOURCE.md)
+
+## Project-created content
+
+Unless a source is listed above or documented by another local provenance record, the prototype's gameplay code, procedural park geometry, rigid ski equipment/accessories, particles, signs, UI, shaders, and generated presentation assets are project-created.
+
+The primitive skier is a project-generated fallback/debug presentation. Normal runtime prefers the imported Skeleton3D production body when its rig contract validates.
