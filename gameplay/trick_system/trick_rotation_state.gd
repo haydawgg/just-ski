@@ -12,7 +12,8 @@ var released_fraction := 0.0
 var spin_progress_radians := 0.0
 var flip_progress_radians := 0.0
 var cork_progress_radians := 0.0
-var compactness := 0.0
+# 0 = fully open, 0.5 = neutral, 1 = fully compact.
+var compactness := 0.5
 var inertia_scale := 1.0
 var assist_angular_contribution := Vector3.ZERO
 
@@ -42,7 +43,7 @@ func reset() -> void:
 	spin_progress_radians = 0.0
 	flip_progress_radians = 0.0
 	cork_progress_radians = 0.0
-	compactness = 0.0
+	compactness = 0.5
 	inertia_scale = 1.0
 	assist_angular_contribution = Vector3.ZERO
 
@@ -72,6 +73,25 @@ func integrate_world_angular_velocity(world_angular_velocity: Vector3, delta: fl
 	spin_progress_radians += world_angular_velocity.dot(takeoff_reference_basis.y) * dt
 	flip_progress_radians += world_angular_velocity.dot(takeoff_reference_basis.x) * dt
 	cork_progress_radians += world_angular_velocity.dot(primary_axis_world) * dt
+
+func apply_compactness(
+	current_angular_velocity: Vector3,
+	new_compactness: float,
+	open_inertia_scale: float = 1.18,
+	compact_inertia_scale: float = 0.82,
+	maximum_speed_multiplier_per_step: float = 1.15
+) -> Vector3:
+	compactness = clampf(new_compactness, 0.0, 1.0)
+	var target_inertia := lerpf(open_inertia_scale, compact_inertia_scale, compactness)
+	target_inertia = maxf(target_inertia, 0.05)
+	if current_angular_velocity.length_squared() <= 0.000001:
+		inertia_scale = target_inertia
+		return Vector3.ZERO
+	var maximum_multiplier := maxf(maximum_speed_multiplier_per_step, 1.0)
+	var desired_multiplier := inertia_scale / target_inertia
+	var applied_multiplier := clampf(desired_multiplier, 1.0 / maximum_multiplier, maximum_multiplier)
+	inertia_scale = inertia_scale / applied_multiplier
+	return current_angular_velocity * applied_multiplier
 
 func primary_progress_radians() -> float:
 	match kind:
