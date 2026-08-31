@@ -1,18 +1,31 @@
 # Known Issues
 
-- Fixed this pass: the skier no longer glides ~1.1 m above the snow. Real contact changes some reference measurements: the flat-pop airtime is shorter because landings fire at true proximity, and reference carves that cross a roller crest rotate further now that the skier grips through it (the carve heading band was widened to 70-135 degrees with the steering code untouched). Feel re-verification on a controller is still wanted.
-- The tip-load unweighting was calibrated while the skier hovered; at the real seat height the probe spread undersamples roller crests, so crest unweighting reads weaker than designed. If crest feel needs tuning, `tip_grip_gain` and the probe offsets are the knobs.
+This file tracks unresolved behavior, missing production work, and checks that still require human validation. Completed validation notes and historical implementation milestones are documented elsewhere.
 
-- Runtime coverage now checks launch, shader compilation, scene construction, isolated slope contact, downhill acceleration, low/high-speed carve inertia, carve-to-skid transition, heading/travel separation, landing animation/control timing, air-trim authority, restrained camera FOV/bank, charged-pop height/airtime, kicker contact, rail capture, failed-landing/feature crashes, repeated crash/respawn cleanup, 30/60/120 Hz full-run continuity, and the finish/results flow. Controller feel, long-session camera comfort, landing/crash threshold preference, and rail drift still need broader human play-tuning.
-- Fast and Premium triplanar snow now compile in the runtime quality gate and have received a live Forward+ visual check. Near/far blending, crystal response, SSS strength, and representative GPU cost still need a dedicated profiling pass.
-- Xbox, PlayStation, and generic mappings use Godot/SDL abstraction, but no physical controllers were available to verify glyph family detection, hot-plug behavior, or rumble strength.
-- Phase 14.5 validates the production Skeleton3D across 19 settled skiing, air, trick, style, rail, landing, and crash poses plus all nine grabs. Mapped bone orientation stays within 0.002 rad of the canonical target, helper-bone drift stays below 0.001 rad, measured limb lengths do not change, boot/ski and hand/pole mounts remain fixed, and the largest 120 Hz landmark step stays below 0.11 m. Tail and nose ski pitch were corrected because they moved their contact markers away from the reaching hand. The full animation and runtime quality gates are green, so the adapter, profile mapping, attachment ownership, and retarget seam are frozen.
-- The production body's shoulders and arms are narrower/shorter than the canonical driver, so supported grabs remain gameplay-readable near-contact rather than pixel-perfect wrist locks; the measured wrist-to-marker envelope is about 0.50-0.74 m in the deterministic sweep. Occasional pole/body intersections and exact cloth/skin self-clipping still need a muted-UI human play pass at multiple camera angles. Those are source-mesh/pose-resource limitations, not a reason to add another IK or retarget layer. Crashes intentionally remain staged directional controlled falls rather than physical ragdolls.
-- The Phase 13 gameplay and animation architecture remains frozen around the four controller states, one crash-entry boundary, one reusable animation frame, the `apply_frame`/`trigger` seam, and the documented layer order. Authored grab/style shapes are data-driven; further polish should tune those resources/profiles or replace the presentation adapter rather than add overlapping state machines or pose layers.
-- Secondary-motion continuity, clamps, settling, combined spin/grab contact, and 30/60/120 Hz equivalence are covered by a deterministic uninterrupted animation run. Final inertia amplitudes and occasional pole/body intersections still need a muted-UI 30–60 second human play pass on the production camera; the primitive rig is not sufficient for pixel-level collision guarantees.
-- Graphics settings apply render scale and high-level environment effects. The menu does not yet expose every advanced Godot 4.7 renderer option listed in the long-term plan (FSR2, HDR, GI mode, reflection quality, and risky-resolution confirmation).
-- Audio currently uses lightweight procedural speed/skid/rail/pop/impact layers. Authored powder, ice, wind, ambience, and spatial feature recordings are not yet included.
-- The F9 clip recorder writes dependency-free MJPEG-in-MP4 (no game audio, larger files than H.264). VLC, Windows Media Player, and QuickTime play it, but browser and Discord web previews only decode H.264; piping captures through ffmpeg for H.264 + audio is future work.
-- The graybox now provides six dense, connected feature zones but has not received final environment art, handcrafted terrain, LOD, or a profiler-driven 1080p High optimization pass.
-- Thin-feature grind capture at maximum speed for a 20-minute session is still a human playtest item; automated checks cover a live rail capture and a kicker ride, not a full park stress pass.
-- Course recovery is deliberately abrupt: it displays a HUD notice and respawns after a short grace period, but a production fade/wipe and rewind presentation are still future polish.
+## Ski feel and controls
+
+- **Crest unweighting is weaker than intended.** The current front/rear contact-probe spacing undersamples some roller crests at the production seat height, so tip-load unweighting can read too softly. Relevant tuning lives in the ski contact geometry and `tip_grip_gain`.
+- **Controller feel still needs broader hardware validation.** Xbox, PlayStation, and generic controllers use Godot/SDL input abstraction, but glyph-family detection, hot-plug behavior, deadzone feel, and rumble strength should be verified on physical devices.
+- **Long-session feel still needs human playtesting.** Camera comfort, landing/crash threshold preference, rail-balance drift, and high-speed handling are covered by automated behavior checks but still need longer subjective play sessions.
+- **Thin-feature rail capture needs an extended stress test.** Automated coverage exercises live rail capture and normal feature traversal, but it does not replace a long high-speed session across narrow rails, boxes, and tubes.
+
+## Animation and character presentation
+
+- **Grab contact is intentionally approximate on the production body.** The production mesh has different shoulder and arm proportions from the canonical pose driver, so grabs are designed for readable near-contact rather than exact wrist-to-marker locking.
+- **Occasional pole/body and cloth/skin intersections may still occur.** These need visual checking from multiple camera angles during normal play. The current rig does not attempt full-body collision solving or cloth simulation.
+- **Secondary-motion amplitudes still need final visual tuning.** Deterministic tests cover continuity, settling, clamps, combined trick/grab behavior, and frame-rate consistency, but the final inertia feel is still a presentation judgment.
+
+## Graphics and performance
+
+- **Snow presentation still needs representative GPU profiling.** Fast and Premium snow compile and run, but near/far detail blending, crystal response, subsurface strength, and production GPU cost need a dedicated profiling pass.
+- **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, and FPS cap. FSR2, HDR, GI-mode selection, reflection-quality controls, and risky-resolution confirmation are not implemented.
+- **The resort is not final production art.** The current environment is procedurally constructed and includes authored presentation dressing, but it still lacks a final handcrafted environment-art pass, a deliberate LOD strategy, and a profiler-driven 1080p High optimization pass.
+
+## Audio and capture
+
+- **Most gameplay audio is procedural.** Speed, skid, rail, wind, pop, and impact feedback are synthesized at runtime. Authored powder, ice, ambience, wind, and spatial feature recordings are not yet included.
+- **Gameplay clips use MJPEG-in-MP4 and contain no game audio.** F9 arms the next summit run for capture. The recorder writes JPEG video frames into an MP4 container, which produces larger files and has weaker browser/Discord compatibility than H.264. H.264 encoding and synchronized game audio are future work.
+
+## Recovery presentation
+
+- **Out-of-bounds recovery is abrupt.** After a short grace period the game shows a notice and respawns through the normal session path. There is no production fade, wipe, rewind, or other transition presentation yet.
