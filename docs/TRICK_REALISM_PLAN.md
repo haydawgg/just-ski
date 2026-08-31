@@ -6,6 +6,24 @@ The goal is not to add more trick names or more animation layers. The goal is to
 
 **preload → body prewind → takeoff impulse → compact body preserves rotation → grab reshapes the body → player opens up → rotation slows → head/chest spot the landing → skis align → landing absorbs the remaining error**
 
+## Core control philosophy — preload, then manage
+
+Major trick rotation should be created primarily during the takeoff setup. The player should have to preload the skier before leaving the snow, similar to how a real skier generates rotation through anticipation, edge pressure, upper-body windup, and release.
+
+Once airborne, the player should not be able to initiate a major spin, flip, or cork from a neutral state. Air control should manage rotation that was already committed at takeoff rather than create a new trick on command.
+
+Airborne control should focus on:
+
+- preserving or slightly accelerating an existing rotation by staying compact,
+- slowing or checking rotation by opening the body,
+- making small directional corrections,
+- intentionally allowing an existing rotation to continue into an overrotation,
+- stopping or checking rotation early enough to prepare for landing.
+
+A poorly preloaded takeoff should therefore produce limited rotation, and the player should not be able to rescue it by repeatedly flicking the stick in the air. A strong, well-timed preload should create enough rotational momentum for larger tricks.
+
+The intended feel is **commitment rather than command**: the player decides the major rotational maneuver before takeoff, then manages the consequences of that decision while airborne.
+
 ## Priorities
 
 ### P0 — Make rotation feel physically authored
@@ -24,6 +42,7 @@ Target behavior:
 - The stored rotation releases over a short takeoff window rather than in one frame.
 - The visual prewind and the physical rotational impulse should describe the same action.
 - A weak setup should naturally produce a 180 or underrotated 360 instead of receiving nearly full trick authority.
+- Major rotation must be committed before or during takeoff; leaving the snow neutral should not preserve access to a full-strength spin, flip, or cork command.
 
 Likely files:
 
@@ -37,14 +56,16 @@ Suggested implementation direction:
 
 - Add explicit setup depth and setup duration to the trick command.
 - Track stick travel velocity through the setup/release gesture.
-- Calculate takeoff rotational energy from setup quality rather than stick magnitude alone.
+- Calculate the takeoff rotation budget from setup quality rather than stick magnitude alone.
 - Apply the resulting angular impulse across roughly 100–180 ms after takeoff.
 - Reduce the current minimum effective command strength so mediocre gestures are visibly weaker.
+- Record whether a major trick family was committed at takeoff so the airborne interpreter can distinguish rotation management from trick initiation.
 
 Acceptance criteria:
 
 - Weak, medium, and strong takeoff gestures produce clearly different rotation rates.
 - A 360 does not require arbitrary repeated midair flicks when the takeoff is strong enough.
+- Leaving the ground without a rotational preload does not allow a full spin, flip, or cork to be initiated later in the air.
 - The animation prewind direction matches the physical trick direction.
 - Takeoff rotation remains deterministic at 30, 60, and 120 Hz.
 
@@ -63,6 +84,7 @@ Target behavior:
 - Opening arms and extending legs increases damping.
 - Landing anticipation visibly opens the skier and causes the rotation to slow.
 - The player can understand why a spin accelerates, maintains speed, or slows by looking at the skier.
+- Body-shape input manages an existing rotation; it does not create a major new rotation from neutral.
 
 Likely files:
 
@@ -74,15 +96,17 @@ Likely files:
 
 Suggested implementation direction:
 
-- Add a presentation-derived or gameplay-owned `rotation_compactness` value.
+- Add a gameplay-owned `rotation_compactness` value.
 - Derive it from jump posture, active grab/style pose, and landing-open state.
 - Use compactness to scale air angular damping within conservative limits.
 - Keep landing assist as a safety layer, but reduce its influence once visible body-driven control is working.
+- Feed compactness to animation as read-only presentation data; animation must not drive gameplay rotation back through the seam.
 
 Acceptance criteria:
 
 - A tucked spin retains rotation longer than an opened spin.
 - Opening before landing visibly and physically slows rotation.
+- Compact/open inputs cannot initiate a large rotation when angular velocity and takeoff intent are neutral.
 - The same input does not produce unexplained last-second braking.
 - Landing assist remains useful without looking automatic.
 
@@ -122,16 +146,19 @@ Acceptance criteria:
 
 ### P1 — Reduce motorized midair control
 
-#### 4. Make takeoff responsible for most rotation
+#### 4. Make airborne input manage committed rotation, not create it
 
-Repeated airborne flicks currently add substantial angular impulses. This is responsive, but it can make rotation feel powered rather than ballistic.
+Repeated airborne flicks currently add substantial angular impulses. This is responsive, but it can make rotation feel powered rather than ballistic and lets the player initiate too much rotation after takeoff.
 
 Target behavior:
 
 - Takeoff provides roughly 75–90% of the rotational authority for a normal trick.
-- Airborne flicks act as smaller continuation or correction inputs.
-- Repeated flicking should not manufacture unlimited rotation.
-- Strong midair correction should still be possible for accessibility and game feel, but should be visibly limited.
+- A major spin, flip, or cork cannot be initiated from a neutral airborne state.
+- Airborne input acts as low-authority continuation, checking, compact/open control, or correction for a maneuver already committed at takeoff.
+- Repeated flicking should not manufacture unlimited rotation or rescue a poorly preloaded takeoff into a high-rotation trick.
+- The player can intentionally overrotate an existing maneuver by preserving/continuing rotation.
+- The player can intentionally check or stop an existing maneuver by opening and applying limited corrective input.
+- Strong midair correction can remain available for accessibility and game feel, but it must remain visibly and mechanically subordinate to takeoff commitment.
 
 Likely files:
 
@@ -141,16 +168,21 @@ Likely files:
 
 Suggested implementation direction:
 
-- Separate takeoff impulse values from airborne continuation impulse values.
-- Add diminishing returns to repeated in-air trick commits.
-- Scale continuation authority by remaining airtime and current angular speed.
+- Separate takeoff impulse values from airborne continuation/correction values.
+- Gate major airborne commands on takeoff trick intent; neutral takeoff means no new major rotation family in the air.
+- Add diminishing returns or a bounded continuation budget to repeated in-air trick inputs.
+- Scale continuation authority by current angular speed, remaining airtime, and the already committed trick direction.
+- Allow opposite-direction input to check rotation conservatively without becoming an instant counter-spin command.
 - Preserve the left-stick low-authority trim system for precise correction.
 
 Acceptance criteria:
 
 - Mashing repeated flicks cannot double or triple a poorly initiated spin.
+- A skier who leaves the ground neutral cannot flick halfway through the jump and suddenly begin a full-strength 360, flip, or cork.
 - A strong takeoff still allows high-rotation tricks.
-- Midair corrections remain useful for lining up landings.
+- A committed spin can be allowed to overrotate through player choice.
+- A committed spin can be checked early enough to prepare for landing.
+- Midair corrections remain useful for lining up landings without replacing takeoff technique.
 
 ---
 
@@ -372,6 +404,9 @@ Add or extend tests for:
 
 - weak / medium / strong takeoff setup producing ordered angular velocity,
 - setup duration and release speed affecting rotation predictably,
+- neutral takeoff followed by an airborne trick flick not initiating a major spin, flip, or cork,
+- committed takeoff rotation accepting only bounded airborne continuation/correction,
+- a committed rotation being intentionally checked versus intentionally allowed to overrotate,
 - 180 / 360 / 540 spin residuals,
 - underrotated and overrotated landing classification,
 - body-open versus body-compact angular damping,
@@ -399,6 +434,9 @@ After automated gates pass, test with a physical controller:
 
 - Can a player intentionally produce weak versus strong spins?
 - Does a good 360 feel earned at takeoff rather than corrected in the air?
+- If the player leaves the ground neutral, is a major midair spin/flip/cork unavailable?
+- Can the player intentionally preserve a committed rotation into an overrotation?
+- Can the player intentionally check a committed rotation and prepare for landing without an instant magical stop?
 - Do corks look diagonal rather than like yaw plus roll pasted together?
 - Does opening the body visibly slow rotation?
 - Can the player spot the landing through the skier's pose before touchdown?
@@ -413,17 +451,17 @@ After automated gates pass, test with a physical controller:
 ## Recommended implementation order
 
 1. **Takeoff setup → stored rotation → short release window.**
-2. **Body compactness → angular damping.**
-3. **Signed rotation residual → stricter landing/trick qualification.**
-4. **Reduced/diminishing airborne trick impulses.**
-5. **Quaternion angular integration.**
-6. **Continuous cork axes and subtle takeoff-axis coupling.**
-7. **Delayed torso/pelvis/ski animation response.**
-8. **Deterministic asymmetry.**
-9. **Whole-body grab shaping.**
+2. **Enforce preload commitment: no major neutral-air trick initiation.**
+3. **Body compactness → angular damping and rotation management.**
+4. **Signed rotation residual → stricter landing/trick qualification.**
+5. **Reduced/bounded airborne continuation and checking inputs.**
+6. **Quaternion angular integration.**
+7. **Continuous cork axes and subtle takeoff-axis coupling.**
+8. **Delayed torso/pelvis/ski animation response.**
+9. **Deterministic asymmetry and whole-body grab shaping.**
 10. **Landing-error presentation, camera, audio, and rumble polish.**
 
-The first three items should produce the largest improvement in perceived realism because they connect input, physics, animation, and landing outcome into one coherent system.
+The first five items should produce the largest improvement in perceived realism because they establish the central control rule: **the player commits the trick at takeoff and manages the rotation in the air instead of commanding new rotation after leaving the snow.**
 
 ## Non-goals
 
@@ -433,6 +471,8 @@ This plan does not require:
 - a second gameplay state machine,
 - root motion owning skier physics,
 - replacing the existing Flick-It control scheme,
+- removing all airborne control,
+- allowing neutral-air inputs to initiate full-strength tricks,
 - an `AnimationTree` becoming authoritative over gameplay,
 - exact hand-to-ski IK at the cost of silhouette quality,
 - removing accessibility-oriented landing assistance entirely.
