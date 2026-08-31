@@ -1,27 +1,58 @@
 # Skier Body Source
 
-- Asset: Mesh: 3D Male Base (Rigged) 1.0.2
-- Creator/distributor: orange-juice-games.itch.io; Godot package maintained by BoQsc
-- Original page: https://godotengine.org/asset-library/asset/3690
-- Repository: https://github.com/BoQsc/Godot-Male-Base-Mesh/
-- Download: https://github.com/BoQsc/Godot-Male-Base-Mesh/releases/latest/download/male_base_mesh.zip
-- License: CC0 (as stated by the asset page and repository)
-- Imported file: `male_base_mesh.glb`, renamed to `skier_body.glb`
-- Modifications: renamed; the single skinned triangle stream was partitioned into
-  five named material regions (`Outfit_Jacket`, `Outfit_Pants`, `Outfit_Skin`,
-  `Outfit_Gloves`, and `Outfit_BootUnderlay`) with clean geometric boundaries
-  (torso clothing cut at hip height and the collar line, hand/finger triangles
-  grouped into `Outfit_Gloves`). `tools/character/build_skier_clothing.py` then
-  appends skinned clothing shells over the jacket, pants, and gloves regions:
-  duplicated triangles offset along vertex normals with per-bone volume and
-  geodesic border taper, cloning `JOINTS_0`/`WEIGHTS_0` verbatim so the shells
-  deform identically to the body. Vertex attributes, skin weights, skeleton
-  nodes, inverse bind matrices, and animation data are otherwise unchanged.
-  The deterministic tools are `tools/character/rebuild_skier_body_materials.py`
-  (run first, from the pristine source) and `tools/character/build_skier_clothing.py`.
-- SHA-256: `A72B5F867AAC549CB69BB5D400267E375A23134E4B92EA2650D6D51D4F0C9C77`
+## Upstream asset
 
-The runtime contract is meters, +Y up, -Z forward, one `Skeleton3D`, at least
-one skinned body/clothing mesh, and no skis, boots, poles, root motion, or
-required authored animation. Bone-name calibration is stored in
-`resources/animation/default_skier_skeleton_profile.tres`.
+- **Asset:** Mesh: 3D Male Base (Rigged) 1.0.2
+- **Creator / distributor:** orange-juice-games.itch.io
+- **Godot package / repository maintainer:** BoQsc
+- **Godot Asset Library:** https://godotengine.org/asset-library/asset/3690
+- **Repository:** https://github.com/BoQsc/Godot-Male-Base-Mesh/
+- **Release archive:** https://github.com/BoQsc/Godot-Male-Base-Mesh/releases/latest/download/male_base_mesh.zip
+- **License:** CC0, as stated by the upstream asset page and repository
+- **Upstream file:** `male_base_mesh.glb`
+- **Project file:** `assets/characters/skier/skier_body.glb`
+- **Recorded SHA-256:** `A72B5F867AAC549CB69BB5D400267E375A23134E4B92EA2650D6D51D4F0C9C77`
+
+## Project processing
+
+The source GLB is used as the production skinned body. Project tooling modifies the presentation deterministically without replacing the skeleton or skinning contract.
+
+Processing is performed in this order:
+
+1. `tools/character/rebuild_skier_body_materials.py`
+   - starts from the pristine source;
+   - partitions the original skinned triangle stream into named material regions:
+     - `Outfit_Jacket`
+     - `Outfit_Pants`
+     - `Outfit_Skin`
+     - `Outfit_Gloves`
+     - `Outfit_BootUnderlay`;
+   - keeps the existing vertex attributes, joints, weights, skeleton nodes, inverse bind matrices, and authored animation data intact.
+
+2. `tools/character/build_skier_clothing.py`
+   - appends skinned clothing shells for the jacket, pants, and gloves regions;
+   - duplicates the source triangles and offsets them along vertex normals;
+   - uses per-bone volume and geodesic border taper for the shell shape;
+   - copies `JOINTS_0` and `WEIGHTS_0` directly so the added shells deform with the original body.
+
+The project file is therefore not a pristine byte-for-byte copy of the upstream GLB. The skeleton and skinning contract are preserved while the visible body is prepared for the prototype's outfit system.
+
+## Runtime contract
+
+The production rig expects:
+
+- meter scale;
+- +Y up;
+- -Z forward;
+- one usable `Skeleton3D`;
+- at least one skinned body / clothing mesh;
+- no dependency on authored root motion;
+- no requirement for skis, boots, poles, helmet, or goggles to be included in the source body.
+
+Rigid equipment is supplied by the project and attached through the skier presentation rig.
+
+Model-specific bone mapping, neutral orientation data, axis correction, scale, and equipment offsets are stored in:
+
+`resources/animation/default_skier_skeleton_profile.tres`
+
+Normal runtime uses automatic rig selection and prefers this Skeleton3D body. The generated primitive skier remains the fallback/debug presentation.
