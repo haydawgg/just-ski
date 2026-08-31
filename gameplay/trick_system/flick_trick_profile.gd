@@ -27,6 +27,9 @@ extends Resource
 @export var flip_impulse := 6.5
 @export var cork_yaw_impulse := 4.8
 @export var cork_roll_impulse := 5.2
+# Total requested takeoff impulse is released through a normalized curve across
+# this window, so the same gesture produces the same total at different tick rates.
+@export var takeoff_release_duration := 0.14
 
 @export_group("Air Management")
 # Air input is intentionally subordinate to the takeoff. The normalized budget
