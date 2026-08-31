@@ -22,6 +22,9 @@ var _stick_history: Array[Dictionary] = []
 var _takeoff_rotation_committed := false
 var _takeoff_kind := TrickCommand.Kind.NONE
 var _air_authority_remaining := 0.0
+var _pending_takeoff_impulse := Vector3.ZERO
+var _takeoff_release_elapsed := 0.0
+var _takeoff_release_fraction := 0.0
 
 func _init(value: FlickTrickProfile = null) -> void:
 	profile = value if value != null else preload("res://resources/physics/default_flick_trick_profile.tres")
@@ -38,6 +41,8 @@ func step(sample: TrickInputSample, context: int, delta: float) -> TrickCommand:
 		_enter_context(sample, context)
 	_command.left_trigger = sample.left_trigger
 	_command.right_trigger = sample.right_trigger
+	if context == Context.AIR:
+		_seed_pending_takeoff_release(delta)
 	if context == Context.AIR or context == Context.GRIND:
 		_update_trigger_grabs(sample)
 		if _left_grab_active or _right_grab_active:
@@ -64,6 +69,19 @@ func reset() -> void:
 	_clear_takeoff_commitment()
 	_last_context = Context.BAIL
 	_command.reset()
+
+func snapshot() -> Dictionary:
+	return {
+		"setup_active": _setup_active,
+		"setup_hold_time": _setup_hold_time,
+		"setup_peak_depth": _setup_peak_depth,
+		"takeoff_rotation_committed": _takeoff_rotation_committed,
+		"takeoff_kind": _takeoff_kind,
+		"air_authority_remaining": _air_authority_remaining,
+		"takeoff_release_fraction": _takeoff_release_fraction,
+		"takeoff_release_elapsed": _takeoff_release_elapsed,
+		"pending_takeoff_impulse": _pending_takeoff_impulse,
+	}
 
 func _enter_context(sample: TrickInputSample, context: int) -> void:
 	_clear_setup_state()
@@ -111,7 +129,7 @@ func _step_ground(sample: TrickInputSample, delta: float, rail: bool) -> void:
 	var kind := _classify_takeoff(stick, rail)
 	if kind == TrickCommand.Kind.NONE:
 		return
-	_commit_takeoff(kind, stick)
+	_commit_takeoff(kind, stick, delta)
 
 func _step_air(sample: TrickInputSample) -> void:
 	var stick := sample.right_stick
@@ -125,23 +143,26 @@ func _step_air(sample: TrickInputSample) -> void:
 	if requested == TrickCommand.Kind.NONE:
 		return
 
-	# Spin and cork authority now come from the takeoff. Air input can only
-	# continue or check the already-committed family. Flip takeoff mapping is
-	# intentionally left on the legacy path for this first migration slice so
-	# the existing flip control does not disappear before a preload mapping is
-	# introduced for it.
+	# Spin and cork authority come from takeoff. Air input can only continue or
+	# check the already-committed family. Flip input remains on the legacy air
+	# path until a dedicated preload mapping can be introduced without stealing
+	# the established down-to-up straight-pop gesture.
 	if _rotation_family(requested) in [RotationFamily.SPIN, RotationFamily.CORK]:
 		if not _takeoff_rotation_committed:
-			_gesture_armed = false
-			_cooldown_remaining = profile.repeat_cooldown
+			_consume_rejected_air_gesture()
 			return
 		if _rotation_family(requested) != _rotation_family(_takeoff_kind):
-			_gesture_armed = false
-			_cooldown_remaining = profile.repeat_cooldown
+			_consume_rejected_air_gesture()
 			return
 		_commit_air_management(requested, stick)
 		return
 
+	# Do not let a legacy flip input replace a spin/cork family that was already
+	# committed at the lip. This preserves maneuver-family commitment even while
+	# flip preload is still being migrated.
+	if _takeoff_rotation_committed:
+		_consume_rejected_air_gesture()
+		return
 	_commit_legacy_air(requested, stick)
 
 func _step_grind(sample: TrickInputSample, delta: float) -> void:
@@ -173,15 +194,15 @@ func _classify_air(stick: Vector2) -> int:
 		return TrickCommand.Kind.SPIN_LEFT if stick.x < 0.0 else TrickCommand.Kind.SPIN_RIGHT
 	return TrickCommand.Kind.FRONTFLIP if stick.y < 0.0 else TrickCommand.Kind.BACKFLIP
 
-func _commit_takeoff(kind: int, stick: Vector2) -> void:
+func _commit_takeoff(kind: int, stick: Vector2, delta: float) -> void:
 	var release_speed := _release_speed(stick)
 	var quality := _setup_quality(release_speed)
 	var command_strength := lerpf(profile.minimum_command_strength, 1.0, quality)
+	var total_rotation_impulse := _rotation_impulse(kind, command_strength)
 	_command.kind = kind
 	_command.phase = TrickCommand.PresentationPhase.RELEASE
 	_command.gesture_strength = command_strength
 	_command.pop_strength = command_strength
-	_command.rotation_impulse = _rotation_impulse(kind, command_strength)
 	_command.setup_depth = _setup_peak_depth
 	_command.setup_duration = _setup_hold_time
 	_command.release_speed = release_speed
@@ -193,16 +214,18 @@ func _commit_takeoff(kind: int, stick: Vector2) -> void:
 		_takeoff_rotation_committed = true
 		_takeoff_kind = kind
 		_air_authority_remaining = profile.air_authority_budget
+		_begin_pending_takeoff_release(total_rotation_impulse)
+		_command.rotation_impulse = _consume_pending_takeoff_release(delta)
 	else:
 		_clear_takeoff_commitment()
+		_command.rotation_impulse = total_rotation_impulse
 	_clear_setup_state()
 	_gesture_armed = false
 	_cooldown_remaining = profile.repeat_cooldown
 
 func _commit_air_management(requested: int, stick: Vector2) -> void:
 	if _air_authority_remaining <= 0.001:
-		_gesture_armed = false
-		_cooldown_remaining = profile.repeat_cooldown
+		_consume_rejected_air_gesture()
 		return
 	var strength := clampf(stick.length(), 0.0, 1.0)
 	var same_direction := requested == _takeoff_kind
@@ -215,7 +238,7 @@ func _commit_air_management(requested: int, stick: Vector2) -> void:
 	_command.gesture_strength = strength
 	_command.air_management = TrickCommand.AirManagement.CONTINUE if same_direction else TrickCommand.AirManagement.CHECK
 	_command.air_management_strength = authority
-	_command.rotation_impulse = _rotation_impulse(_takeoff_kind if same_direction else requested, authority)
+	_command.rotation_impulse += _rotation_impulse(_takeoff_kind if same_direction else requested, authority)
 	_command.committed = true
 	_air_authority_remaining = maxf(0.0, _air_authority_remaining - authority)
 	_gesture_armed = false
@@ -232,6 +255,44 @@ func _commit_simple(kind: int, stick: Vector2, includes_pop: bool) -> void:
 	_command.rotation_impulse = _rotation_impulse(kind, _command.gesture_strength)
 	_command.committed = true
 	_clear_setup_state()
+	_gesture_armed = false
+	_cooldown_remaining = profile.repeat_cooldown
+
+func _begin_pending_takeoff_release(total_impulse: Vector3) -> void:
+	_pending_takeoff_impulse = total_impulse
+	_takeoff_release_elapsed = 0.0
+	_takeoff_release_fraction = 0.0
+
+func _seed_pending_takeoff_release(delta: float) -> void:
+	var release_impulse := _consume_pending_takeoff_release(delta)
+	if release_impulse.length_squared() <= 0.0000001:
+		return
+	_command.kind = _takeoff_kind
+	_command.phase = TrickCommand.PresentationPhase.ROTATE
+	_command.rotation_impulse += release_impulse
+	_command.committed = true
+
+func _consume_pending_takeoff_release(delta: float) -> Vector3:
+	if not _pending_takeoff_release_active():
+		return Vector3.ZERO
+	var duration := maxf(profile.takeoff_release_duration, 0.0)
+	if duration <= 0.0001:
+		var instant := _pending_takeoff_impulse * (1.0 - _takeoff_release_fraction)
+		_takeoff_release_fraction = 1.0
+		_takeoff_release_elapsed = duration
+		return instant
+	var previous_fraction := _takeoff_release_fraction
+	_takeoff_release_elapsed = minf(_takeoff_release_elapsed + maxf(delta, 0.0), duration)
+	var normalized_time := clampf(_takeoff_release_elapsed / duration, 0.0, 1.0)
+	_takeoff_release_fraction = _smoothstep01(normalized_time)
+	if _takeoff_release_elapsed >= duration:
+		_takeoff_release_fraction = 1.0
+	return _pending_takeoff_impulse * (_takeoff_release_fraction - previous_fraction)
+
+func _pending_takeoff_release_active() -> bool:
+	return _takeoff_rotation_committed and _pending_takeoff_impulse.length_squared() > 0.0000001 and _takeoff_release_fraction < 1.0
+
+func _consume_rejected_air_gesture() -> void:
 	_gesture_armed = false
 	_cooldown_remaining = profile.repeat_cooldown
 
@@ -291,6 +352,13 @@ func _clear_takeoff_commitment() -> void:
 	_takeoff_rotation_committed = false
 	_takeoff_kind = TrickCommand.Kind.NONE
 	_air_authority_remaining = 0.0
+	_pending_takeoff_impulse = Vector3.ZERO
+	_takeoff_release_elapsed = 0.0
+	_takeoff_release_fraction = 0.0
+
+func _smoothstep01(value: float) -> float:
+	var t := clampf(value, 0.0, 1.0)
+	return t * t * (3.0 - 2.0 * t)
 
 func _update_trigger_grabs(sample: TrickInputSample) -> void:
 	if sample.left_trigger < profile.trigger_press_threshold:
