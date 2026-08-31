@@ -5,15 +5,17 @@ var failures: Array[String] = []
 func _ready() -> void:
 	_test_ground_preload_flick_pops()
 	_test_directional_takeoffs()
-	_test_invalid_and_repeated_gestures()
+	_test_preload_quality_orders_strength()
+	_test_invalid_ground_gestures()
 	_test_forgiving_input_buffer()
-	_test_air_gesture_commands()
+	_test_air_rotation_requires_preload()
+	_test_legacy_air_flip_commands()
 	_test_contextual_trigger_grabs()
 	_test_grind_gestures()
 	_test_motion_driven_recognition_and_scoring()
 	_test_live_degrees_are_not_finalized()
 	if failures.is_empty():
-		print("FLICK_PASS: takeoff, air, trigger, repeat, rejection, and rail gestures passed")
+		print("FLICK_PASS: preload quality, takeoff commitment, bounded air management, grabs, scoring, and rails passed")
 		get_tree().quit(0)
 	else:
 		for failure: String in failures:
@@ -28,12 +30,16 @@ func _test_ground_preload_flick_pops() -> void:
 	command = interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.08)
 	if command.phase != TrickCommand.PresentationPhase.SETUP:
 		failures.append("Downward right-stick preload did not enter setup")
+	if command.setup_duration <= 0.0 or command.setup_depth < 0.8:
+		failures.append("Setup telemetry did not record preload depth/duration")
 	sample.right_stick = Vector2(0.0, -0.9)
 	command = interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.08)
 	if command.kind != TrickCommand.Kind.POP:
 		failures.append("Down-to-up right-stick gesture did not request a pop")
-	if command.pop_strength < 0.7:
-		failures.append("Committed pop was weaker than the forgiving minimum")
+	if command.pop_strength < 0.35:
+		failures.append("Committed pop fell below the configured minimum command strength")
+	if command.setup_quality <= 0.0 or command.release_speed <= 0.0:
+		failures.append("Committed pop did not expose setup quality and release speed")
 
 func _test_directional_takeoffs() -> void:
 	var interpreter := FlickTrickInterpreter.new()
@@ -53,8 +59,34 @@ func _check_takeoff(interpreter: FlickTrickInterpreter, endpoint: Vector2, expec
 	var command := interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.08)
 	if command.kind != expected or command.pop_strength <= 0.0:
 		failures.append("Directional takeoff did not resolve %s" % label)
+	if expected in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT, TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] and not command.takeoff_rotation_committed:
+		failures.append("%s did not mark rotational takeoff commitment" % label)
 
-func _test_invalid_and_repeated_gestures() -> void:
+func _test_preload_quality_orders_strength() -> void:
+	var weak := FlickTrickInterpreter.new()
+	var sample := TrickInputSample.new()
+	sample.right_stick = Vector2(0.0, 0.58)
+	weak.step(sample, FlickTrickInterpreter.Context.GROUND, 0.04)
+	sample.right_stick = Vector2(-0.65, 0.0)
+	var weak_command := weak.step(sample, FlickTrickInterpreter.Context.GROUND, 0.05)
+
+	var strong := FlickTrickInterpreter.new()
+	sample.reset()
+	sample.right_stick = Vector2(0.0, 1.0)
+	strong.step(sample, FlickTrickInterpreter.Context.GROUND, 0.10)
+	strong.step(sample, FlickTrickInterpreter.Context.GROUND, 0.10)
+	sample.right_stick = Vector2.LEFT
+	var strong_command := strong.step(sample, FlickTrickInterpreter.Context.GROUND, 0.05)
+
+	if weak_command.kind != TrickCommand.Kind.SPIN_LEFT or strong_command.kind != TrickCommand.Kind.SPIN_LEFT:
+		failures.append("Preload quality comparison did not produce matching spin families")
+		return
+	if strong_command.setup_quality <= weak_command.setup_quality:
+		failures.append("Strong preload did not measure higher setup quality than weak preload")
+	if strong_command.rotation_impulse.length() <= weak_command.rotation_impulse.length():
+		failures.append("Strong preload did not produce more takeoff rotation than weak preload")
+
+func _test_invalid_ground_gestures() -> void:
 	var interpreter := FlickTrickInterpreter.new()
 	var sample := TrickInputSample.new()
 	sample.right_stick = Vector2(0.0, 0.8)
@@ -69,24 +101,6 @@ func _test_invalid_and_repeated_gestures() -> void:
 	if command.kind != TrickCommand.Kind.NONE:
 		failures.append("Expired setup committed a late trick")
 
-	interpreter.reset()
-	sample.right_stick = Vector2.ZERO
-	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	sample.right_stick = Vector2.LEFT
-	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	if command.kind != TrickCommand.Kind.SPIN_LEFT:
-		failures.append("First airborne flick was not recognized")
-	sample.right_stick = Vector2.RIGHT
-	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.2)
-	if command.kind != TrickCommand.Kind.NONE:
-		failures.append("Gesture repeated without recentering")
-	sample.right_stick = Vector2.ZERO
-	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
-	sample.right_stick = Vector2.RIGHT
-	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	if command.kind != TrickCommand.Kind.SPIN_RIGHT:
-		failures.append("Gesture did not repeat after recenter and cooldown")
-
 func _test_forgiving_input_buffer() -> void:
 	var interpreter := FlickTrickInterpreter.new()
 	var sample := TrickInputSample.new()
@@ -97,22 +111,75 @@ func _test_forgiving_input_buffer() -> void:
 	sample.right_stick = Vector2.UP
 	var command := interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.02)
 	if command.kind != TrickCommand.Kind.POP:
-		failures.append("Gesture just inside the 120 ms forgiving buffer was rejected")
+		failures.append("Gesture just inside the forgiving input buffer was rejected")
 
-func _test_air_gesture_commands() -> void:
+func _test_air_rotation_requires_preload() -> void:
 	var interpreter := FlickTrickInterpreter.new()
-	_check_air_flick(interpreter, Vector2.UP, TrickCommand.Kind.FRONTFLIP, Vector3.RIGHT, "frontflip")
-	_check_air_flick(interpreter, Vector2.DOWN, TrickCommand.Kind.BACKFLIP, Vector3.LEFT, "backflip")
-	_check_air_flick(interpreter, Vector2(-0.8, -0.8).normalized(), TrickCommand.Kind.CORK_LEFT, Vector3(0.0, -1.0, -1.0).normalized(), "left cork")
+	var sample := TrickInputSample.new()
+	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
+	sample.right_stick = Vector2.LEFT
+	var command := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.kind != TrickCommand.Kind.NONE or command.rotation_impulse.length() > 0.001:
+		failures.append("Neutral-air spin flick created major rotation without takeoff preload")
 
-func _check_air_flick(interpreter: FlickTrickInterpreter, endpoint: Vector2, expected: int, expected_axis: Vector3, label: String) -> void:
+	interpreter.reset()
+	sample.reset()
+	sample.right_stick = Vector2(0.0, 0.9)
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.10)
+	sample.right_stick = Vector2.LEFT
+	var takeoff := interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
+	var takeoff_impulse := takeoff.rotation_impulse.length()
+	if takeoff.kind != TrickCommand.Kind.SPIN_LEFT or not takeoff.takeoff_rotation_committed:
+		failures.append("Preloaded left spin did not establish takeoff commitment")
+		return
+
+	sample.right_stick = Vector2.ZERO
+	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.12)
+	sample.right_stick = Vector2.LEFT
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.kind != TrickCommand.Kind.SPIN_LEFT or command.air_management != TrickCommand.AirManagement.CONTINUE:
+		failures.append("Same-direction air input did not continue the committed spin")
+	if command.rotation_impulse.length() <= 0.0 or command.rotation_impulse.length() >= takeoff_impulse:
+		failures.append("Air continuation was not lower-authority than the takeoff")
+
+	sample.right_stick = Vector2.ZERO
+	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
+	sample.right_stick = Vector2.RIGHT
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.kind != TrickCommand.Kind.SPIN_LEFT or command.air_management != TrickCommand.AirManagement.CHECK:
+		failures.append("Opposite-direction air input did not check the committed spin")
+	if command.rotation_impulse.y <= 0.0:
+		failures.append("Spin check did not apply opposing angular authority")
+
+	interpreter.reset()
+	sample.reset()
+	sample.right_stick = Vector2(0.0, 0.9)
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.10)
+	sample.right_stick = Vector2.LEFT
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
+	sample.right_stick = Vector2.ZERO
+	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.12)
+	sample.right_stick = Vector2(-0.8, -0.8).normalized()
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.kind != TrickCommand.Kind.NONE:
+		failures.append("Air input switched a committed spin into a cork family")
+
+func _test_legacy_air_flip_commands() -> void:
+	# Flip preload mapping is a separate migration step. Keep the established
+	# flip path covered until that mapping is introduced so this control family
+	# is not accidentally deleted while spin/cork authority moves to takeoff.
+	var interpreter := FlickTrickInterpreter.new()
+	_check_legacy_air_flip(interpreter, Vector2.UP, TrickCommand.Kind.FRONTFLIP, Vector3.RIGHT, "frontflip")
+	_check_legacy_air_flip(interpreter, Vector2.DOWN, TrickCommand.Kind.BACKFLIP, Vector3.LEFT, "backflip")
+
+func _check_legacy_air_flip(interpreter: FlickTrickInterpreter, endpoint: Vector2, expected: int, expected_axis: Vector3, label: String) -> void:
 	interpreter.reset()
 	var sample := TrickInputSample.new()
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
 	sample.right_stick = endpoint
 	var command := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
 	if command.kind != expected:
-		failures.append("Air gesture did not resolve %s" % label)
+		failures.append("Legacy air gesture did not preserve %s during migration" % label)
 	if command.rotation_impulse.normalized().dot(expected_axis) < 0.7:
 		failures.append("%s used the wrong rotation axis" % label)
 
