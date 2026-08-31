@@ -3,6 +3,12 @@ extends Node
 
 const MIN_STRAIGHT_AIR_PRESENTATION_TIME := 0.45
 const MIN_GRAB_QUALIFY_TIME := 0.1
+const SPIN_STEP_DEGREES := 180.0
+const FLIP_STEP_DEGREES := 360.0
+const SPIN_MAX_UNDERROTATION_DEGREES := 25.0
+const FLIP_MAX_UNDERROTATION_DEGREES := 45.0
+const CLEAN_ROTATION_RESIDUAL_DEGREES := 25.0
+const SKETCHY_ROTATION_RESIDUAL_DEGREES := 55.0
 
 signal trick_changed(text: String)
 signal trick_landed(text: String, points: int, quality: float)
@@ -161,8 +167,9 @@ func land(quality: float, switch_landing: bool, link_bonus: int = 0) -> void:
 		return
 	if points <= 0 and grind_seconds >= 0.08:
 		points = int(grind_seconds * 300.0)
-	points = int(points * clampf(quality, 0.2, 1.0))
-	trick_landed.emit(name, points, quality)
+	var scored_quality := clampf(quality * _rotation_quality_factor(), 0.2, 1.0)
+	points = int(points * scored_quality)
+	trick_landed.emit(name, points, scored_quality)
 	reset()
 
 func current_name() -> String:
@@ -215,6 +222,37 @@ func live_name() -> String:
 		return "Straight Air" if air_presentation_eligible and air_seconds >= MIN_STRAIGHT_AIR_PRESENTATION_TIME else ""
 	return " + ".join(parts)
 
+func rotation_target_degrees() -> int:
+	match dominant_kind:
+		TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT:
+			return _spin_degrees()
+		TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP:
+			return _flip_degrees()
+		TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT:
+			return _cork_degrees()
+	return 0
+
+func rotation_residual_degrees() -> float:
+	var target := rotation_target_degrees()
+	if target <= 0:
+		return 0.0
+	match dominant_kind:
+		TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT:
+			return rad_to_deg(absf(accumulated_rotation.y)) - float(target)
+		TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP:
+			return rad_to_deg(absf(accumulated_rotation.x)) - float(target)
+		TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT:
+			return rad_to_deg(maxf(absf(accumulated_rotation.y), absf(accumulated_rotation.z))) - float(target)
+	return 0.0
+
+func rotation_snapshot() -> Dictionary:
+	return {
+		"target_degrees": rotation_target_degrees(),
+		"residual_degrees": rotation_residual_degrees(),
+		"accumulated_rotation": accumulated_rotation,
+		"kind": dominant_kind,
+	}
+
 func reset() -> void:
 	active = false
 	accumulated_rotation = Vector3.ZERO
@@ -237,20 +275,32 @@ func reset() -> void:
 	trick_changed.emit("")
 
 func _spin_degrees() -> int:
-	if absf(accumulated_rotation.y) < deg_to_rad(135.0):
-		return 0
-	return int(round(absf(accumulated_rotation.y) / PI) * 180.0)
+	return _credited_degrees(rad_to_deg(absf(accumulated_rotation.y)), SPIN_STEP_DEGREES, SPIN_MAX_UNDERROTATION_DEGREES)
 
 func _flip_degrees() -> int:
-	if absf(accumulated_rotation.x) < deg_to_rad(270.0):
-		return 0
-	return int(round(absf(accumulated_rotation.x) / TAU) * 360.0)
+	return _credited_degrees(rad_to_deg(absf(accumulated_rotation.x)), FLIP_STEP_DEGREES, FLIP_MAX_UNDERROTATION_DEGREES)
 
 func _cork_degrees() -> int:
-	var amount := maxf(absf(accumulated_rotation.y), absf(accumulated_rotation.z))
-	if amount < deg_to_rad(135.0):
+	var amount := rad_to_deg(maxf(absf(accumulated_rotation.y), absf(accumulated_rotation.z)))
+	return _credited_degrees(amount, SPIN_STEP_DEGREES, SPIN_MAX_UNDERROTATION_DEGREES)
+
+func _credited_degrees(actual_degrees: float, step_degrees: float, max_underrotation_degrees: float) -> int:
+	if actual_degrees + max_underrotation_degrees < step_degrees:
 		return 0
-	return int(round(amount / PI) * 180.0)
+	var steps := int(floor((actual_degrees + max_underrotation_degrees) / step_degrees))
+	return maxi(0, int(step_degrees) * steps)
+
+func _rotation_quality_factor() -> float:
+	var target := rotation_target_degrees()
+	if target <= 0:
+		return 1.0
+	var residual := absf(rotation_residual_degrees())
+	if residual <= CLEAN_ROTATION_RESIDUAL_DEGREES:
+		return 1.0
+	if residual <= SKETCHY_ROTATION_RESIDUAL_DEGREES:
+		var t := (residual - CLEAN_ROTATION_RESIDUAL_DEGREES) / maxf(SKETCHY_ROTATION_RESIDUAL_DEGREES - CLEAN_ROTATION_RESIDUAL_DEGREES, 0.001)
+		return lerpf(1.0, 0.6, t)
+	return clampf(0.6 - (residual - SKETCHY_ROTATION_RESIDUAL_DEGREES) / 180.0, 0.25, 0.6)
 
 func _resolve_legacy_grab_pose() -> GrabPose:
 	var left := Input.is_action_pressed("grab_left")
