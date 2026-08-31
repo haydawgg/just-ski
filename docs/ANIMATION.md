@@ -1,180 +1,171 @@
 # Skier Animation
 
-## Interface and ownership
+Summit Sessions uses procedural skier presentation driven by gameplay telemetry. The animation system does not own locomotion, collision, trick physics, or root motion.
 
-`SkierAnimationController` is a deep presentation module. Gameplay crosses one seam with two operations:
+## Gameplay / presentation boundary
+
+`SkierAnimationController` is fed through two public operations:
 
 ```gdscript
 apply_frame(frame: SkierAnimationFrame, delta: float)
 trigger(event: int, strength: float = 1.0, side: float = 0.0)
 ```
 
-The frame is a reusable, allocation-free presentation snapshot. It contains state, speed, edge, steering intent, actual turn rate, signed lateral acceleration, carve/skid ratios, skier and velocity headings, heading/travel separation, slope/contact data, independent left/right ski distances, normals and hit positions, the gameplay ski frame (`ski_forward`, `ski_up`) and body-up orientation with validity flags, tuck, compression, body-local angular velocity, its world-space transform for landing projection, air time, predicted landing time, grab pose/input strength/hold and release time, switch stance, rail information, Flick-It command/phase, gesture direction and strength, trigger pressure, grab amount/tweak, authoritative accumulated rotation, signed rotation residual, rotation progress, pre-bail warning weight, and a read-only crash snapshot. Events cover pop, landing variants, rail entry/exit, bail, and respawn.
+`SkierAnimationFrame` is a reusable presentation snapshot built by gameplay. It carries the information the visual system needs, including locomotion state, speed, steering/carve/skid response, terrain contact, ski frame, air/trick state, landing prediction, grab/style state, rail information, and crash context.
 
-The animation module never changes the gameplay transform, velocity, collision, or physics state. Procedural layers now drive an invisible canonical `SkierPoseDriver`; presentation is selected behind a `SkierRigAdapter` seam. `SkeletonSkierRig` retargets that canonical pose into an imported `Skeleton3D`, while `PrimitiveSkierRig` preserves the previous generated geometry as a temporary fallback and comparison adapter. No `AnimationTree`, root motion, or second procedural state machine owns the skier.
+The animation controller may smooth, classify, and blend that data for presentation, but it must not change the gameplay transform, velocity, collision state, rail state, or scored trick state.
 
-## Rig adapters and articulated driver
+## Rig architecture
 
-The canonical driver retains independent joints for pelvis, spine, chest, head, hips, knees, boots, skis, shoulders, elbows, hands, and poles. It contains no meshes. Existing pose construction, response hierarchy, joint limits, grab solve, debug rotations, and smoothing continue to operate on these transforms.
+Presentation is split into three layers of responsibility:
 
-`SkierSkeletonProfile` maps semantic joints to model-specific bone names and stores the model transform, neutral rotations, axis corrections, translation scale, and equipment offsets. The skeleton adapter validates required bones, uniqueness, ancestry, finite rests, and the presence of a skinned mesh before use. Each frame it converts canonical Euler deltas to quaternions, changes basis through the configured axis correction, composes from the neutral pose, writes local bone poses, and performs one skeleton update. Pelvis, chest, and shoulder position deltas are likewise applied relative to their captured neutral positions; every other mapped bone remains rotation-only.
+1. `SkierPoseDriver` — canonical articulated joints used by the procedural pose code.
+2. `SkierRigAdapter` — interface between the canonical driver and the visible rig.
+3. A concrete adapter:
+   - `SkeletonSkierRig` for the production Skeleton3D body.
+   - `PrimitiveSkierRig` for the generated fallback/debug body.
 
-Boots and ski pivots attach to the mapped foot bones; pole pivots attach to the hands. Skis and poles are not skeleton bones. Each ski retains binding, inside, nose, and tail markers, and each pole retains a tip marker. `BoneAttachment3D.override_pose` remains false, so attachments follow bones without becoming another pose owner. The old generated jacket, pants, helmet, goggles, gloves, boots, skis, and poles live only in `PrimitiveSkierRig`.
+`SkierAnimationController.RigMode` supports `AUTO`, `SKELETON`, and `PRIMITIVE`.
 
-`RigMode.AUTO` prefers the skeleton and records a validation reason before falling back to the primitive adapter. `RigMode.SKELETON` is the strict CI path, while the `--primitive-skier` user argument forces the debug fallback. Adapter name and fallback reason are exposed through animation telemetry and F3.
+- `AUTO` prefers the configured skeleton and falls back to the primitive adapter if validation fails.
+- `SKELETON` requires the production skeleton path.
+- `PRIMITIVE` forces the generated fallback.
 
-## Basic skiing pose
+The command-line argument `-- --primitive-skier` forces the primitive presentation for debugging and comparison.
 
-Normal downhill skiing is driven by measured physics rather than a separate animation state machine. Speed continuously deepens ankle, knee, and hip flex, lowers the pelvis, pitches the torso forward, tucks the arms, and increases pole trail. The neutral pose remains athletic at low speed instead of returning to a straight-legged mannequin stance.
+`SkierSkeletonProfile` owns model-specific bone mapping, neutral orientation data, axis correction, scale, and attachment offsets. Skis, boots, poles, helmet, and goggles remain presentation attachments rather than locomotion owners.
 
-Carve strength combines edge engagement with speed, lateral acceleration/turn rate, carve ratio, skid suppression, and steering intent. Independent damped channels respond in mass order: skis, legs, pelvis, torso, arms, then poles. Leg loading begins during ordinary engaged turns instead of waiting for the deep-carve label. Loaded carves displace and drop the pelvis inside the turn, visibly compress the inside leg, extend the outside leg, edge both skis, counter-rotate the chest toward travel, level the head, and counterbalance with the arms while a reduced balance-root share prevents whole-body banking from dominating.
+## Layer order
 
-Reversing the last loaded turn starts a short crossover window. The skis and lower legs release first, the legs extend and pelvis rises while crossing the skis, then the pelvis, torso, arms, and poles settle progressively onto the new edge. These channels affect presentation only and never write back to movement physics.
+`apply_frame()` updates presentation signals first, then constructs the pose in a stable order. The current high-level stack is:
 
-Existing skid ratio, edge engagement, and heading/travel separation also produce a continuous slarve weight. It blends the loaded carve into a lower, counter-rotated skid silhouette before the stronger hockey-stop override. Switch stance mirrors lead-leg loading, pelvis and shoulder relationship, head spotting, hand carriage, and pole split inside the articulated rig; it never turns or redirects the gameplay root.
+- base locomotion pose (`GROUND`, `AIR`, `GRIND`, or `BAIL`);
+- trick layer;
+- grab layer;
+- style layer;
+- landing layers;
+- stomp layer;
+- rail approach / release layers;
+- event reactions;
+- secondary motion;
+- pre-bail response;
+- joint limits and smoothing;
+- rig-adapter synchronization.
+
+This ordering matters. New animation work should tune or extend the existing layers rather than introduce a second system that competes for the same joints.
+
+## Ground skiing
+
+The ground pose is continuous rather than clip-based. It responds to measured gameplay signals such as speed, edge engagement, turn rate, lateral acceleration, carve/skid ratio, steering intent, pressure, switch stance, and braking.
+
+The presentation emphasizes:
+
+- athletic flex at neutral speed;
+- progressive carve loading;
+- inside/outside leg asymmetry;
+- crossover when changing edges;
+- slarve / skid silhouettes when grip demand exceeds clean-carve response;
+- stronger hockey-stop presentation during braking;
+- switch-aware stance and limb relationships.
+
+These are visual responses only. They never steer the gameplay root.
 
 ## Terrain suspension
 
-`SkiContactSolver` retains its authoritative four-probe average for physics while also exposing read-only left/right aggregates from the same rays. Animation compares each side's ray distance with the existing physics seat distance, then applies framerate-independent smoothing before changing the pose.
+Animation reads left/right contact information derived from the gameplay contact probes. It uses that data to add bounded per-ski flex, pelvis compensation, terrain roll, and upper-body countering.
 
-Each ski gap produces an independent bounded flex delta on top of the Phase 2 crouch and carve pose. The average gap moves the pelvis by only a reduced fraction, while left/right disagreement adds a small bounded pelvis roll. Spine, chest, and head counter that terrain roll progressively, preserving the skis → knees → pelvis → chest → head response hierarchy. Per-ski confidence combines ray coverage, distance, front/rear height and normal agreement, authoritative grounding, and sample continuity. Low confidence or a gap outside the available leg/pelvis travel smoothly attenuates the procedural correction instead of forcing exact contact.
+The terrain layer is confidence-weighted and smoothed. Missing or contradictory samples reduce presentation influence rather than forcing a foot or ski to an unreliable target. Terrain influence decays after takeoff so airborne skis are not visually magnetized back to the snow.
 
-When both contacts are valid, the rear-to-front contact direction supplies longitudinal pitch for one rigid whole-ski target. Roll comes from a stable terrain normal; strongly disagreeing front/rear normals are not blindly averaged, and the sample closest to the previous stable orientation is preferred. Missing samples fall back gracefully. Ski angles remain clamped, exponentially damped, and rate-limited to prevent flips or one-frame spikes.
+## Jump and air pose
 
-A single terrain-influence channel follows the existing grounded flag. It ramps in after contact and decays after takeoff, releasing gaps, normal alignment, and pelvis compensation without inventing another grounded state or magnetizing airborne skis. Debug snapshots expose gaps, normalized leg compression, compression velocity, influence, terrain angles, foot targets, and the stabilized pelvis target. F3 draws the side samples/normals, ski-to-target lines, pelvis target, and compression bars.
+Grounded jump charge compresses the skier before takeoff. Once airborne, the controller derives presentation phases from actual air state and landing prediction rather than running a separate animation trajectory.
 
-## Jump and airborne pose
+Straight airs remain styled rather than becoming a symmetric mannequin pose. Spin, flip, and cork presentation reads measured angular motion and trick intent while leaving the real rotation on the gameplay root.
 
-Jump presentation is driven by existing physics, not a second trajectory. Grounded `jump_charge` continuously compresses ankles, knees, hips, pelvis, torso, and arms. Authoritative takeoff metadata distinguishes a charged pop from a terrain hop and captures pop strength plus takeoff-surface-relative upward speed at the AIR transition.
+## Rotation presentation
 
-A short takeoff hold gives way to smoothed early-air, apex, and descent weights from slope-relative upward velocity, air time, and predicted remaining air time. At takeoff the controller caches a deterministic style side from gesture, the last loaded turn, or switch stance. Straight airs use that side for a bounded leg, pelvis, torso, arm, ski, and pole motif instead of converging on symmetric legs and arms-wide balance. Small hops stay compact; larger charged pops extend more, compact more at apex, and open again on descent. Terrain influence continues to decay after takeoff so skis are not magnetized in the air. Actual angular velocity supplies restrained spin/flip/cork support; the animation module never writes root rotation.
+Airborne rotation uses gameplay's authoritative accumulated rotation, angular velocity, trick command, and landing prediction.
 
-`tests/jump_animation_acceptance.tscn` covers charge scaling, pop/takeoff/early-air/apex/descent sequencing, three jump sizes, tiny terrain hops, straight air at multiple speeds, and physics-driven 360 support. `tests/jump_animation_inspection.tscn` is a development-only slow-motion viewer for those phases.
+Presentation can add:
 
-## Airborne rotation and trick intent
+- setup / prewind;
+- compactness proportional to rotation demand;
+- periodic leg, torso, arm, ski, and pole motifs through a spin;
+- spotting near useful alignment points;
+- opening and counter-rotation as the skier prepares to land;
+- distinct visual shapes for flips and corks.
 
-Phase 8 consumes the existing Flick-It command phase, `TrickController.accumulated_rotation`, body-frame angular velocity, root/velocity headings, and landing prediction. It never writes `SkierController.global_basis` or angular velocity. A grounded horizontal setup produces a bounded upper-body prewind while the skis remain under the skiing/takeoff pose; abandoned intent exponentially unwinds. The real takeoff release propagates a small visual lead from shoulders/chest through spine and pelvis into compact legs.
+The HUD can show continuous in-progress rotation while landed scoring resolves to the established trick buckets. Both read the same gameplay-owned rotation history.
 
-Yaw, pitch, and roll remain separate animation channels. Rates are component-clamped and delta-filtered for presentation only. Yaw spins use bounded shoulder/chest/pelvis lead, athletic knee flex, asymmetric arm tuck, restrained head spotting, and pole lag. Existing pitch flips and yaw/roll corks receive smaller layered corrections; the physical root carries the actual rotation, including combined-axis execution. There is no new invert physics or trick family.
+## Grabs and style poses
 
-Spin presentation derives four visual phases from the existing command phase, angular rate, accumulated rotation, residual, and landing prediction: `SETUP`, `COMPACT`, `SPOT`, and `OPEN`. Compactness scales continuously with filtered angular demand, so a slower 180 stays more open while faster/higher-count spins tuck further. A periodic local motif derived from authoritative accumulated yaw changes leg scissor, pelvis placement, torso twist, leading arm, ski pitch, and pole lag at each quarter turn; it repeats smoothly for higher spins without adding root rotation. Head/chest spotting appears near half-turn alignment. During braking/opening, shoulders and chest visibly counter first while the pelvis and parallel skis finish behind them, selling residual rotation without changing the gameplay root. Trick influence requires intent or meaningful measured rotation, preventing minor terrain-hop drift from selecting a spin pose. Both skis inherit the same root rotation and receive only matching local finish offsets, preserving boot/ski separation.
+Physical grabs and style-only poses are data-driven resources.
 
-Rotation families layer distinct shapes over that shared timing. Frontflips fold the torso forward and bring knees/skis toward the chest with arms compact in front. Backflips open the chest and hips on initiation, then use a controlled inversion tuck and longer ski line. Corks use diagonal torso twist, asymmetric shoulder/hip drop, one compressed leg, and one extended ski line.
+`default_grab_animation_library.tres` contains the supported physical grabs and their hand / ski target definitions. `default_style_pose_library.tres` contains style poses that do not require hand-to-ski contact.
 
-As predicted contact approaches, head/chest spotting uses velocity direction and signed rotation residual while arms open and legs begin extending. The trick weight yields progressively to Phase 6; strong unfinished rotation retains a bounded amount of commitment instead of pretending completion. Under- and over-rotation produce opposite internal recovery without reversing or snapping the physical root. `GRIND` suppresses the trick layer so Phase 7 owns support; actual rotation after rail release can reactivate it.
+The grab system blends authored body shapes with bounded arm targeting. Ski-local markers move with the skier, so grab targets remain attached through spins and tweaks. Contact is presentation-only; scoring state remains owned by the trick system.
 
-Airborne HUD text uses the continuous accumulated physical angle (`Left 243°`) and therefore never presents an in-progress maneuver as finalized. On contact, `TrickController.current_name()` still resolves the existing scored rotation bucket (`Left 180`, `Left 360`, and so on) for the landing callout and points. The visual display and scoring vocabulary share the same authoritative accumulated rotation but intentionally answer different questions.
+Grab presentation moves through setup, reach, contact, hold, release, and recovery behavior without snapping the root or changing airtime. Landing preparation can progressively take priority as contact approaches.
 
-`tests/trick_animation_acceptance.tscn` covers straight air, prewind/abort, takeoff release, mirrored left/right 180 and 360 spins, higher-spin scaling, signed under/over-rotation, smooth/rough landing handoff, air-to-rail and rail-exit-to-spin sequences, existing flip/cork support, root-authority invariants, ski separation, and bounded per-frame changes.
+## Landing presentation
 
-## Airborne grabs and hand targeting
+Landing animation has two separate responsibilities:
 
-Phase 9 consumes the existing live `TrickController.GrabPose`, analog trigger pressure, tweak vector, pressure-weighted hold duration, release window, Phase 8 rotation state, and Phase 6 landing prediction. It does not write trajectory, root rotation, ski physics, collision, airtime, or scoring state. The controller retains only presentation weights and the last visual definition long enough to animate release; gameplay remains the sole owner of preserved grab name, duration, tweak integral, and landed score.
+- anticipation before contact, using the predicted landing frame;
+- impact/recovery after the authoritative gameplay landing event.
 
-`SkierPoseShapeDefinition` is the shared authored-shape Resource for pelvis displacement plus torso, limb, ski, arm, and pole rotations. `default_grab_animation_library.tres` specializes it with the nine supported physical hand-to-ski grabs: mirrored Safety, Mute, and Japan variants, plus Tail, Nose, and Double. Grab definitions add the authoritative hand, ski-local target marker, reach response, contact thresholds, and hysteresis.
+Before contact, the skier can begin aligning skis, spotting, opening the arms, and extending the legs. A presentation-only readiness measure evaluates whether the current pose is visually prepared; it does not decide the gameplay landing result.
 
-`default_style_pose_library.tres` uses the same base shape for Spread Eagle, Daffy, Shifty Left, and Shifty Right, but contains no hand, ski marker, contact, or IK data. `TrickController.style_pose`, `style_name`, and `style_seconds` are tracked independently from physical grabs while using the established style scoring path. Reusable authored shapes live in Resources; procedural timing and telemetry interpretation remain inside the animation module.
+After contact, clean, sketchy, and hard landing events drive different compression and recovery responses. Clean landings may trigger a short stomp layer. Failed landings hand off to the bail presentation instead of also playing a successful landing reaction.
 
-Each ski owns cached local marker nodes for its outside/inside binding area, nose, and rear/tail region. The controller reads each marker's current global transform after leg/ski motion, so the target follows the skier through spins and tweaks instead of lagging in world space. Body compactness uses the maximum of spin and grab demand before adding only the remaining grab contribution. The authored target leg folds upward through hip, knee, boot, and ski; pelvis/torso and free arm create the silhouette; a bounded two-bone solve with a stable outward elbow pole supplies only the final reach. Shoulder, elbow, torso, knee, boot, ski, and ski-separation limits are enforced before blending.
+## Rails
 
-Visual phases are `SETUP → REACH → CONTACT → HOLD → RELEASE → RECOVER`. Pose and contact use separate delta-aware weights. The target knee and ski rise first, pelvis and torso compact next, the shoulder reaches only after body commitment, and bounded arm targeting finishes contact. Contact has acquire/maintain hysteresis, while release input immediately makes contact decay without snapping the arm or erasing the remembered gameplay trick. Small airs may remain a partial reach. Near landing, held grabs retain a bounded compromised pose while Phase 6 extends legs, opens arms, and realigns skis; released grabs yield faster. `GRIND` applies no grab layer, leaving Phase 7 authoritative.
+Rail presentation reads the gameplay grind state, spline direction, balance, approach information, entry severity, and selected rail pose.
 
-`tests/grab_animation_acceptance.tscn` covers grounded suppression, a frame-sequenced Safety Left reach/hold/release, mirrored and cross-body targeting, all supported definitions, style poses without fake targets, straight and left/right/high-spin grabs, short airtime, early and late landing handoffs, ski-local target motion, bounded one-frame changes, root authority, and released-grab naming/scoring persistence.
+The layer covers neutral 50-50 stance, boardslide presentation, balance compensation, entry compression, exit preparation, and pop/release handoff. Gameplay remains responsible for spline travel and balance failure.
 
-## Landing anticipation, impact, and recovery
+## Bail presentation
 
-Landing presentation is staged on top of Phase 5 descent and Phase 3 terrain suspension. It never alters trajectory or physics. The frame at this seam contains the gameplay ski frame (`ski_forward`, `ski_up`) and body orientation, not the visual rig's currently blended pose. `angular_velocity` is body-local Euler-rate telemetry and remains the source for trick and maneuver-residual presentation; `angular_velocity_world` is the same rate transformed through the gameplay body's basis and is used only when projecting heading motion around a world-space landing normal.
+Bail animation is a staged procedural fall layered over gameplay's authoritative `BAIL` motion. It is not a physics ragdoll.
 
-1. **Alignment** — below `landing_alignment_start` (0.32 s by default), only subtle ski/surface alignment and head/torso spotting begin. Active tricks and held grabs retain their silhouette.
-2. **Readiness** — below `landing_readiness_start` (0.20 s by default), legs extend, the pelvis rises, arms prepare, and trick/grab layers yield. This is landing **anticipation**: it answers when the contact pose should begin. A separate animation-only **landing readiness** score answers whether the skier is actually prepared, using projected ski-heading alignment, gameplay ski-frame pitch against the predicted landing plane, angular speed, body-up versus landing-normal alignment, and projected maneuver residual. Heading asks “will the skis point correctly?”; residual asks “will meaningful maneuver rotation remain?” They are intentionally independent: a skier can point at the target while still carrying enough angular motion to blow through it. Local residual and local angular rates stay together for maneuver completion, while only world angular velocity is projected onto the landing normal for heading. Scores are smoothed with asymmetric, near-contact response so a late correction can recover visually without excessive lag, and bounded corrective offsets are applied only while anticipation is active and the prediction/input frame is valid. Invalid or non-finite directional data scores conservatively as zero and keeps `landing_ready` false; if prediction is unavailable, readiness corrections are disabled and the current descent pose continues unchanged.
-3. **Contact** — the authoritative AIR→GROUND transition (`_handle_landing` / `_reseat_on_snow`) captures slope-relative impact speed, impact severity, balance error, ski/body alignment errors, lateral/forward velocity, and optional spin residual. Tiny terrain hops scale severity by air time so they stay subtle.
-4. **Compression** — a decaying impact layer drives ankle/knee/hip flex, pelvis drop, lagged torso pitch, arm open, and pole lag. Depth scales with severity and layers additively with terrain suspension. Left/right gaps and lateral bias produce asymmetric absorption.
-5. **Recovery and handoff** — after roughly 100-220 ms of compression, the layer returns exponentially over roughly 220-550 ms; soft landings recover quickly and hard landings use the slower end of the band. Terrain influence ramps back in, steering remains live, and moderate balance error adds a damped wobble without changing physics.
+The animation controller reads the captured crash context and produces a controlled release, impact, fall, and rest presentation. Recovery/respawn events reset the visual state at the same boundary used by gameplay.
 
-A clean landing with meaningful recorded airtime can additionally trigger a short stomp presentation: decisive centered compression, parallel skis, quiet chest/head, hands forward, and a strong stacked recovery. Tiny terrain reseats and sketchy or hard outcomes never arm this layer.
+## Secondary motion
 
-`LandingSolver` measures impact as velocity into the surface normal, so matched downslope landings score softer than flat impacts at the same world-space downward speed. CLEAN / SKETCHY / HARD outcomes bias compression depth and recovery. An unrecoverable upright, impact, or angular gate reports one deterministic failure reason to the crash path; failed landings do not also emit successful landing feedback.
+Hands and poles receive filtered inertia and lag based on measured motion. Secondary channels are clamped and smoothed to avoid single-frame spikes. They remain subordinate to the primary skiing, trick, grab, rail, landing, and bail layers.
 
-`tests/landing_animation_acceptance.tscn` covers anticipation timing, explicit compression/recovery timing bands, severity scaling, downslope vs flat, tiny hops, rough-landing wobble, spin correction, uneven contact, and steering responsiveness during recovery. `tests/ski_feel_acceptance.tscn` separately locks air-trim authority, severity-scaled landing control recovery, restrained speed FOV, mirrored turn bank, and air-state bank release.
+## Data and tuning
 
-## Pre-bail and controlled crash
+Stable presentation tuning belongs in resources under `resources/animation/`:
 
-Landing prediction drives a restrained airborne pre-bail channel when upright or angular plausibility is approaching failure. It opens the arms, offsets the torso and pelvis toward the actual danger side, and loosens the legs without changing collision, trajectory, root rotation, or the landing verdict. The channel decays normally when the skier recovers.
+- `default_animation_profile.tres`
+- `default_grab_animation_library.tres`
+- `default_style_pose_library.tres`
+- `default_skier_skeleton_profile.tres`
+- outfit / presentation profiles used by the visible rigs
 
-`CrashContext` is the authoritative presentation input after a crash. It records reason, source, source state, incoming/resolved velocity, impact normal and speed, angular speed, balance/lateral bias, elapsed time, rest status, and one of four stages:
+Prefer changing these resources or the existing layer logic over adding overlapping state machines or pose owners.
 
-1. **Release** — the previous trick, grab, or rail pose yields while incoming momentum remains readable.
-2. **Impact** — the pose reacts along the measured impact normal and lateral side.
-3. **Fall** — torso, pelvis, limbs, skis, and poles follow a bounded directional tumble derived from real angular velocity.
-4. **Rest** — motion settles into a stable fallen pose until physics confirms recovery or respawn clears it.
+## Debugging
 
-This remains a controlled procedural fall retargeted through the active adapter. It does not add a `RigidBody3D`, `PhysicalBoneSimulator3D`, equipment detachment, or a second gameplay state machine. Skeleton and primitive presentations consume the same crash pose and recovery timing.
+F3 exposes animation telemetry such as active rig adapter, fallback reason, locomotion state, pose/blend information, terrain influence, air/trick phases, landing readiness, grab state, rail state, secondary motion, and bail presentation.
 
-The final animation ownership order is physics snapshot → base athletic pose → locomotion/carve → terrain suspension → air/jump → rail/trick/grab → landing → secondary motion → pre-bail/crash override → joint limits → hierarchical blend. Crash is the final authored pose override, but root motion remains owned by `SkierController` and every joint still passes through the existing limits and response hierarchy.
+The exact diagnostic fields are implementation details and may change as the prototype evolves.
 
-`tests/crash_recovery_acceptance.tscn` covers guarded crash entry, failure sources, momentum continuity, exactly-once feedback/scoring, telemetry, repeated crash/respawn cleanup, and bounded rest recovery. `tests/animation_acceptance.tscn` covers pre-bail direction and all four controlled-fall stages. The uninterrupted 30/60/120 Hz route in `tests/animation_polish_acceptance.tscn` includes a failed trick, every crash stage, respawn, and ski-away.
+## Verification
 
-## Rail and box animation
+Animation coverage is part of the full runtime gate:
 
-Rail presentation stays a pure visualization layer on top of the authoritative `SkierController` grind state (`_try_capture_rail`, `_update_grind`, `_exit_rail`, `_slip_off_rail`). Animation never writes rail position, orientation, velocity, or attach/detach decisions.
+```powershell
+.\tests\runtime_quality_gate.ps1
+```
 
-1. **Approach** — a read-only, non-attaching proximity/heading scan (`GrindRail3D.approach_preview`, `SkierController._scan_rail_approach`) feeds `rail_approach_anticipation`. While still skiing or airborne, this only opens the arms slightly, centers the torso, and readies the knees — normal skiing/jump presentation continues underneath.
-2. **Entry** — the real AIR→GRIND transition captures entry severity from actual capture-moment physics (vertical impact, approach misalignment, body tilt) and triggers a sharper, smaller absorption layer than a snow landing (`rail_entry_max_compression` is roughly half of a hard landing's depth). Ankles/knees/hips/pole lag scale with severity; clean entries barely register.
-3. **Slide** — `rail_balance` (already computed from real drift/kink physics) drives a response hierarchy: skis stay nearly stable, legs/pelvis take a moderate share, the torso counters, and the arms carry the largest visible correction, with near-failure amplifying the arm/torso response without ever deciding a bail. A 50-50 keeps centered parallel skis, symmetrical legs, and a square upper body. `rail_pose` drives boardslides into pronounced ski/pelvis yaw, chest counter-rotation, asymmetric legs, and a wider arm line, producing a clear gameplay-camera silhouette without changing capture or balance physics.
-4. **Handoff** — Phase 3 terrain suspension already decays to zero during `GRIND` (its `grounded` input is forced false outside `State.GROUND`), so rail support and snow suspension never fight; no second grounded state was invented. Poles, which previously stayed perfectly neutral through a grind, now trail with speed/entry lag.
-5. **Exit** — `rail_distance_to_end` builds exit anticipation (legs ready to extend, pelvis rises, arms ready) before detach. On release, `rail_influence` decays instead of cutting instantly, letting a fading fraction of the last balance/slide pose carry briefly into the air before Phase 5's airborne pose and Phase 6's landing system take over untouched.
+The maintained gate includes focused suites for the base animation contract, production character presentation, skeleton retargeting, jumps, landings, rails, tricks, grabs, silhouette readability, polish/secondary motion, and recovery behavior.
 
-`tests/rail_animation_acceptance.tscn` exercises approach subtlety, entry severity scaling (and that it stays smaller than a comparable snow landing), the arms-over-skis balance hierarchy, absence of fake constant wobble, sideways slide/chest-counter separation, exit anticipation, terrain-suspension yielding, pole trailing, and a full approach→entry→slide→exit→air→landing sequence with bounded per-frame deltas. `tests/physics_collision_acceptance.tscn` additionally confirms a real physics-driven rail capture populates entry severity and rail influence correctly.
+For deterministic visual review, generate the silhouette comparison with:
 
-## Secondary motion and inertia polish
+```powershell
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-silhouette-showcase
+```
 
-Phase 10 remains inside `SkierAnimationController`; callers still provide the same frame and event interface. The controller derives bounded, animation-only lateral/vertical/yaw acceleration, heading separation, hand acceleration, terrain compression velocity, and landing-compression velocity. Every temporal filter uses an exponential delta-aware response. No noise, independent ski wobble, physics force, or new gameplay state is introduced.
-
-Primary targets are built first. A restrained follow-through layer then propagates motion through pelvis/spine/chest, shoulders/elbows/hands, and finally poles. Chest response combines actual acceleration with the residual between pelvis and torso carve channels; the head counters only a small share and yields to Phase 8 spotting. Free arms follow torso acceleration asymmetrically, while the active grab hand progressively suppresses inertia during reach and almost fully suppresses it at contact. Pole-local inertia is driven by measured hand acceleration and yaw acceleration, tightens during compact spins, and settles faster when its driving signal disappears. Terrain and landing compression velocity supply a small leg rebound through hip/knee/boot only; skis remain rigidly attached to boots.
-
-The final transform pass now uses a joint response hierarchy rather than one rate for the entire rig: skis/boots and legs respond first, then pelvis, spine, chest/head, shoulders, elbows/hands, and poles. POP temporarily raises each rate by a body-part-specific share without making poles as fast as the feet. Crossover carry is allowed to decay after takeoff, heading/travel input is filtered before reaching chest/head, and air flex decays instead of being cleared immediately.
-
-Conflicting ownership was reduced rather than hidden behind larger clamps. Phase 5 owns symmetric spin leg compactness while Phase 8 contributes only directional asymmetry and pelvis organization. Phase 6 owns landing leg extension as its anticipation rises; Phase 8 landing/open arms yield progressively. Grab leg contribution yields near landing, and landing compression preserves headroom for terrain-driven leg flex.
-
-`tests/animation_polish_acceptance.tscn` replays one uninterrupted straight→S-turns→uneven-terrain→pop→360→grab→release→landing→rail→exit→landing→ski-away sequence at 30, 60, and 120 Hz. It checks rate-equivalent final poses and lag amplitudes, stable spin-grab contact, bounded transforms and one-frame deltas, signal clamps, pole settling, and traversal of every existing locomotion state without changing root physics.
-
-`tests/animation_silhouette_acceptance.tscn` uses the real `SkiCameraController` following a disabled/manual `SkierController`, not a surrogate static camera. It checks neutral/carve/slarve/hockey stop, regular/switch, spin phases, frontflip/backflip/cork, 50-50/boardslide, straight air/grabs/styles, delayed descent readiness, and stomp. Every representative pair must move at least one landmark by 12% of projected body height and at least three landmarks by 5%. Direct joint tests remain for anatomy, timing, and root-authority invariants.
-
-`tests/animation_silhouette_inspection.tscn` is the deterministic visual companion. With `--capture-silhouette-showcase`, it records a 21.6-second, 30 fps sequence through the actual follow camera covering neutral, carve, slarve, switch, straight air, evolving spin, grab, all styles, all rotation families, both rail silhouettes, delayed landing preparation, and clean stomp. It writes the MP4 and 18 representative PNG frames to `.godot_user/captures/` for normal-speed and still-frame review.
-
-## Pose library
-
-- Ground: neutral glide, speed crouch, left/right carve, deep carve, tuck, left/right hockey stop, jump compression, terrain absorption, and recovery reactions.
-- Air: directional Flick-It setup/release, compact spin with head spotting, progressive front/back flip tuck, asymmetric left/right cork, release/open, landing anticipation, and switch counter-pose.
-- Landing: descent preparation, contact compression, severity-scaled recovery, rough-landing wobble, and spin residual correction.
-- Tricks: safety, mute, Japan, tail, nose, double grab, spread eagle, daffy, and mirrored shifty left/right.
-- Rails: approach anticipation, entry absorption, 50-50 slide, intent-driven left/right boardslide with chest counter-rotation, arms-led balance correction, exit anticipation, and a fading release into air.
-- Reactions: pop extension, predictive pre-bail, directional crash release/impact/fall/rest, and blended respawn reset.
-
-Pose construction follows the fixed ownership order documented above. Continuous trigger pressure weights the grab layer. Data-driven shared shapes, ski-local grab markers, whole-body compactness, target-leg folding, and a bounded procedural two-bone finish make supported grabs physically readable while keeping style-only poses separate. Landing prediction reduces grab influence without silently clearing late gameplay input, then Phase 6 realigns the skis before contact. Respawn clears every temporal channel immediately but lets visible joints return through the normal hierarchy, avoiding a one-frame pose snap.
-
-Pose blending uses exponential response values from `SkierAnimationProfile`. Stance angles, speed crouch, carve load references, upper/lower-body angles, crossover timing, per-layer and per-joint response rates, bounded inertial gains, terrain following/influence/normal response, pelvis follow and limits, leg travel/rebound, pole trailing, jump anticipation, air-phase timing/compact, landing anticipation/readiness thresholds and weights, near-contact readiness response, corrective pose gain, landing compression/recovery/wobble, pre-bail response, controlled-crash stages, Flick-It response, head spotting, grab compression, reaction durations, and rail values are centralized in `resources/animation/default_animation_profile.tres`.
-
-## Camera stability at low speed
-
-The ground follow camera blends between gameplay-body facing and horizontal travel direction. Facing dominates below `trajectory_heading_speed_threshold`; travel reaches full influence only at `trajectory_heading_full_speed`. The blended heading is itself damped, so tiny velocity sign changes while pivoting at 0–3 km/h cannot request a nearly instantaneous orbit reversal. Air and crash profiles retain the last meaningful trajectory heading below the same threshold so root trick rotation does not steer the camera.
-
-Collision probing starts above the gameplay target, excludes the skier collider, and applies terrain clearance. A final safety pass enforces minimum target distance and up offset, rejects non-finite positions, and falls back to the last stable camera position rather than accepting a collapsed or under-target pose. Camera telemetry exposes desired/actual forward and yaw, target/desired/actual positions, target distance, horizontal velocity/speed, and player facing. `tests/camera_low_speed_acceptance.tscn` repeatedly crosses the former low-speed heading boundary while aggressively pivoting, then verifies framing distance, terrain clearance, and bounded per-frame travel.
-
-## Debugging and tests
-
-F3 adds animation state, active pose, blend value, air phase, jump size, charge anticipation, trick active/intent, spin direction, filtered yaw/pitch/roll rates, accumulated/residual rotation, prewind/release/pose/compactness/spotting/landing weights, grab type/hand/ski/phase/pose/contact/reach/hold values, landing phase/severity/balance/compression, landing anticipation/readiness and component scores, readiness validity, projected heading/residual errors, rail phase/influence/approach-anticipation/entry-severity/entry-compression/slide-angle/exit-anticipation, crash reason/source/stage/impact/angular/balance/rest values, pre-bail weight, filtered inertial signals, torso/arm/pole lag magnitudes, secondary-motion weight, Flick-It command, and presentation phase to the debug HUD. World debug lines include physical root forward, velocity direction, predicted contact, and active hand-to-ski target lines. `tests/animation_acceptance.tscn` drives the module through synthetic frames and verifies rig structure, low/high-speed athletic stance, pole trail, mirrored loaded carves, inside/outside leg differentiation, upper/lower-body separation, crossover response order and unloading, linked S-turns, layered air poses, continuous hand reach, opening/landing behavior, pre-bail/crash reactions, and one-shot reactions without changing physics internals.
-
-`tests/terrain_suspension_course.tscn` builds a controlled lane with smooth snow, rollers, asymmetric left/right bumps, a dip, a crest, and a deliberately awkward ramp/trough/recovery transition. It verifies independent compression/extension, calmer pelvis travel, limited normal following, grounded/air blending, confidence attenuation and recovery, bounded one-frame ski/pelvis/leg changes, low/medium/high-speed traversal, and linked carve-plus-terrain behavior.
-
-`tests/skeleton_rig_acceptance.tscn` additionally drives the production Skeleton3D through straight skiing, mirrored hard carves, switch, jump, 360/720, frontflip/backflip/cork, spread/daffy/shifty, rail/boardslide, landing, and crash stages plus all nine grabs. It verifies mapped world orientation, fixed helper poses, invariant limb lengths, finite and bounded landmarks, boot/ski and hand/pole attachment stability, and a production wrist-to-attached-ski reach envelope. Tail and nose ski pitch signs are locked here so their contact markers cannot regress away from the reaching hand.
-
-`tests/jump_animation_acceptance.tscn` verifies charge anticipation, pop extension, takeoff/early-air/apex/descent sequencing, jump-size scaling, terrain-hop restraint, straight-air ski control, and physics-driven spin support.
-
-`tests/landing_animation_acceptance.tscn` verifies landing anticipation, slope-aware severity, compression scaling, downslope vs flat response, tiny-hop restraint, recovery timing, rough-landing wobble, spin correction, uneven contact, and steering during recovery.
-
-`tests/trick_animation_acceptance.tscn` verifies the Phase 8 intent→prewind→release→rotation→spot/open→landing sequence against supported yaw, pitch, and roll gameplay data without adding grabs or new trick physics.
-
-`tests/grab_animation_acceptance.tscn` verifies Phase 9's setup→reach→contact→hold→release→recover sequence, supported target mappings, spin/landing layering, bounded anatomy, target tracking, and released-grab scoring persistence.
-
-`tests/animation_polish_acceptance.tscn` verifies the frozen final stack: filtered motion signals, connected response hierarchy, torso/arm/pole follow-through, grab-contact priority, transition continuity, controlled crash/respawn, settling, and full-run equivalence at 30/60/120 Hz.
+Output is written under `.godot_user/captures/`.
