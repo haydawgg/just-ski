@@ -48,6 +48,7 @@ $scenes = @(
 	"res://tests/trick_rotation_state_acceptance.tscn",
 	"res://tests/air_rotation_integrator_acceptance.tscn",
 	"res://tests/flick_takeoff_release_acceptance.tscn",
+	"res://tests/trick_rotation_benchmark.tscn",
 	"res://tests/flick_gameplay_acceptance.tscn",
 	"res://tests/trick_ui_acceptance.tscn",
 	"res://tests/session_flow_acceptance.tscn",
