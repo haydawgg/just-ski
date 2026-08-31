@@ -10,6 +10,12 @@ extends Node3D
 
 enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 
+const COMPOSITION_LANDMARK_NAMES := [
+	&"head", &"pelvis", &"left_hand", &"right_hand",
+	&"left_knee", &"right_knee", &"left_boot", &"right_boot",
+	&"left_ski_nose", &"right_ski_nose", &"left_ski_tail", &"right_ski_tail",
+]
+
 @export_group("Framing")
 @export var follow_distance := 4.3
 @export var follow_height := 1.45
@@ -24,7 +30,10 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var air_height_rise_rate := 5.0
 @export var air_height_fall_rate := 7.0
 @export var air_vertical_dead_zone := 0.5
+@export var air_vertical_recovery_zone := 1.15
 @export var air_vertical_anchor_response := 3.4
+@export var air_vertical_edge_response := 9.0
+@export var air_vertical_hard_recovery_response := 20.0
 
 @export_group("Position Spring")
 @export var spring_strength := 14.0
@@ -53,6 +62,22 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var collision_correction_speed := 8.0
 @export var maximum_position_speed := 30.0
 @export var maximum_distance_change_rate := 2.4
+@export var camera_collision_radius := 0.22
+@export var crash_target_height := 0.62
+@export var surface_clearance := 0.12
+
+@export_group("Screen Composition")
+@export var composition_inner_rect := Rect2(0.30, 0.24, 0.40, 0.36)
+@export var composition_hard_rect := Rect2(0.10, 0.08, 0.80, 0.80)
+@export var composition_landing_rect := Rect2(0.14, 0.46, 0.72, 0.36)
+@export var composition_screen_padding := Vector2(0.015, 0.02)
+@export var composition_recovery_response := 12.0
+@export var composition_hard_recovery_response := 24.0
+@export var composition_recovery_speed := 300.0
+@export var composition_shoulder_offset := 2.6
+@export var maximum_fov_change_rate := 24.0
+@export var maximum_body_occlusion_fraction := 0.25
+@export var maximum_landing_occlusion_fraction := 0.40
 
 @export_group("Carve Look")
 @export var look_heading_weight_min := 0.15
@@ -60,6 +85,9 @@ enum CameraState { GROUND, AIR, LANDING, RAIL, CRASH }
 @export var heading_angle_reference := 45.0
 @export var landing_heading_weight := 0.05
 @export var turn_look_ahead_gain := 1.8
+@export var carve_look_ahead_gain := 0.08
+@export var carve_look_ahead_max := 2.0
+@export var carve_look_ahead_rate := 3.5
 @export var predicted_landing_look_weight := 0.38
 
 @export_group("Look-ahead & FOV")
@@ -116,6 +144,7 @@ var _air_anchor_valid := false
 var _smoothed_speed_distance := 0.0
 var _smoothed_speed_height := 0.0
 var _smoothed_look_ahead := look_ahead_min
+var _smoothed_carve_look_ahead_offset := Vector3.ZERO
 var _trajectory_dir := Vector3.FORWARD
 var _air_time := 0.0
 var _landing_timer := 0.0
@@ -132,6 +161,21 @@ var _desired_camera_forward := Vector3.FORWARD
 var _debug_horizontal_velocity := Vector3.ZERO
 var _debug_facing_forward := Vector3.FORWARD
 var _collision_reframed := false
+var _camera_occluded := false
+var _camera_clearance := 1.0
+var _camera_fallback_count := 0
+var _target_screen_position := Vector2.ZERO
+var _last_compositionally_valid_pose := Transform3D.IDENTITY
+var _composition_initialized := false
+var _composition_valid := false
+var _composition_recovery_active := false
+var _skier_screen_rect := Rect2()
+var _landing_screen_position := Vector2.ZERO
+var _landing_look_weight := 0.0
+var _foreground_occlusion_fraction := 0.0
+var _last_distance_rate := 0.0
+var _last_fov_rate := 0.0
+var _previous_target_distance := 0.0
 
 func _ready() -> void:
 	camera = Camera3D.new()
@@ -170,12 +214,31 @@ func reset_immediate() -> void:
 	_smoothed_speed_distance = clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
 	_smoothed_speed_height = clampf(speed * speed_height_gain, 0.0, speed_height_cap)
 	_smoothed_look_ahead = clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max)
+	_smoothed_carve_look_ahead_offset = Vector3.ZERO
 	_desired_camera_forward = global_position.direction_to(target.global_position + _yaw_dir * _smoothed_look_ahead + up * look_height_offset)
 	var planar := target.velocity.slide(up)
 	_trajectory_dir = planar.normalized() if planar.length() > trajectory_heading_speed_threshold else _yaw_dir
 	_air_time = 0.0
 	_landing_timer = 0.0
+	_profile_distance = 0.0
+	_profile_height = 0.0
+	_profile_fov = 0.0
+	_profile_yaw_scale = 1.0
+	_profile_look_ahead = 0.0
+	_smoothed_heading_weight = 0.0
 	_smoothed_bank = 0.0
+	_collision_reframed = false
+	_camera_occluded = false
+	_camera_clearance = maximum_camera_distance
+	_camera_fallback_count = 0
+	_composition_valid = false
+	_composition_recovery_active = false
+	_skier_screen_rect = Rect2()
+	_landing_screen_position = Vector2.ZERO
+	_landing_look_weight = 0.0
+	_foreground_occlusion_fraction = 0.0
+	_last_distance_rate = 0.0
+	_last_fov_rate = 0.0
 	if skier != null:
 		match skier.state:
 			SkierController.State.AIR:
@@ -188,9 +251,23 @@ func reset_immediate() -> void:
 				camera_state = CameraState.GROUND
 	else:
 		camera_state = CameraState.GROUND
-	camera.fov = base_fov + clampf(speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain
 	_update_profile(skier, 1000.0)
+	camera.fov = clampf(
+		base_fov + clampf(speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain + _profile_fov,
+		1.0,
+		179.0
+	)
 	look_at(target.global_position + _yaw_dir * _smoothed_look_ahead + up * look_height_offset, Vector3.UP)
+	# Seed the fallback only with a pose that satisfies the same composition
+	# contract used during the frame loop. An unvalidated reset pose can be
+	# rejected later as a fallback, wasting a recovery pass and incrementing the
+	# fallback counter on the very first frame.
+	_last_compositionally_valid_pose = Transform3D.IDENTITY
+	var reset_evaluation := _evaluate_composition(global_position, global_basis, camera.fov, up)
+	if _composition_candidate_is_valid(reset_evaluation):
+		_last_compositionally_valid_pose = global_transform
+	_previous_target_distance = global_position.distance_to(target.global_position)
+	_composition_initialized = true
 
 func _physics_process(delta: float) -> void:
 	if target == null:
@@ -249,6 +326,10 @@ func _physics_process(delta: float) -> void:
 	var framing_target := target.global_position
 	if camera_state == CameraState.AIR:
 		framing_target = _air_framing_target(target.global_position, up, delta)
+	elif camera_state == CameraState.CRASH:
+		# Keep the pelvis/upper body in frame while the skier rotates through a
+		# bail; the feet may legitimately disappear into the snow during rest.
+		framing_target += up * crash_target_height
 
 	var speed_distance_target := clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
 	var speed_height_target := clampf(speed * speed_height_gain, 0.0, speed_height_cap)
@@ -268,16 +349,17 @@ func _physics_process(delta: float) -> void:
 	var collision_candidate := _avoid_collision(target.global_position + up * collision_probe_height, global_position, up, travel)
 	var collision_safe := collision_candidate
 	if _collision_reframed:
-		# Reframing is a camera presentation change, not a teleport. Blend the
-		# safe candidate from the spring position before enforcing hard clearance.
-		collision_safe = pre_collision_position.lerp(collision_candidate, 1.0 - exp(-collision_correction_speed * delta))
+		# Never blend from the spring destination after it has been rejected by the
+		# swept-volume query. The correction-rate clamp below provides smoothing
+		# while keeping the committed endpoint collision-safe.
+		collision_safe = collision_candidate
 	var stabilized := _stabilize_camera_position(collision_safe, up, travel)
 	var correction := stabilized - pre_collision_position
 	var correction_limit := collision_correction_speed * delta
 	if correction.length() > correction_limit and correction_limit > 0.0:
 		stabilized = pre_collision_position + correction.normalized() * correction_limit
 	var target_position := target.global_position
-	var previous_distance := frame_start_position.distance_to(target_position)
+	var previous_distance := _previous_target_distance if _previous_target_distance > 0.0 else frame_start_position.distance_to(target_position)
 	var current_distance := stabilized.distance_to(target_position)
 	var distance_rate_limit := maximum_distance_change_rate * delta
 	if distance_rate_limit > 0.0 and absf(current_distance - previous_distance) > distance_rate_limit:
@@ -302,16 +384,26 @@ func _physics_process(delta: float) -> void:
 		)
 	var look_ahead_target := maxf(clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max) + turn_look_ahead, _profile_look_ahead)
 	_smoothed_look_ahead = lerpf(_smoothed_look_ahead, look_ahead_target, 1.0 - exp(-look_ahead_rate * delta))
+	var carve_look_ahead_target := Vector3.ZERO
+	if skier != null and camera_state in [CameraState.GROUND, CameraState.LANDING] and planar_speed > trajectory_heading_speed_threshold and absf(skier.heading_travel_angle_degrees) > 2.0:
+		carve_look_ahead_target = planar.normalized() * clampf(planar_speed * carve_look_ahead_gain, 0.0, carve_look_ahead_max)
+	_smoothed_carve_look_ahead_offset = _smoothed_carve_look_ahead_offset.lerp(
+		carve_look_ahead_target,
+		1.0 - exp(-carve_look_ahead_rate * delta)
+	)
 	var look_dir := travel
 	if skier != null and _smoothed_heading_weight > 0.005:
 		var heading := (-target.global_basis.z).slide(up).normalized()
 		if heading.length_squared() > 0.05:
 			look_dir = _slerp_direction(travel, heading, _smoothed_heading_weight)
-	var look_target := framing_target + look_dir * _smoothed_look_ahead + up * look_height_offset
+	var look_target := framing_target + look_dir * _smoothed_look_ahead + _smoothed_carve_look_ahead_offset + up * look_height_offset
+	var landing_weight := 0.0
 	if skier != null and camera_state == CameraState.AIR and skier.predicted_landing_valid and skier.velocity.dot(up) < 0.0:
-		var landing_weight := 1.0 - clampf(skier.predicted_landing_time / 0.75, 0.0, 1.0)
+		landing_weight = 1.0 - clampf(skier.predicted_landing_time / 0.75, 0.0, 1.0)
 		landing_weight = smoothstep(0.0, 1.0, landing_weight) * predicted_landing_look_weight
+		landing_weight = _constrain_landing_look_weight(look_target, skier.predicted_landing_point + up * look_height_offset, landing_weight, up)
 		look_target = look_target.lerp(skier.predicted_landing_point + up * look_height_offset, landing_weight)
+	_landing_look_weight = landing_weight
 	var desired_forward := global_position.direction_to(look_target)
 	_desired_camera_forward = desired_forward
 
@@ -338,7 +430,122 @@ func _physics_process(delta: float) -> void:
 	global_basis = Basis.looking_at(blended_forward, banked_up)
 
 	var fov_target := base_fov + clampf(speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain + _profile_fov
-	camera.fov = lerpf(camera.fov, fov_target, 1.0 - exp(-fov_rate * delta))
+	var fov_before := camera.fov
+	var fov_step := (fov_target - fov_before) * (1.0 - exp(-fov_rate * delta))
+	var fov_limit := maximum_fov_change_rate * delta
+	if fov_limit > 0.0:
+		fov_step = clampf(fov_step, -fov_limit, fov_limit)
+	camera.fov = clampf(fov_before + fov_step, 1.0, 179.0)
+	_last_fov_rate = absf(camera.fov - fov_before) / maxf(delta, 0.0001)
+
+	# Composition evaluates candidate poses before the final distance, movement,
+	# surface, and collision guards below. Keep the smoothed orientation from
+	# before that evaluation so a rejected or rate-limited candidate cannot
+	# replace the orientation controller.
+	var composition_basis := global_basis
+	_apply_screen_composition(frame_start_position, up, travel, look_target, delta)
+	var final_position := global_position
+	var final_distance := final_position.distance_to(target.global_position)
+	var frame_distance := _previous_target_distance if _previous_target_distance > 0.0 else frame_start_position.distance_to(target.global_position)
+	var final_distance_limit := maximum_distance_change_rate * delta
+	if final_distance_limit > 0.0 and absf(final_distance - frame_distance) > final_distance_limit:
+		var bounded_distance := frame_distance + clampf(final_distance - frame_distance, -final_distance_limit, final_distance_limit)
+		var final_radial := final_position - target.global_position
+		if final_radial.length_squared() > 0.001:
+			final_position = target.global_position + final_radial.normalized() * bounded_distance
+	var final_translation := final_position - frame_start_position
+	var fast_composition_state := camera_state in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]
+	var final_translation_limit := (composition_recovery_speed if fast_composition_state and _composition_recovery_active else maximum_position_speed) * delta
+	if final_translation_limit > 0.0 and final_translation.length() > final_translation_limit:
+		final_position = frame_start_position + final_translation.normalized() * final_translation_limit
+	# Composition recovery is allowed to move quickly, but it must not use that
+	# freedom to defeat the independent camera-distance rate limit. Apply the
+	# radial limit again after the translation limit, which is the final point at
+	# which composition can change the camera position.
+	var post_composition_distance := final_position.distance_to(target.global_position)
+	if final_distance_limit > 0.0 and absf(post_composition_distance - frame_distance) > final_distance_limit:
+		var bounded_post_distance := frame_distance + clampf(
+			post_composition_distance - frame_distance,
+			-final_distance_limit,
+			final_distance_limit
+		)
+		var post_radial := final_position - target.global_position
+		if post_radial.length_squared() > 0.001:
+			final_position = target.global_position + post_radial.normalized() * bounded_post_distance
+	var final_offset := final_position - target.global_position
+	if final_offset.length_squared() > 0.001 and final_offset.length() < minimum_camera_distance:
+		# A straight interpolation between two valid radial poses can cross the
+		# minimum-distance sphere when the heading pivots. Hold the prior valid
+		# pose instead of projecting onto the sphere and snapping its direction.
+		final_position = frame_start_position
+		final_offset = final_position - target.global_position
+	var final_up_offset := final_offset.dot(up)
+	if final_up_offset < minimum_camera_up_offset and final_offset.length_squared() > 0.001:
+		if final_offset.length() >= minimum_camera_distance:
+			# The target can move vertically far enough in one fixed step that the
+			# previous camera position falls just below the playable up-offset. Keep
+			# the rate-limited radius and rotate the offset onto the minimum-up
+			# boundary instead of falling back to a pose whose distance is measured
+			# against the new target and therefore pumps the zoom channel.
+			var final_planar := final_offset - up * final_up_offset
+			if final_planar.length_squared() > 0.001:
+				var bounded_planar_length := sqrt(maxf(final_offset.length_squared() - minimum_camera_up_offset * minimum_camera_up_offset, 0.0))
+				final_position = target.global_position + final_planar.normalized() * bounded_planar_length + up * minimum_camera_up_offset
+			else:
+				final_position = frame_start_position
+		else:
+			final_position = frame_start_position
+		final_offset = final_position - target.global_position
+	# Absolute maximum distance must be enforced after all rate limits and
+	# translation clamps. This is the final guard before committing the pose.
+	var absolute_distance := final_offset.length()
+	if absolute_distance > maximum_camera_distance + 0.001:
+		var clamp_dir := final_offset.normalized() if final_offset.length_squared() > 0.001 else -travel
+		if clamp_dir.length_squared() < 0.001:
+			clamp_dir = Vector3.BACK
+		final_position = target.global_position + clamp_dir * maximum_camera_distance
+		# Re-check up_offset after max clamp; if violated, fall back.
+		var clamped_up := (final_position - target.global_position).dot(up)
+		if clamped_up < minimum_camera_up_offset - 0.001:
+			final_position = frame_start_position
+	# Ensure the final translation-capped pose is still above the snow surface.
+	if get_world_3d() != null:
+		var surface_query := PhysicsRayQueryParameters3D.create(final_position + up * 8.0, final_position - up * 8.0, 1)
+		surface_query.exclude = [target.get_rid()]
+		var surface_hit := get_world_3d().direct_space_state.intersect_ray(surface_query)
+		if not surface_hit.is_empty() and surface_hit.position is Vector3:
+			var surface_height := (surface_hit.position as Vector3).dot(up)
+			var cand_height := final_position.dot(up)
+			if cand_height < surface_height + surface_clearance:
+				final_position = frame_start_position
+	# All radial/translation/surface clamps above can change the swept segment.
+	# Revalidate the final segment and destination before committing the pose.
+	var final_trace := _trace_camera_candidate(frame_start_position, final_position)
+	if bool(final_trace.get("hit", false)) or not _camera_destination_is_clear(final_position):
+		var held_position := _last_stable_camera_position
+		var held_trace := _trace_camera_candidate(frame_start_position, held_position)
+		if not bool(held_trace.get("hit", false)) and _camera_destination_is_clear(held_position):
+			final_position = held_position
+		else:
+			var trace_position := final_trace.get("position", frame_start_position) as Vector3
+			if trace_position.is_finite() and _camera_destination_is_clear(trace_position):
+				final_position = trace_position
+			else:
+				final_position = frame_start_position
+	global_position = final_position
+	# A composition candidate can carry a basis that is correct for its proposed
+	# position but wrong for the final committed position after the clamps above.
+	# Preserve the already-smoothed orientation in that case; otherwise the next
+	# frame's screen-space solver can alternate between incompatible candidate
+	# sides and feed the position correction back into yaw.
+	if camera_state in [CameraState.GROUND, CameraState.LANDING, CameraState.RAIL]:
+		# On the stable follow path, composition is allowed to move the camera but
+		# never to replace the trajectory-smoothed orientation. Ground recovery can
+		# otherwise turn a small screen correction into a camera orbit.
+		global_basis = composition_basis
+	_last_distance_rate = absf(global_position.distance_to(target.global_position) - frame_distance) / maxf(delta, 0.0001)
+	_previous_target_distance = global_position.distance_to(target.global_position)
+	_update_composition_telemetry(up)
 
 func _update_camera_state(skier: SkierController, delta: float) -> void:
 	if skier == null:
@@ -373,8 +580,443 @@ func _air_framing_target(player_position: Vector3, up: Vector3, delta: float) ->
 		target_height = _air_anchor_height
 	else:
 		target_height = player_height - signf(height_delta) * air_vertical_dead_zone
-	_air_anchor_height = lerpf(_air_anchor_height, target_height, 1.0 - exp(-air_vertical_anchor_response * delta))
+	var displacement := absf(height_delta)
+	var recovery_span := maxf(air_vertical_recovery_zone - air_vertical_dead_zone, 0.001)
+	var edge_weight := smoothstep(
+		0.0,
+		1.0,
+		clampf((displacement - air_vertical_dead_zone) / recovery_span, 0.0, 1.0)
+	)
+	var response := lerpf(air_vertical_anchor_response, air_vertical_edge_response, edge_weight)
+	if displacement > air_vertical_recovery_zone:
+		var hard_span := maxf(air_vertical_recovery_zone * 0.5, 0.001)
+		var hard_weight := smoothstep(0.0, 1.0, clampf((displacement - air_vertical_recovery_zone) / hard_span, 0.0, 1.0))
+		response = lerpf(air_vertical_edge_response, air_vertical_hard_recovery_response, hard_weight)
+	_air_anchor_height = lerpf(_air_anchor_height, target_height, 1.0 - exp(-response * delta))
 	return player_position + up * (_air_anchor_height - player_height)
+
+func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, travel: Vector3, look_target: Vector3, delta: float) -> void:
+	if target == null or not _composition_initialized or camera == null:
+		return
+	var base_position := global_position
+	var base_evaluation := _evaluate_composition(base_position, global_basis, camera.fov, up)
+	var candidates: Array[Vector3] = [base_position]
+	var soft_composition_state := camera_state in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]
+	if camera_state in [CameraState.GROUND, CameraState.LANDING, CameraState.RAIL]:
+		# Ground follow already has a stable spring, heading, and collision path.
+		# Do not orbit around the skier trying to satisfy a transient screen-space
+		# bound; that recovery can turn a small framing error into lateral drift.
+		_composition_recovery_active = not _composition_hard_valid(base_evaluation)
+		_composition_valid = _composition_candidate_is_valid(base_evaluation)
+		return
+	if not soft_composition_state and _composition_hard_valid(base_evaluation):
+		# Preserve the existing ground-camera solution when it already frames the
+		# skier. Re-solving every ground frame can turn a heading pivot into a
+		# camera teleport.
+		_composition_recovery_active = false
+		_composition_valid = true
+		return
+	var right := global_basis.x.normalized()
+	var camera_up := global_basis.y.normalized()
+	var lift := up.normalized() * collision_reframe_lift
+	var shoulder := right * composition_shoulder_offset
+	if soft_composition_state or not _composition_hard_valid(base_evaluation):
+		for offset: Vector3 in [
+			camera_up * collision_reframe_lift,
+			shoulder + camera_up * collision_reframe_lift * 0.45,
+			-shoulder + camera_up * collision_reframe_lift * 0.45,
+			lift,
+			lift + shoulder,
+			lift - shoulder,
+		]:
+			candidates.append(base_position + offset)
+
+	var inner_correction := _screen_correction_world_offset(base_evaluation, composition_inner_rect, global_basis, camera.fov) if soft_composition_state else Vector3.ZERO
+	var hard_correction := _screen_correction_world_offset(base_evaluation, composition_hard_rect, global_basis, camera.fov)
+	if inner_correction.length_squared() > 0.0001:
+		candidates.append(base_position + inner_correction)
+	if hard_correction.length_squared() > 0.0001:
+		candidates.append(base_position + hard_correction)
+
+	var best_position := base_position
+	var best_basis := global_basis
+	var best_evaluation := base_evaluation
+	var best_score := INF
+	var found_candidate := false
+	var best_safe_position := base_position
+	var best_safe_basis := global_basis
+	var best_safe_evaluation := base_evaluation
+	var best_safe_score := INF
+	var found_safe_candidate := false
+	for raw_candidate: Vector3 in candidates:
+		var safe_result := _safe_composition_candidate(base_position, raw_candidate, up, travel)
+		if not bool(safe_result.get("valid", false)):
+			continue
+		var candidate_position := safe_result.position as Vector3
+		var candidate_basis := global_basis if candidate_position.distance_squared_to(base_position) < 0.000001 else _look_basis_for_pose(candidate_position, look_target, up)
+		var evaluation := _evaluate_composition(candidate_position, candidate_basis, camera.fov, up)
+		var score := _composition_score(evaluation, candidate_position.distance_to(base_position))
+		if not found_safe_candidate or score < best_safe_score:
+			found_safe_candidate = true
+			best_safe_score = score
+			best_safe_position = candidate_position
+			best_safe_basis = candidate_basis
+			best_safe_evaluation = evaluation
+		if not _composition_candidate_is_valid(evaluation):
+			continue
+		if not found_candidate or score < best_score:
+			found_candidate = true
+			best_score = score
+			best_position = candidate_position
+			best_basis = candidate_basis
+			best_evaluation = evaluation
+
+	var base_requires_recovery := not _composition_candidate_is_valid(base_evaluation)
+	var base_near_edge := soft_composition_state and float(base_evaluation.get("inner_violation", 0.0)) > 0.0001
+	_composition_recovery_active = base_requires_recovery or base_near_edge
+	if not found_candidate:
+		_camera_fallback_count += 1
+		var fallback_position := _last_compositionally_valid_pose.origin
+		var fallback_result := _safe_composition_candidate(base_position, fallback_position, up, travel)
+		if bool(fallback_result.get("valid", false)):
+			var fallback_evaluation := _evaluate_composition(fallback_result.position as Vector3, _last_compositionally_valid_pose.basis, camera.fov, up)
+			if _composition_candidate_is_valid(fallback_evaluation):
+				best_position = fallback_result.position as Vector3
+				best_basis = _last_compositionally_valid_pose.basis
+				best_evaluation = fallback_evaluation
+				found_candidate = true
+		if not found_candidate and found_safe_candidate:
+			# No valid composition was reachable this frame. Use the closest
+			# collision-safe correction immediately; the recovery flag and invalid
+			# telemetry tell callers that the hard guarantee could not be met.
+			best_position = best_safe_position
+			best_basis = best_safe_basis
+			best_evaluation = best_safe_evaluation
+			found_candidate = true
+
+	if found_candidate:
+		var correction_response := composition_hard_recovery_response if base_requires_recovery else (composition_recovery_response if base_near_edge else 0.0)
+		var correction_weight := 1.0 if base_requires_recovery else (1.0 - exp(-correction_response * delta))
+		if base_requires_recovery:
+			# The candidate has already passed the swept-volume and composition
+			# checks. Use it immediately so the ordinary spring cannot keep the
+			# camera behind the same foreground feature.
+			global_position = best_position
+			global_basis = best_basis
+			best_evaluation = _evaluate_composition(global_position, global_basis, camera.fov, up)
+		else:
+			var composed_position := base_position.lerp(best_position, correction_weight)
+			var composed_result := _safe_composition_candidate(base_position, composed_position, up, travel)
+			if bool(composed_result.get("valid", false)):
+				global_position = composed_result.position as Vector3
+				var basis_weight := correction_weight if soft_composition_state else 0.0
+				if basis_weight > 0.0:
+					global_basis = _blend_camera_basis(global_basis, best_basis, basis_weight)
+				best_evaluation = _evaluate_composition(global_position, global_basis, camera.fov, up)
+
+	if _composition_candidate_is_valid(best_evaluation):
+		_last_compositionally_valid_pose = global_transform
+		_composition_valid = true
+	else:
+		_composition_valid = false
+
+func _composition_candidate_is_valid(evaluation: Dictionary) -> bool:
+	if not _composition_hard_valid(evaluation):
+		return false
+	var skier := target as SkierController
+	var requires_landing := skier != null and camera_state == CameraState.AIR and skier.predicted_landing_valid and skier.velocity.dot(_filtered_surface_up) < 0.0
+	return not requires_landing or bool(evaluation.get("landing_valid", false))
+
+func _safe_composition_candidate(from: Vector3, raw_candidate: Vector3, up: Vector3, travel: Vector3) -> Dictionary:
+	if not raw_candidate.is_finite():
+		return {"valid": false}
+	var start_clear := _camera_destination_is_clear(from)
+	var trace := _trace_camera_candidate(from, raw_candidate)
+	if start_clear and bool(trace.get("hit", false)):
+		return {"valid": false}
+	var stabilized := _stabilize_camera_position(raw_candidate, up, travel, false)
+	if not stabilized.is_finite():
+		return {"valid": false}
+	# Preserve the candidate's actual offset here. Radially projecting every
+	# lift/shoulder solution back to the old radius can put it back through the
+	# foreground feature it was selected to clear; the independent distance-rate
+	# limiter in _physics_process owns zoom smoothing.
+	stabilized = _keep_composition_camera_behind(stabilized, up, travel)
+	stabilized = _stabilize_camera_position(stabilized, up, travel, false)
+	var post_trace := _trace_camera_candidate(from, stabilized)
+	if not _camera_destination_is_clear(stabilized) or (start_clear and bool(post_trace.get("hit", false))):
+		return {"valid": false}
+	var offset := stabilized - target.global_position
+	var up_offset := offset.dot(up.normalized())
+	var distance := offset.length()
+	if distance < minimum_camera_distance - 0.001 or distance > maximum_camera_distance + 0.001 or up_offset < minimum_camera_up_offset - 0.001:
+		return {"valid": false}
+	return {"valid": true, "position": stabilized}
+
+func _camera_destination_is_clear(position: Vector3) -> bool:
+	if get_world_3d() == null:
+		return true
+	var sphere := SphereShape3D.new()
+	sphere.radius = maxf(camera_collision_radius, 0.05)
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = sphere
+	query.transform = Transform3D(Basis.IDENTITY, position)
+	query.collision_mask = 1 | 4
+	query.exclude = [target.get_rid()] if target != null else []
+	query.margin = collision_clearance
+	return get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
+
+func _keep_composition_camera_behind(candidate: Vector3, up: Vector3, travel: Vector3) -> Vector3:
+	if target == null or camera_state not in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]:
+		return candidate
+	var safe_travel := travel.slide(up).normalized()
+	if safe_travel.length_squared() < 0.001:
+		return candidate
+	var target_position := target.global_position
+	var offset := candidate - target_position
+	var up_offset := offset.dot(up.normalized())
+	var planar := offset - up.normalized() * up_offset
+	var behind_distance := planar.dot(-safe_travel)
+	if behind_distance < minimum_behind_distance:
+		planar += -safe_travel * (minimum_behind_distance - behind_distance)
+		candidate = target_position + planar + up.normalized() * up_offset
+	return candidate
+
+func _evaluate_composition(camera_position: Vector3, camera_basis: Basis, fov: float, up: Vector3) -> Dictionary:
+	var landmarks := _composition_landmarks()
+	var viewport_size := _composition_viewport_size()
+	var bounds := Rect2()
+	var bounds_initialized := false
+	var average_depth := 0.0
+	var depth_count := 0
+	var body_occluded := 0
+	var behind_count := 0
+	for world_position: Vector3 in landmarks:
+		var projected := _project_composition_point(camera_position, camera_basis, fov, viewport_size, world_position)
+		var depth_val := float(projected.depth)
+		if depth_val <= 0.01:
+			behind_count += 1
+			body_occluded += 1
+			continue
+		var screen := projected.screen as Vector2
+		if not screen.is_finite():
+			behind_count += 1
+			body_occluded += 1
+			continue
+		if not bounds_initialized:
+			bounds = Rect2(screen, Vector2.ZERO)
+			bounds_initialized = true
+		else:
+			bounds = bounds.expand(screen)
+		average_depth += depth_val
+		depth_count += 1
+		if _is_foreground_occluded(camera_position, world_position):
+			body_occluded += 1
+	if not bounds_initialized:
+		bounds = Rect2(-10.0, -10.0, 20.0, 20.0)
+	var depth := average_depth / maxf(float(depth_count), 1.0)
+	var body_occlusion := float(body_occluded) / maxf(float(landmarks.size()), 1.0)
+	var hard_violation := _rect_violation(bounds, composition_hard_rect)
+	var inner_violation := _rect_violation(bounds, composition_inner_rect)
+	if behind_count > 0:
+		hard_violation = INF
+		inner_violation = INF
+	var landing_screen := Vector2.ZERO
+	var landing_violation := 0.0
+	var landing_occlusion := 0.0
+	var landing_valid := false
+	var skier := target as SkierController
+	var descending := skier != null and camera_state == CameraState.AIR and skier.predicted_landing_valid and skier.velocity.dot(up) < 0.0
+	if descending:
+		var landing_projection := _project_composition_point(camera_position, camera_basis, fov, viewport_size, skier.predicted_landing_point)
+		landing_screen = landing_projection.screen as Vector2
+		landing_violation = _rect_violation(Rect2(landing_screen, Vector2.ZERO), composition_landing_rect)
+		landing_occlusion = 1.0 if _is_foreground_occluded(camera_position, skier.predicted_landing_point) else 0.0
+		landing_valid = landing_violation <= 0.0001 and landing_occlusion <= maximum_landing_occlusion_fraction
+	return {
+		"skier_screen_rect": bounds,
+		"landing_screen_position": landing_screen,
+		"hard_violation": hard_violation,
+		"inner_violation": inner_violation,
+		"landing_violation": landing_violation,
+		"landing_occlusion": landing_occlusion,
+		"landing_valid": landing_valid,
+		"body_occlusion": body_occlusion,
+		"foreground_occlusion": maxf(body_occlusion, landing_occlusion),
+		"average_depth": depth,
+	}
+
+func _composition_score(evaluation: Dictionary, movement: float) -> float:
+	var hard_violation := float(evaluation.get("hard_violation", INF))
+	var inner_violation := float(evaluation.get("inner_violation", INF))
+	var landing_violation := float(evaluation.get("landing_violation", 0.0))
+	var body_occlusion := float(evaluation.get("body_occlusion", 1.0))
+	var landing_occlusion := float(evaluation.get("landing_occlusion", 0.0))
+	if not is_finite(hard_violation) or hard_violation == INF:
+		hard_violation = 1.0
+	if not is_finite(inner_violation) or inner_violation == INF:
+		inner_violation = 1.0
+	if not is_finite(movement):
+		movement = 0.0
+	var landing_penalty := landing_violation * 30.0 + landing_occlusion * 20.0
+	return hard_violation * 10000.0 + body_occlusion * 500.0 + inner_violation * 20.0 + landing_penalty + movement * 0.8
+
+func _composition_hard_valid(evaluation: Dictionary) -> bool:
+	return float(evaluation.get("hard_violation", INF)) <= 0.0001 and float(evaluation.get("body_occlusion", 1.0)) <= maximum_body_occlusion_fraction
+
+func _screen_correction_world_offset(evaluation: Dictionary, desired_rect: Rect2, camera_basis: Basis, fov: float) -> Vector3:
+	var bounds := evaluation.get("skier_screen_rect", Rect2()) as Rect2
+	var rect_end := desired_rect.position + desired_rect.size
+	var bounds_end := bounds.position + bounds.size
+	var screen_delta := Vector2.ZERO
+	if bounds.position.x < desired_rect.position.x:
+		screen_delta.x = desired_rect.position.x - bounds.position.x
+	elif bounds_end.x > rect_end.x:
+		screen_delta.x = rect_end.x - bounds_end.x
+	if bounds.position.y < desired_rect.position.y:
+		screen_delta.y = desired_rect.position.y - bounds.position.y
+	elif bounds_end.y > rect_end.y:
+		screen_delta.y = rect_end.y - bounds_end.y
+	if screen_delta.length_squared() < 0.000001:
+		return Vector3.ZERO
+	var depth := maxf(float(evaluation.get("average_depth", follow_distance)), minimum_camera_distance)
+	var viewport_size := _composition_viewport_size()
+	var aspect := viewport_size.x / maxf(viewport_size.y, 1.0)
+	var vertical_extent := 2.0 * depth * tan(deg_to_rad(fov) * 0.5)
+	var horizontal_extent := vertical_extent * aspect
+	return -camera_basis.x.normalized() * screen_delta.x * horizontal_extent + camera_basis.y.normalized() * screen_delta.y * vertical_extent
+
+func _composition_landmarks() -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	if target != null and target.has_method("animation_debug_landmark"):
+		for landmark: StringName in COMPOSITION_LANDMARK_NAMES:
+			var value := target.call("animation_debug_landmark", landmark) as Vector3
+			if value.is_finite():
+				points.append(value)
+	if points.size() < 2 and target != null:
+			points = [target.global_position, target.global_position + Vector3.UP * 1.8]
+	return points
+
+func _composition_viewport_size() -> Vector2:
+	var viewport_size := get_viewport().get_visible_rect().size if get_viewport() != null else Vector2.ZERO
+	if viewport_size.x > 1.0 and viewport_size.y > 1.0:
+		return viewport_size
+	# Detached/headless camera rigs still need the project's configured aspect;
+	# a fixed 1920x1080 fallback silently skewed screen-space correction on
+	# non-16:9 test or accessibility viewports.
+	var configured_width := float(ProjectSettings.get_setting("display/window/size/viewport_width", 1920))
+	var configured_height := float(ProjectSettings.get_setting("display/window/size/viewport_height", 1080))
+	return Vector2(maxf(configured_width, 1.0), maxf(configured_height, 1.0))
+
+func _project_composition_point(camera_position: Vector3, camera_basis: Basis, fov: float, viewport_size: Vector2, world_position: Vector3) -> Dictionary:
+	var camera_space := Transform3D(camera_basis, camera_position).affine_inverse() * world_position
+	var depth := -camera_space.z
+	var safe_depth := maxf(depth, 0.01)
+	var aspect := viewport_size.x / maxf(viewport_size.y, 1.0)
+	var focal_scale := 1.0 / tan(deg_to_rad(fov) * 0.5)
+	return {
+		"screen": Vector2(
+			0.5 + camera_space.x * focal_scale / (aspect * safe_depth) * 0.5,
+			0.5 - camera_space.y * focal_scale / safe_depth * 0.5
+		),
+		"depth": depth,
+	}
+
+func _is_foreground_occluded(camera_position: Vector3, world_position: Vector3) -> bool:
+	if get_world_3d() == null or target == null:
+		return false
+	var distance := camera_position.distance_to(world_position)
+	if distance <= 0.1:
+		return false
+	var query := PhysicsRayQueryParameters3D.create(camera_position, world_position, 1 | 4)
+	query.exclude = [target.get_rid()]
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty() or not (hit.position is Vector3):
+		return false
+	return (hit.position as Vector3).distance_to(camera_position) < distance - maxf(surface_clearance, 0.1)
+
+func _rect_violation(value: Rect2, container: Rect2) -> float:
+	var value_end := value.position + value.size
+	var container_end := container.position + container.size
+	return maxf(0.0, maxf(
+		maxf(container.position.x - value.position.x, value_end.x - container_end.x),
+		maxf(container.position.y - value.position.y, value_end.y - container_end.y)
+	))
+
+func _constrain_landing_look_weight(base_target: Vector3, landing_target: Vector3, requested_weight: float, up: Vector3) -> float:
+	if requested_weight <= 0.0:
+		return 0.0
+	var low := 0.0
+	var high := requested_weight
+	var best := 0.0
+	# Composition may translate the camera before it evaluates the landing
+	# target. Check the current pose and every collision-safe reframe candidate,
+	# rather than validating the look rotation at the pre-composition position
+	# only. This keeps a valid landing guarantee from becoming optimistic after
+	# a shoulder/lift correction moves the camera.
+	var candidate_positions: Array[Vector3] = [global_position]
+	var camera_right := global_basis.x.normalized()
+	var camera_up := global_basis.y.normalized()
+	var candidate_offsets: Array[Vector3] = [
+		camera_up * collision_reframe_lift,
+		camera_right * composition_shoulder_offset + camera_up * collision_reframe_lift * 0.45,
+		-camera_right * composition_shoulder_offset + camera_up * collision_reframe_lift * 0.45,
+		up.normalized() * collision_reframe_lift,
+	]
+	for offset: Vector3 in candidate_offsets:
+		var safe_result := _safe_composition_candidate(global_position, global_position + offset, up, _trajectory_dir)
+		if bool(safe_result.get("valid", false)):
+			candidate_positions.append(safe_result.position as Vector3)
+	for _index: int in 8:
+		var weight := (low + high) * 0.5
+		var blended_target := base_target.lerp(landing_target, weight)
+		var all_candidates_valid := true
+		for candidate_position: Vector3 in candidate_positions:
+			var basis := _look_basis_for_pose(candidate_position, blended_target, up)
+			var evaluation := _evaluate_composition(candidate_position, basis, camera.fov, up)
+			var body_valid := _composition_hard_valid(evaluation)
+			var landing_valid := weight <= 0.001 or bool(evaluation.get("landing_valid", false))
+			if not body_valid or not landing_valid:
+				all_candidates_valid = false
+				break
+		if all_candidates_valid:
+			best = weight
+			low = weight
+		else:
+			high = weight
+	return best
+
+func _look_basis_for_target(look_target: Vector3, up: Vector3) -> Basis:
+	return _look_basis_for_pose(global_position, look_target, up)
+
+func _look_basis_for_pose(camera_position: Vector3, look_target: Vector3, up: Vector3) -> Basis:
+	var desired_forward := camera_position.direction_to(look_target)
+	if desired_forward.length_squared() < 0.001:
+		return global_basis
+	var projected_yaw := desired_forward - up * desired_forward.dot(up)
+	if projected_yaw.length_squared() < 0.001:
+		return global_basis
+	projected_yaw = projected_yaw.normalized()
+	var desired_pitch := atan2(-desired_forward.dot(up), maxf(desired_forward.dot(projected_yaw), 0.0001))
+	var blended_forward := (projected_yaw * cos(desired_pitch) - up * sin(desired_pitch)).normalized()
+	var banked_up := Vector3.UP.rotated(blended_forward, _smoothed_bank)
+	return Basis.looking_at(blended_forward, banked_up)
+
+func _blend_camera_basis(from: Basis, to: Basis, weight: float) -> Basis:
+	var blended_forward := _slerp_direction(-from.z, -to.z, clampf(weight, 0.0, 1.0))
+	var banked_up := Vector3.UP.rotated(blended_forward, _smoothed_bank)
+	return Basis.looking_at(blended_forward, banked_up)
+
+func _update_composition_telemetry(up: Vector3) -> void:
+	var evaluation := _evaluate_composition(global_position, global_basis, camera.fov, up)
+	_skier_screen_rect = evaluation.get("skier_screen_rect", Rect2()) as Rect2
+	_landing_screen_position = evaluation.get("landing_screen_position", Vector2.ZERO) as Vector2
+	_foreground_occlusion_fraction = float(evaluation.get("foreground_occlusion", 0.0))
+	_camera_clearance = _measure_camera_clearance(global_position)
+	_composition_valid = _composition_candidate_is_valid(evaluation)
+	_target_screen_position = _skier_screen_rect.get_center()
+	if _composition_valid:
+		_last_compositionally_valid_pose = global_transform
 
 func _update_profile(skier: SkierController, delta: float) -> void:
 	var distance_delta := 0.0
@@ -420,10 +1062,10 @@ func debug_summary() -> String:
 	if target == null:
 		return "Cam no target"
 	var actual_distance := global_position.distance_to(target.global_position)
-	return "Cam %s d %.1f  fov %.0f  look %.1f\nCam pitch %+.1f° bank %+.1f° air %.2f  uperr %.1f°  yawx%.2f hw%.2f" % [
+	return "Cam %s d %.1f  fov %.0f  look %.1f\nCam pitch %+.1f° bank %+.1f° air %.2f  uperr %.1f°  yawx%.2f hw%.2f\nCam occ %s clear %.2f fallback %d" % [
 		CameraState.keys()[camera_state], actual_distance, camera.fov, _smoothed_look_ahead,
 		rad_to_deg(_pitch), rad_to_deg(_smoothed_bank), _smoothed_air_height, rad_to_deg(_filtered_surface_up.angle_to(Vector3.UP)),
-		_profile_yaw_scale, _smoothed_heading_weight]
+		_profile_yaw_scale, _smoothed_heading_weight, _camera_occluded, _camera_clearance, _camera_fallback_count]
 
 func debug_snapshot() -> Dictionary:
 	var actual_forward := -global_basis.z
@@ -446,7 +1088,21 @@ func debug_snapshot() -> Dictionary:
 		"horizontal_speed": _debug_horizontal_velocity.length(),
 		"player_facing": _debug_facing_forward,
 		"collision_reframed": _collision_reframed,
+		"camera_occluded": _camera_occluded,
+		"camera_clearance": _camera_clearance,
+		"camera_fallback_count": _camera_fallback_count,
+		"composition_fallback_count": _camera_fallback_count,
+		"target_screen_position": _target_screen_position,
+		"skier_screen_rect": _skier_screen_rect,
+		"landing_screen_position": _landing_screen_position,
+		"composition_valid": _composition_valid,
+		"composition_recovery_active": _composition_recovery_active,
+		"landing_look_weight": _landing_look_weight,
+		"foreground_occlusion_fraction": _foreground_occlusion_fraction,
+		"distance_rate": _last_distance_rate,
+		"fov_rate": _last_fov_rate,
 		"speed_distance_offset": _smoothed_speed_distance,
+		"carve_look_ahead_offset": _smoothed_carve_look_ahead_offset,
 	}
 
 func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
@@ -462,8 +1118,10 @@ func _avoid_collision(from: Vector3, desired: Vector3, up: Vector3, travel: Vect
 	_collision_reframed = false
 	var direct := _trace_camera_candidate(from, desired)
 	if not bool(direct.hit):
+		_camera_occluded = false
 		return direct.position
 	_collision_reframed = true
+	_camera_occluded = true
 	var right := travel.cross(up).normalized()
 	if right.length_squared() < 0.001:
 		right = global_basis.x
@@ -472,28 +1130,79 @@ func _avoid_collision(from: Vector3, desired: Vector3, up: Vector3, travel: Vect
 		desired + right * collision_shoulder_offset + up * collision_reframe_lift * 0.45,
 		desired - right * collision_shoulder_offset + up * collision_reframe_lift * 0.45,
 	]
-	var best_position: Vector3 = direct.position
-	var best_distance := best_position.distance_to(target.global_position)
 	for alternative: Vector3 in alternatives:
 		var result := _trace_camera_candidate(from, alternative)
 		var candidate_position: Vector3 = result.position
 		var candidate_distance := candidate_position.distance_to(target.global_position)
 		if not bool(result.hit) and candidate_distance >= minimum_camera_distance:
 			return candidate_position
-		if candidate_distance > best_distance:
-			best_distance = candidate_distance
-			best_position = candidate_position
-	return best_position
+	# Every candidate is occluded. Hold the last valid pose instead of moving
+	# the camera through a feature or snapping into its near side.
+	_camera_fallback_count += 1
+	return _last_stable_camera_position
+
+func _measure_camera_clearance(position: Vector3) -> float:
+	if get_world_3d() == null or not position.is_finite():
+		return maximum_camera_distance
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return maximum_camera_distance
+	var axes: Array[Vector3] = [
+		global_basis.x, -global_basis.x,
+		global_basis.y, -global_basis.y,
+		global_basis.z, -global_basis.z,
+	]
+	var nearest := maximum_camera_distance + collision_clearance
+	for axis: Vector3 in axes:
+		if axis.length_squared() < 0.001 or not axis.is_finite():
+			continue
+		var direction := axis.normalized()
+		var query := PhysicsRayQueryParameters3D.create(
+			position,
+			position + direction * (maximum_camera_distance + collision_clearance),
+			1 | 4
+		)
+		query.exclude = [target.get_rid()] if target != null else []
+		var hit := space.intersect_ray(query)
+		if not hit.is_empty() and hit.position is Vector3:
+			nearest = minf(nearest, position.distance_to(hit.position as Vector3))
+	return maxf(0.0, nearest - camera_collision_radius - collision_clearance)
 
 func _trace_camera_candidate(from: Vector3, desired: Vector3) -> Dictionary:
-	var query := PhysicsRayQueryParameters3D.create(from, desired, 1 | 4)
-	query.exclude = [target.get_rid()]
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	if hit.is_empty():
+	if get_world_3d() == null:
 		return {"hit": false, "position": desired}
-	return {"hit": true, "position": hit.position + hit.normal * collision_clearance}
+	if not from.is_finite() or not desired.is_finite():
+		return {"hit": true, "position": from}
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return {"hit": false, "position": desired}
+	var sphere := SphereShape3D.new()
+	sphere.radius = maxf(camera_collision_radius, 0.05)
+	var shape_query := PhysicsShapeQueryParameters3D.new()
+	shape_query.shape = sphere
+	shape_query.transform = Transform3D(Basis.IDENTITY, from)
+	shape_query.motion = desired - from
+	shape_query.collision_mask = 1 | 4
+	shape_query.exclude = [target.get_rid()] if target != null else []
+	shape_query.margin = collision_clearance
+	var cast := space.cast_motion(shape_query)
+	var safe_fraction := 1.0
+	if cast.size() >= 2:
+		safe_fraction = clampf(float(cast[0]), 0.0, 1.0)
+	var destination_query := PhysicsShapeQueryParameters3D.new()
+	destination_query.shape = sphere
+	destination_query.transform = Transform3D(Basis.IDENTITY, desired)
+	destination_query.collision_mask = 1 | 4
+	destination_query.exclude = [target.get_rid()] if target != null else []
+	destination_query.margin = collision_clearance
+	var destination_hits := space.intersect_shape(destination_query, 1)
+	var hit := safe_fraction < 0.999 or not destination_hits.is_empty()
+	if not hit:
+		return {"hit": false, "position": desired}
+	var safe_position := from.lerp(desired, safe_fraction)
+	return {"hit": true, "position": safe_position}
 
-func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3 = Vector3.FORWARD) -> Vector3:
+func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3 = Vector3.FORWARD, remember_stable: bool = true) -> Vector3:
 	if target == null:
 		return candidate
 	if not candidate.is_finite() or not up.is_finite() or up.length_squared() < 0.001:
@@ -517,10 +1226,23 @@ func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3
 			safe_planar += -safe_travel * (minimum_behind_distance - behind_distance)
 	if offset.length() < minimum_camera_distance or up_offset < minimum_camera_up_offset or safe_planar != planar_offset:
 		candidate = target_position + safe_planar + up * safe_up_offset
+	# A camera-volume sweep keeps features out of the lens; this final vertical
+	# probe also prevents a spring overshoot from placing the camera below the
+	# snow surface on a steep pitch or during crash recovery.
+	var surface_query := PhysicsRayQueryParameters3D.create(candidate + up * 8.0, candidate - up * 8.0, 1)
+	surface_query.exclude = [target.get_rid()]
+	var surface_hit := get_world_3d().direct_space_state.intersect_ray(surface_query)
+	if not surface_hit.is_empty() and surface_hit.position is Vector3:
+		var surface_height := (surface_hit.position as Vector3).dot(up)
+		var candidate_height := candidate.dot(up)
+		if candidate_height < surface_height + surface_clearance:
+			candidate += up * (surface_height + surface_clearance - candidate_height)
 	var candidate_offset := candidate - target_position
 	if candidate_offset.length() > maximum_camera_distance:
 		candidate = target_position + candidate_offset.normalized() * maximum_camera_distance
-	if not candidate.is_finite() or candidate.distance_to(target_position) < minimum_camera_distance - 0.001:
+	candidate_offset = candidate - target_position
+	if not candidate.is_finite() or candidate_offset.length() < minimum_camera_distance - 0.001 or candidate_offset.dot(up) < minimum_camera_up_offset - 0.001:
 		return _last_stable_camera_position
-	_last_stable_camera_position = candidate
+	if remember_stable:
+		_last_stable_camera_position = candidate
 	return candidate

@@ -9,12 +9,23 @@ if (-not (Test-Path -LiteralPath $godot -PathType Leaf)) {
 	exit 1
 }
 
-$env:APPDATA = (Resolve-Path (Join-Path $RepoRoot ".godot_user/roaming")).Path
-$env:LOCALAPPDATA = (Resolve-Path (Join-Path $RepoRoot ".godot_user/local")).Path
+$godotUserRoaming = Join-Path $RepoRoot ".godot_user/roaming"
+if (-not (Test-Path -LiteralPath $godotUserRoaming)) { New-Item -ItemType Directory -Path $godotUserRoaming -Force | Out-Null }
+$godotUserLocal = Join-Path $RepoRoot ".godot_user/local"
+if (-not (Test-Path -LiteralPath $godotUserLocal)) { New-Item -ItemType Directory -Path $godotUserLocal -Force | Out-Null }
+$env:APPDATA = (Resolve-Path $godotUserRoaming).Path
+$env:LOCALAPPDATA = (Resolve-Path $godotUserLocal).Path
 $scenes = @(
 	"res://tests/runtime_smoke.tscn",
 	"res://tests/environment_visual_acceptance.tscn",
+	"res://tests/environment_asset_contract_acceptance.tscn",
+	"res://tests/environment_asset_production_acceptance.tscn",
+	"res://tests/summit_environment_acceptance.tscn",
+	"res://tests/sunset_environment_acceptance.tscn",
 	"res://tests/camera_low_speed_acceptance.tscn",
+	"res://tests/camera_runtime_stability_acceptance.tscn",
+	"res://tests/camera_airborne_viewport_diagnostic.tscn",
+	"res://tests/camera_performance_acceptance.tscn",
 	"res://tests/gameplay_acceptance.tscn",
 	"res://tests/physics_benchmark.tscn",
 	"res://tests/physics_collision_acceptance.tscn",
@@ -44,22 +55,41 @@ $scenes = @(
 $failures = [System.Collections.Generic.List[string]]::new()
 foreach ($scene in $scenes) {
 	Write-Output "===== $scene ====="
-	# Godot writes shutdown warnings to stderr. Capture those for inspection without
-	# letting PowerShell promote a warning record into a terminating script error.
-	$previousErrorActionPreference = $ErrorActionPreference
-	$ErrorActionPreference = "Continue"
+	$stdoutPath = [System.IO.Path]::GetTempFileName()
+	$stderrPath = [System.IO.Path]::GetTempFileName()
+	$process = $null
+	$exitCode = 1
+	$output = ""
 	try {
-		$output = & $godot --headless --path $RepoRoot $scene 2>&1 | Out-String
+		$quotedRepoRoot = '"' + $RepoRoot.Replace('"', '\\"') + '"'
+		$process = Start-Process -FilePath $godot `
+			-ArgumentList @("--headless", "--path", $quotedRepoRoot, $scene) `
+			-RedirectStandardOutput $stdoutPath `
+			-RedirectStandardError $stderrPath `
+			-WindowStyle Hidden `
+			-PassThru
+		if (-not $process.WaitForExit(120000)) {
+			try { $process.Kill() } catch { }
+			try { $process.WaitForExit() } catch { }
+			$exitCode = 124
+			$output = "TIMEOUT: Godot did not exit within 120 seconds."
+		}
+		else {
+			$exitCode = $process.ExitCode
+			$stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
+			$stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
+			$output = "$stdout$stderr"
+		}
 	}
 	finally {
-		$ErrorActionPreference = $previousErrorActionPreference
+		if (Test-Path -LiteralPath $stdoutPath) { Remove-Item -LiteralPath $stdoutPath -Force }
+		if (Test-Path -LiteralPath $stderrPath) { Remove-Item -LiteralPath $stderrPath -Force }
 	}
-	$exitCode = $LASTEXITCODE
 	Write-Output $output.TrimEnd()
 	if ($exitCode -ne 0) {
 		$failures.Add("$scene exited with code $exitCode")
 	}
-	if ($output -match '(?m)^(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:') {
+	if ($output -match '(?m)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:') {
 		$failures.Add("$scene emitted an engine or acceptance error")
 	}
 }
