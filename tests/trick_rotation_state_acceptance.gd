@@ -6,9 +6,10 @@ func _ready() -> void:
 	_test_release_is_frame_rate_independent()
 	_test_reference_frame_progress()
 	_test_cork_axis_progress()
+	_test_compactness_changes_existing_rotation_only()
 	_test_reset_clears_state()
 	if failures.is_empty():
-		print("TRICK_ROTATION_STATE_PASS: release integration and reference-frame progress passed")
+		print("TRICK_ROTATION_STATE_PASS: release, reference-frame progress, and compactness inertia passed")
 		get_tree().quit(0)
 	else:
 		for failure: String in failures:
@@ -52,6 +53,26 @@ func _test_cork_axis_progress() -> void:
 	if absf(rad_to_deg(state.primary_progress_radians()) - 180.0) > 0.1:
 		failures.append("Cork progress did not integrate around the committed diagonal axis")
 
+func _test_compactness_changes_existing_rotation_only() -> void:
+	var compact_state := TrickRotationState.new()
+	compact_state.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, Vector3(0.0, -6.9, 0.0))
+	var baseline := Vector3(0.0, -4.0, 0.0)
+	var compact := compact_state.apply_compactness(baseline, 1.0)
+	if compact.length() <= baseline.length():
+		failures.append("Compact body state did not increase/preserve existing angular speed through lower inertia")
+
+	var open_state := TrickRotationState.new()
+	open_state.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, Vector3(0.0, -6.9, 0.0))
+	var opened := open_state.apply_compactness(baseline, 0.0)
+	if opened.length() >= baseline.length():
+		failures.append("Open body state did not reduce existing angular speed through higher inertia")
+
+	var zero_state := TrickRotationState.new()
+	zero_state.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, Vector3.ZERO)
+	var zero_result := zero_state.apply_compactness(Vector3.ZERO, 1.0)
+	if zero_result != Vector3.ZERO:
+		failures.append("Compactness created rotation from a neutral angular state")
+
 func _test_reset_clears_state() -> void:
 	var state := TrickRotationState.new()
 	state.begin(TrickCommand.Kind.SPIN_RIGHT, Basis.IDENTITY, Vector3(0.0, 6.9, 0.0))
@@ -65,7 +86,7 @@ func _test_reset_clears_state() -> void:
 		failures.append("Rotation state remained active after reset")
 	if state.released_fraction != 0.0 or state.primary_progress_radians() != 0.0:
 		failures.append("Rotation release/progress survived reset")
-	if state.compactness != 0.0 or state.inertia_scale != 1.0 or state.assist_angular_contribution != Vector3.ZERO:
+	if state.compactness != 0.5 or state.inertia_scale != 1.0 or state.assist_angular_contribution != Vector3.ZERO:
 		failures.append("Rotation management telemetry survived reset")
 
 func _integrate_release(expected: Vector3, delta: float) -> Vector3:
