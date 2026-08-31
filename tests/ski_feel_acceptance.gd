@@ -10,7 +10,7 @@ func _ready() -> void:
 	_test_camera_speed_and_bank()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("SKI_FEEL_PASS: air authority, landing recovery, speed FOV, and restrained camera bank passed")
+		print("SKI_FEEL_PASS: precision air trim, landing recovery, speed FOV, and restrained camera bank passed")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
@@ -22,10 +22,12 @@ func _test_air_trim_authority() -> void:
 	var flick_profile := preload("res://resources/physics/default_flick_trick_profile.tres") as FlickTrickProfile
 	var yaw_ratio := flick_profile.air_yaw_trim_acceleration / maxf(flick_profile.spin_impulse, 0.01)
 	var flip_ratio := ski_profile.air_flip_trim_acceleration / maxf(flick_profile.flip_impulse, 0.01)
-	if yaw_ratio < 0.25 or yaw_ratio > 0.4:
-		failures.append("Air yaw trim authority %.2f left the approved 25-40%% range" % yaw_ratio)
-	if flip_ratio < 0.25 or flip_ratio > 0.4:
-		failures.append("Air flip trim authority %.2f left the approved 25-40%% range" % flip_ratio)
+	# Trim should correct an existing maneuver, not act as a second full trick
+	# input. Keep it to a small fraction of the takeoff rotation authority.
+	if yaw_ratio < 0.05 or yaw_ratio > 0.09:
+		failures.append("Air yaw trim authority %.3f left the approved 5-9%% precision range" % yaw_ratio)
+	if flip_ratio < 0.05 or flip_ratio > 0.09:
+		failures.append("Air flip trim authority %.3f left the approved 5-9%% precision range" % flip_ratio)
 
 func _test_landing_control_recovery() -> void:
 	var skier := _new_skier()
