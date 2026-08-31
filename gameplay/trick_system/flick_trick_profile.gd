@@ -37,4 +37,5 @@ extends Resource
 @export var air_authority_budget := 0.32
 @export var air_continue_fraction := 0.16
 @export var air_check_fraction := 0.20
-@export var air_yaw_trim_acceleration := 1.9
+# Left-stick yaw is precision trim, not a second way to manufacture a spin.
+@export var air_yaw_trim_acceleration := 0.5
