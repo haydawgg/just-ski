@@ -1,64 +1,126 @@
 # Controls
 
-## Keyboard
+Summit Sessions is designed around a standard gamepad, with keyboard bindings kept for development and accessibility. Gameplay input is declared through Godot's InputMap; gameplay code reads named actions rather than hard-coding controller button indices.
 
-- A/D steer, W/S pressure, Shift tuck, Ctrl brake, Space pop/tricks.
-- Q/E grab in air, arrows trick flicks, T marker, R return, F3 debug.
-- F9 start/stop a gameplay clip (max 15 s, 960x540 @ 30 fps) saved to your Downloads folder as `ski_clip_<timestamp>.mp4` (MJPEG-in-MP4; plays in VLC, Windows Media Player, and QuickTime); a red REC indicator shows while capturing and encoding finishes in the background.
+## Core mapping
 
-## Controller and Input
+| Action | Controller | Keyboard |
+|---|---|---|
+| Carve left / right | Left stick X | A / D |
+| Ski pressure | Left stick Y | W / S |
+| Trick input | Right stick | Arrow keys |
+| Pop | Right-stick preload and flick | Space |
+| Tuck | RT / R2 | Shift |
+| Brake | LT / L2 or B / Circle | Ctrl |
+| Left / right hand | LT / L2, RT / R2; bumpers alternate | Q / E |
+| Rail balance | Left stick X | A / D |
+| Save marker | D-pad Up | T |
+| Return to marker | Y / Triangle or D-pad Down | R |
+| Pause | Menu / Start | Esc |
+| Debug overlay | — | F3 |
+| Arm / stop clip capture | — | F9 |
 
-All actions are declared in `project.godot` and use Godot's SDL-compatible input abstraction. Gameplay code never depends on controller button indices.
+The HUD changes prompt families based on the most recently used input device.
 
-## Controller layout
+## Left stick
 
-- Left stick X carves on snow, trims yaw in air, and balances on rails.
-- Left stick Y pressures the skis on snow (forward = tip bite / speed, back = unweight) and trims flip in air.
-- Right stick is the Flick-It trick control.
-- LT/L2 provides analog braking on snow and controls the left hand after takeoff.
-- RT/R2 tucks on snow and controls the right hand after takeoff.
-- B/Circle is a full-brake fallback; LB/L1 and RB/R1 are alternate hand inputs.
-- Y/Triangle or D-pad Down returns to the session marker; D-pad Up saves a grounded marker.
-- Menu/Start pauses.
+On snow, the left stick is the ski-control input:
 
-A trigger held for braking or tucking through takeoff cannot accidentally grab. Release it in the air and press it again to arm that hand. When both ground triggers are held, braking takes precedence over tuck.
+- X carves left and right.
+- Y changes ski pressure. Forward pressure loads the tips; back pressure helps unweight the skis.
 
-## Flick-It gestures
+In the air, the same axes provide limited yaw and flip correction. They are intentionally lower-authority than committed trick gestures.
 
-Ground and rail takeoffs begin by holding the right stick down to compress:
+On rails, left-stick X counters balance drift.
 
-- Down then up: straight pop.
-- Down then left/right: pop with a left/right spin impulse.
-- Down then diagonal: pop with a left/right cork impulse.
+## Right-stick Flick-It input
 
-While airborne and not grabbing:
+The right stick is the primary trick control. Ground and rail takeoffs begin from a preload by holding the stick down, then flicking out of that setup.
 
-- Flick left/right: spin impulse.
-- Flick up: frontflip impulse.
-- Flick down: backflip impulse.
-- Flick diagonally: left/right cork impulse.
-- Recenter before the next gesture. Repeated flicks can build larger rotations up to the physics angular-speed cap.
+Ground / rail release gestures:
 
-Recognition uses tunable setup/flick/center thresholds, a 350 ms gesture window, a 120 ms forgiving buffer, a 100 ms repeat cooldown, and generous direction sectors. The left stick supplies low-authority correction rather than starting tricks by itself.
+- Down → up: straight pop.
+- Down → left or right: pop with spin intent.
+- Down → diagonal: pop with cork intent.
 
-## Grabs and tweaks
+Airborne gestures while not grabbing:
 
-Fresh airborne trigger presses combine with right-stick style direction:
+- Left / right: spin impulse.
+- Up: frontflip impulse.
+- Down: backflip impulse.
+- Diagonal: cork impulse.
 
-- LT/L2: left safety; RT/R2: right safety.
-- Left hand + stick right or right hand + stick left: mute.
+The stick must recenter between committed gestures. Repeated gestures can build larger rotations up to the physics limits. The interpreter uses configurable thresholds, timing windows, buffering, cooldown, and direction sectors from the Flick-It profile rather than relying on exact cardinal input.
+
+Keyboard arrows provide the corresponding digital trick directions. Space remains the keyboard pop fallback because a keyboard cannot reproduce the analog preload path.
+
+## Tuck, brake, and airborne hands
+
+The triggers are state-dependent:
+
+- LT / L2 brakes while grounded.
+- RT / R2 tucks while grounded.
+- B / Circle is an additional full-brake input.
+- In the air, LT / L2 controls the left hand and RT / R2 controls the right hand.
+- LB / L1 and RB / R1 are alternate airborne hand inputs.
+
+A trigger already held for braking or tucking through takeoff does not immediately become a grab. Release it after takeoff and press it again to arm that hand. If both ground trigger functions are requested together, braking takes precedence over tuck.
+
+## Grabs and style poses
+
+Airborne hand input combines with right-stick direction:
+
+- Left trigger: left Safety.
+- Right trigger: right Safety.
+- Left hand + stick right, or right hand + stick left: Mute.
 - Either hand + stick up: Japan.
-- Left hand + stick down: tail; right hand + stick down: nose.
-- Both triggers + centered right stick: double grab.
-- Both + dominant horizontal right-stick input: mirrored left/right shifty.
-- Both + dominant vertical input: spread eagle up, daffy down. On diagonals, the larger axis wins.
+- Left hand + stick down: Tail.
+- Right hand + stick down: Nose.
+- Both triggers + centered stick: Double.
+- Both triggers + dominant horizontal input: Shifty left / right.
+- Both triggers + dominant vertical input: Spread Eagle / Daffy.
 
-Trigger pressure controls reach. Right-stick magnitude controls grab tweak or style intensity. While a grab/style is active, right-stick movement cannot also commit a rotation gesture. Physical grabs and style-only poses are resolved separately, but both feed the existing style scoring path.
+Analog trigger pressure controls reach. Right-stick magnitude controls tweak or style intensity. While a grab or style pose owns the right stick, the same movement is not also committed as a rotation gesture.
 
-## Rails and keyboard fallback
+Physical grabs and style-only poses are separate presentation concepts, but both feed the established trick/style scoring path.
 
-Neutral rail capture produces a 50-50. Flick left/right to select a boardslide and use a down-to-up flick to pop off. Left stick X is balance; ignore it long enough on a kink or boardslide and you slip off into air. Uphill / rainbow features can reverse and slide you back.
+## Rails
 
-Keyboard development/accessibility bindings remain A/D (carve), W/S (pressure), Space, Shift, Ctrl, arrow keys, Q/E, R, T, Esc, and F3. Space preserves the charge/release pop fallback because a keyboard cannot reproduce an analog Flick-It path.
+A neutral rail capture produces a 50-50 stance. During a grind:
 
-The optional HUD visualizer shows the recent right-stick path, recognized command, presentation phase, gesture strength, trigger pressure, and active grab. The pause menu contains the same mappings in a controller-navigable Trick Guide.
+- Flick left or right to select the boardslide presentation.
+- Use left-stick X to counter balance drift.
+- Use a down → up right-stick gesture to pop off.
+
+Rails can be traversed in either direction when the spline and momentum allow it. Losing the balance threshold releases the skier back into air rather than causing an immediate bail.
+
+## Session controls
+
+A marker can only be saved while grounded on valid snow contact. Returning to the marker uses the normal session respawn path, which clears transient crash, rail, landing, and motion state.
+
+The pause menu is controller navigable and includes an in-game trick guide.
+
+## Debug overlay
+
+F3 toggles gameplay and presentation telemetry. The exact fields evolve with the prototype, but the overlay is intended to expose the active locomotion state, ski/contact data, carving and skid response, trick input, landing prediction, rail state, crash context, and rig/animation diagnostics.
+
+## Gameplay clip recorder
+
+F9 controls the built-in run recorder:
+
+1. Press F9 while not recording to arm capture.
+2. Start a run from the summit.
+3. Capture begins automatically.
+4. It ends at the finish trigger, when F9 is pressed again, or at the 90-second safety cap.
+5. Encoding finishes after recording stops.
+
+Capture format:
+
+- 960×540
+- 30 fps
+- JPEG frames muxed as MJPEG-in-MP4
+- no game audio
+- saved as `ski_clip_<timestamp>.mp4`
+- Downloads folder when available, otherwise the Godot user-data directory
+
+The recorder will not start a new capture while the previous clip is still being encoded.
