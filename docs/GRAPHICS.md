@@ -1,31 +1,126 @@
 # Graphics and Settings
 
-The project targets Forward+ at 1600×900 internal UI coordinates and begins with 1280×720 window output. The 3D render scale does not resize the UI.
+This document describes the current visual and settings architecture. Renderer behavior is owned by `project.godot`, `autoload/game_settings.gd`, environment/profile resources, shader resources, and the scene code that applies them.
 
-`GameSettings` keeps separate `active` and `pending` dictionaries. Opening Options copies active values to pending. Controls only edit pending values. Apply promotes pending values, updates the renderer/audio, and saves `user://settings.cfg`; Cancel discards the edits; Reset Defaults changes only pending values until Apply.
+## Renderer and viewport
 
-Presets modify render scale, temporal anti-aliasing, shadow intent, snow quality, SSAO, SSIL, SSR, and fog. Editing a child graphics value marks the preset Custom. Low and Medium use Fast snow; High and Ultra use Premium snow. The Snow quality control can override that mapping in a Custom preset.
+Summit Sessions targets Godot 4.7 Forward+.
 
-Snow uses signed world-triplanar PBR sampling, so the same 2K CC0 texture set remains coherent across the main face, banks, rotated jumps, and convex landings without relying on mesh UVs. The footprint-heavy source albedo is deliberately faint on the groomed main face and becomes more visible on high-traffic feature decks. Broad independent noise fields provide subtle warm/cool temperature, value, wind-crust, and roughness variation without turning the slope into a repeated texture. The detail texture packs OpenGL normal X/Y, roughness, and translucency. Normals are transformed with `MODEL_NORMAL_MATRIX`, perturbed in world space, and converted to view space only at the renderer interface.
+The project uses a 1600×900 viewport coordinate space and starts in a 1280×720 window. 3D render scaling is applied through the viewport's 3D scale, so lowering render scale does not resize the UI coordinate system.
 
-The final snow response applies a profile-owned luminance floor after texture and form modulation. Steep or shadowed snow can retain shape separation but cannot become a charcoal feature surface. Fine corduroy and source-albedo detail fade earlier than the large-scale form fields, limiting directional shimmer in the foreground and preserving readable knuckles and landing transitions at gameplay distance.
+## Settings model
 
-Both compiled tiers share the triplanar implementation and fade texture detail between 18 m and 58 m. Fast snow omits subsurface and clearcoat outputs. Premium snow uses a sparse, stable crystal mask to drive the renderer's clearcoat reflection lobe and uses texture translucency for real SSS/transmittance. Neither tier writes procedural AO, modulates dielectric specular, emits fake glitter, runs fBm loops, or uses screen derivatives. Groomed corduroy follows each feature's authored downhill direction and uses an analytic normal gradient; authored traffic fades those ridges while increasing irregular normal/albedo breakup. Persistent ski ribbons use a smoother compressed response for clean carves and a rougher churned response for skids.
+`GameSettings` keeps two dictionaries:
 
-The scene uses a procedural sky (ambient and reflections), a warm low sun with four-split shadows, height fog with aerial perspective, and the existing SSAO/SSR/fog toggles. `default_resort_environment_profile.tres` owns the important sky, sun, shadow-weight, tonemapping, local-contact SSAO, glow, and atmospheric-depth values. Shadows retain their caster shapes but use bounded opacity, a softer edge, and less blue separation; SSAO is deliberately sub-meter so it grounds skis, rails, trees, and feature seams instead of painting broad dark bands across the piste.
+- `active` — values currently applied to the game.
+- `pending` — values being edited in the Options menu.
 
-`default_snow_presentation_profile.tres` owns gameplay-distance snow color and response. A restrained geometric-normal term aligned with the authored sun direction separates takeoffs, lips, knuckles, shoulders, banks, and landings even after triplanar detail has faded. Independent 35–55 m procedural fields widen the snow value range without introducing high-frequency noise, while a slightly wider roughness range preserves broad highlights. Snow remains near-neutral white with subtle warm/cool temperature variation.
+Opening Options copies active values into pending. Apply promotes pending values, applies display/audio changes, and saves `user://settings.cfg`. Cancel restores pending from active. Reset Defaults replaces pending values with defaults but does not apply them until the user chooses Apply.
 
-Course guidance is presentation-only. Oversized overhead gates and persistent world labels are replaced by short paired flag posts with no collision, emission, or cross-course beam. They fade at close and long range. Takeoff/landing dye remains surface-conforming, translucent, rough, and scene-lit so it cannot be mistaken for a rail or HUD overlay.
+The settings loader validates maintained numeric ranges and falls back to defaults for invalid values.
 
-The procedural environment uses deterministic vegetation clusters with authored gaps, multiple tree silhouettes/scales/yaws, sparse boundary fencing and snowmaking landmarks, and two asymmetric ridge layers. The farther ridge layer is softer in value; sky and ground curves supply vertical atmospheric transition without increasing gameplay fog.
+## Graphics presets
 
-Normal-play HUD hierarchy is speed/score first, contextual trick and landing information second. Control instructions are an eight-second onboarding surface, the stick visualizer appears only for direct gesture input and a short linger, and straight-air text has a presentation-only minimum airtime. Snow VFX differentiates carve, brake, landing, and bail scrape using the existing ski/contact data and retains the existing continuous-particle ceiling.
+The maintained graphics settings include:
 
-`snow_depth_visual_metrics.tscn` checks fixed gameplay captures for average neutral-snow value separation and bounds the coverage of dark blue shadows. The matching capture loop remains `environment_visual_inspection.tscn`; the snow-depth baseline and result live under `.godot_user/captures/snow_depth_before` and `.godot_user/captures/snow_depth_after`.
+- display mode and resolution;
+- VSync and FPS cap;
+- render scale;
+- temporal anti-aliasing;
+- shadow quality intent;
+- snow shader quality;
+- SSAO;
+- SSIL;
+- SSR;
+- fog.
 
-Park terrain features use sampled, closed snow forms rather than stacked box and wedge silhouettes. Jump takeoffs use Hermite-shaped elevation profiles with wide run-ins, rounded cross-slope shoulders, a falling knuckle mound, and a crowned landing that blends into an expanded run-out. Rollers use zero-slope sinusoidal transitions, side banks ease their cross-slope angle in and out, and rails receive low groomed approach/run-out aprons. Each generated mesh produces its own matching static trimesh collision surface, so the sculpted contour is also the surface sampled by the skis.
+Low / Medium use the Fast snow tier by default. High / Ultra use Premium snow. Editing an individual graphics option changes the preset state to Custom.
 
-The production skier remains the original `SkeletonSkierRig` and CC0 skinned body. Its former one-surface, no-material mesh is partitioned into five explicit weighted regions with clean geometric boundaries, and skinned clothing shells (jacket, pants, and gloves) are appended over the body regions by `tools/character/build_skier_clothing.py` without changing geometry, skin weights, bind matrices, bones, or animation data — shell vertices clone body skin weights verbatim and offset along vertex normals with per-bone volume and geodesic border taper. `default_skier_outfit_profile.tres` owns the restrained alpine palette and surface response used by both production and primitive fallback rigs. Helmet and goggles follow the mapped head through a rigid bone attachment as a real dome shell, curved frame, proud lens, and wrap-around strap; detailed boots, shaped sidecut skis with tip rise, and complete poles remain below their existing calibrated mounts. Before this pass the character used 1 unassigned body surface, 8 primitive equipment meshes, no headwear, and about 9 visible surfaces. The production presentation inventory now has 32 mesh instances, 39 visible surfaces, 15 shared runtime materials, 5 explicit body regions plus 3 skinned clothing shells, and 12 required silhouette-defining rigid parts. Fixed ground, carve, air, trick, grab, rail, landing, and run-out captures live under `.godot_user/captures/phase_17_after`.
+The current options menu intentionally exposes a practical subset of Godot's renderer controls rather than every Forward+ feature.
 
-The settings loader validates numeric ranges and recovers individual invalid or absent values from defaults. Existing snow material instances listen for applied settings, swap compiled shader tiers, and reapply their surface-kind parameters without rebuilding the resort.
+## Snow shading
+
+Snow uses world-space triplanar sampling so terrain, banks, rotated jump surfaces, and landings do not depend on authored mesh UVs.
+
+The committed Snow 02 source data provides diffuse color plus a derived packed detail texture containing normal X, normal Y, roughness, and translucency. See [Asset Sources](ASSET_SOURCES.md) and `assets/materials/snow_02/SOURCE.md` for provenance.
+
+The snow presentation combines:
+
+- triplanar material sampling;
+- large-scale value / temperature / roughness variation;
+- gameplay-distance detail fading;
+- directional groomer corduroy on authored surfaces;
+- surface-kind and traffic variation;
+- geometry-aware lighting response for lips, knuckles, banks, and landings;
+- persistent ski-ribbon presentation.
+
+Fine detail fades before large-scale form so distant terrain remains readable without excessive shimmer.
+
+### Fast and Premium tiers
+
+Both tiers share the same core triplanar material logic.
+
+Fast snow omits the more expensive subsurface / clearcoat presentation. Premium snow enables the maintained higher-quality reflection and translucency response.
+
+Snow materials listen for applied settings and can switch shader tier without rebuilding the resort.
+
+## Environment
+
+The resort environment uses a procedural sky, directional sun, shadows, scene reflections, atmospheric fog, and optional screen-space effects controlled by the graphics settings.
+
+Environment resources own the maintained presentation values rather than scattering them through documentation. Important visual goals are:
+
+- snow remains readable in sun and shade;
+- contact shading grounds skis, rails, trees, and feature seams without painting broad dark bands across the piste;
+- distant ridges and sky transitions provide depth without hiding gameplay terrain;
+- course guidance remains visually subordinate to skiable features.
+
+The environment is deterministic enough for repeatable capture-based review.
+
+## Procedural terrain presentation
+
+Park terrain is generated as actual snow forms rather than assembled only from visible boxes and wedges. Jumps, rollers, banks, aprons, knuckles, landings, and run-outs use sampled geometry that also supplies collision.
+
+This keeps visible terrain and ski contact aligned and allows the same snow material system to run across generated features.
+
+## Character presentation
+
+The production skier uses the imported CC0 Skeleton3D body documented in `assets/characters/skier/SOURCE.md`. Project code and deterministic tooling partition and dress that body for the current prototype, while rigid equipment and accessories are mounted through the animation rig.
+
+The visible presentation includes the skinned body/clothing treatment plus project-built equipment such as skis, poles, helmet, goggles, and related rigid pieces. A generated primitive rig remains available as a fallback/debug presentation.
+
+`default_skier_outfit_profile.tres` and the animation/rig resources are the maintained source of truth for outfit palette, material response, proportions, and attachment calibration.
+
+Do not rely on historical mesh/surface counts in documentation; those are implementation details and change as presentation is refined.
+
+## HUD and VFX
+
+Normal-play HUD hierarchy prioritizes speed and scoring, then contextual trick, landing, rail, and session information.
+
+The control onboarding, right-stick visualizer, and trick/landing callouts are intentionally contextual rather than permanently occupying the screen.
+
+Snow VFX uses existing gameplay/contact signals to differentiate continuous ski spray, stronger skid/brake spray, landings, and bail scraping. Audio and rumble consume the same broad gameplay state but are separate systems.
+
+## Gameplay clip output
+
+The built-in recorder captures the viewport at 960×540 and 30 fps, JPEG-encodes frames, and muxes them into an MJPEG-in-MP4 file. Encoding occurs after capture on a worker thread so the gameplay loop is not responsible for muxing each frame.
+
+The capture contains video only. See [Controls](CONTROLS.md) for recorder behavior.
+
+## Verification
+
+Fast shader/source checks:
+
+```powershell
+.\tests\shader_static_acceptance.ps1
+```
+
+Full runtime gate:
+
+```powershell
+.\tests\runtime_quality_gate.ps1
+```
+
+The runtime gate is the source of truth for the maintained environment, asset-contract, camera, character-presentation, shader/runtime, and capture acceptance scenes.
+
+Visual inspection scenes and deterministic captures under `.godot_user/captures/` are used for checks that cannot be reduced to a reliable scalar assertion. Automated acceptance should not be treated as a substitute for real hardware profiling or human visual review; the current boundary is recorded in [Known Issues](KNOWN_ISSUES.md).
