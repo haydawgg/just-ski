@@ -3,4 +3,5 @@
 .tools/
 .godot_logs/
 .tmp_male_base_mesh/
+world/generated/
 *.log
