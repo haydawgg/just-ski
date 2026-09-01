@@ -42,7 +42,7 @@ else {
 		}
 	}
 }
-$gitignore = Get-Content -Raw $gitignorePath
+$gitignore = (Get-Content -Raw $gitignorePath) -replace "`r", ""
 if ($gitignore -notmatch '(?m)^world/generated/$') {
 	$failures.Add("Generated resort preview output is not ignored.")
 }

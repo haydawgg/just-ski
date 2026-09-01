@@ -44,7 +44,7 @@ $readme = Get-Content -Raw $readmePath
 if ($readme -notmatch 'docs/RELEASE\.md') {
 	$failures.Add("README.md does not link the release procedure.")
 }
-$gitignore = Get-Content -Raw $gitignorePath
+$gitignore = (Get-Content -Raw $gitignorePath) -replace "`r", ""
 if ($gitignore -notmatch '(?m)^builds/$') {
 	$failures.Add("Generated builds/ output is not ignored.")
 }
