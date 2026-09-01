@@ -78,6 +78,11 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export var maximum_fov_change_rate := 24.0
 @export var maximum_body_occlusion_fraction := 0.25
 @export var maximum_landing_occlusion_fraction := 0.40
+@export var maximum_relative_correction_speed := 12.0
+@export var composition_comfortable_correction_speed := 8.0
+@export var composition_debug_allow_legacy_300 := false
+@export_range(0.0, 1.0) var landing_visibility_hard_floor := 0.75
+@export var landing_visibility_target := 0.95
 
 @export_group("Carve Look")
 @export var look_heading_weight_min := 0.15
@@ -156,6 +161,9 @@ var _smoothed_carve_look_ahead_offset := Vector3.ZERO
 var _trajectory_dir := Vector3.FORWARD
 var _air_time := 0.0
 var _landing_timer := 0.0
+var _previous_target_position := Vector3.ZERO
+var _air_entry_time := -100.0
+var _ground_heading_hold_timer := 0.0
 var _profile_distance := 0.0
 var _profile_height := 0.0
 var _profile_fov := 0.0
@@ -415,6 +423,9 @@ func reset_immediate() -> void:
 	if _composition_candidate_is_valid(reset_evaluation):
 		_last_compositionally_valid_pose = global_transform
 	_previous_target_distance = global_position.distance_to(target.global_position)
+	_previous_target_position = target.global_position
+	_air_entry_time = 0.0 if camera_state == CameraState.AIR else -100.0
+	_ground_heading_hold_timer = 0.0
 	_composition_initialized = true
 
 func _physics_process(delta: float) -> void:
@@ -435,12 +446,35 @@ func _physics_process(delta: float) -> void:
 
 	var previous_camera_state := camera_state
 	_update_camera_state(skier, delta)
+	# Track AIR entry time for hysteresis grace.
+	if camera_state == CameraState.AIR:
+		if previous_camera_state != CameraState.AIR:
+			_air_entry_time = 0.0
+		else:
+			_air_entry_time += delta
+	else:
+		_air_entry_time = -100.0
 	_update_profile(skier, delta)
 	if camera_state == CameraState.AIR and previous_camera_state != CameraState.AIR:
 		_air_anchor_height = target.global_position.dot(up)
 		_air_anchor_valid = true
 	elif camera_state != CameraState.AIR:
 		_air_anchor_valid = false
+
+	# Feed-forward: camera world motion = player displacement + bounded correction.
+	# This lets a 38 m/s skier be followed with ~0 correction instead of fighting a 30 m/s spring.
+	var target_position_now := target.global_position
+	if _previous_target_position.is_equal_approx(Vector3.ZERO) and target_position_now.length_squared() > 0.01:
+		# First valid frame after spawn without reset - avoid huge jump.
+		if _previous_target_position.distance_squared_to(target_position_now) > 2500.0:
+			_previous_target_position = target_position_now
+	var target_displacement := target_position_now - _previous_target_position
+	# Respawn/teleport guard: never feed-forward a >25 m jump (reset_immediate handles it).
+	if target_displacement.length_squared() > 625.0:
+		target_displacement = Vector3.ZERO
+		_previous_target_position = target_position_now
+	else:
+		global_position += target_displacement
 
 	var planar := target.velocity.slide(up)
 	var planar_speed := planar.length()
@@ -459,8 +493,22 @@ func _physics_process(delta: float) -> void:
 			maxf(trajectory_heading_full_speed, trajectory_heading_speed_threshold + 0.01),
 			planar_speed
 		)
+		# Hockey-stop hold: during hard braking preserve previous travel heading.
+		var is_hard_braking := skier != null and skier.braking and skier.brake_amount > 0.25 and planar_speed < 8.0
+		if is_hard_braking:
+			_ground_heading_hold_timer = 0.4
+			velocity_weight *= 0.15
+		elif _ground_heading_hold_timer > 0.0:
+			_ground_heading_hold_timer -= delta
+			velocity_weight *= 0.35
 		var stable_heading_target := _slerp_direction(facing, velocity_heading, velocity_weight)
-		_trajectory_dir = _slerp_direction(_trajectory_dir, stable_heading_target, 1.0 - exp(-ground_heading_response * delta))
+		# Angular-velocity envelope: cap yaw step to avoid snap on heading flips.
+		var desired_angle := _trajectory_dir.angle_to(stable_heading_target) if _trajectory_dir.length_squared() > 0.001 and stable_heading_target.length_squared() > 0.001 else 0.0
+		var max_yaw_step := deg_to_rad(90.0) * delta
+		var heading_lerp_weight := 1.0 - exp(-ground_heading_response * delta)
+		if desired_angle > max_yaw_step and max_yaw_step > 0.0:
+			heading_lerp_weight = minf(heading_lerp_weight, max_yaw_step / max(desired_angle, 0.001))
+		_trajectory_dir = _slerp_direction(_trajectory_dir, stable_heading_target, heading_lerp_weight)
 	_debug_horizontal_velocity = planar
 	_debug_facing_forward = facing
 	var travel := _trajectory_dir.slide(up)
@@ -519,10 +567,12 @@ func _physics_process(delta: float) -> void:
 		if radial.length_squared() > 0.001:
 			stabilized = target_position + radial.normalized() * bounded_distance
 	global_position = _stabilize_camera_position(stabilized, up, travel)
+	# Relative correction limit: camera = player displacement + bounded correction.
 	var frame_translation := global_position - frame_start_position
-	var frame_translation_limit := maximum_position_speed * delta
-	if frame_translation.length() > frame_translation_limit and frame_translation_limit > 0.0:
-		global_position = frame_start_position + frame_translation.normalized() * frame_translation_limit
+	var frame_relative := frame_translation - target_displacement
+	var frame_relative_limit := maximum_relative_correction_speed * delta
+	if frame_relative.length() > frame_relative_limit and frame_relative_limit > 0.0:
+		global_position = frame_start_position + target_displacement + frame_relative.normalized() * frame_relative_limit
 	# Translation limiting must never erode the minimum playable frame.
 	global_position = _stabilize_camera_position(global_position, up, travel)
 
@@ -605,10 +655,22 @@ func _physics_process(delta: float) -> void:
 		if final_radial.length_squared() > 0.001:
 			final_position = target.global_position + final_radial.normalized() * bounded_distance
 	var final_translation := final_position - frame_start_position
+	var final_relative := final_translation - target_displacement
 	var fast_composition_state := camera_state in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]
-	var final_translation_limit := (composition_recovery_speed if fast_composition_state and _composition_recovery_active else maximum_position_speed) * delta
-	if final_translation_limit > 0.0 and final_translation.length() > final_translation_limit:
-		final_position = frame_start_position + final_translation.normalized() * final_translation_limit
+	var desired_cap := maximum_relative_correction_speed
+	# Soft inner-rect recovery should stay in the comfortable 6-8 m/s band; hard recovery may use full 12.
+	# We infer soft when recovery was triggered but hard validity was still passing at frame start.
+	if fast_composition_state and _composition_recovery_active:
+		var frame_start_eval := _evaluate_composition(frame_start_position, composition_basis, camera.fov, up)
+		var is_hard_at_start := not _composition_hard_valid(frame_start_eval)
+		if not is_hard_at_start:
+			desired_cap = composition_comfortable_correction_speed
+	var final_relative_limit := desired_cap * delta
+	if composition_debug_allow_legacy_300 and fast_composition_state and _composition_recovery_active:
+		# Dev-only A/B toggle for the old 300 m/s teleport path — delete after regressions pass.
+		final_relative_limit = composition_recovery_speed * delta
+	elif final_relative_limit > 0.0 and final_relative.length() > final_relative_limit:
+		final_position = frame_start_position + target_displacement + final_relative.normalized() * final_relative_limit
 	# Composition recovery is allowed to move quickly, but it must not use that
 	# freedom to defeat the independent camera-distance rate limit. Apply the
 	# radial limit again after the translation limit, which is the final point at
@@ -697,6 +759,7 @@ func _physics_process(delta: float) -> void:
 		global_basis = composition_basis
 	_last_distance_rate = absf(global_position.distance_to(target.global_position) - frame_distance) / maxf(delta, 0.0001)
 	_previous_target_distance = global_position.distance_to(target.global_position)
+	_previous_target_position = target.global_position
 	_update_composition_telemetry(up, delta)
 	_record_performance_profile_frame(profile_frame_start_usec)
 
@@ -744,7 +807,12 @@ func _air_framing_target(player_position: Vector3, up: Vector3, delta: float) ->
 	if displacement > air_vertical_recovery_zone:
 		var hard_span := maxf(air_vertical_recovery_zone * 0.5, 0.001)
 		var hard_weight := smoothstep(0.0, 1.0, clampf((displacement - air_vertical_recovery_zone) / hard_span, 0.0, 1.0))
-		response = lerpf(air_vertical_edge_response, air_vertical_hard_recovery_response, hard_weight)
+		# Cap hard recovery to 12 m/s-bounded correction; 20 m/s produced vertical snaps.
+		var capped_hard_response := minf(air_vertical_hard_recovery_response, 12.0)
+		response = lerpf(air_vertical_edge_response, capped_hard_response, hard_weight)
+	# Grace: inherit grounded pose for first 0.18 s of AIR to avoid takeoff snap.
+	if _air_entry_time >= 0.0 and _air_entry_time < 0.18:
+		response *= 0.35
 	_air_anchor_height = lerpf(_air_anchor_height, target_height, 1.0 - exp(-response * delta))
 	return player_position + up * (_air_anchor_height - player_height)
 
@@ -763,17 +831,28 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		_composition_valid = _composition_candidate_is_valid(base_evaluation)
 		return
 	if _composition_candidate_is_valid(base_evaluation):
-		# AIR and CRASH use the same candidate solver when recovery is needed, but
-		# a valid base pose already satisfies the complete contract. In particular,
-		# this check includes predicted landing visibility while descending, so the
-		# fast path cannot bypass the landing guarantee.
-		_composition_recovery_active = soft_composition_state and float(base_evaluation.get("inner_violation", 0.0)) > 0.0001
+		# AIR/CRASH valid base pose satisfies hard framing. Inner violation is a
+		# soft preference; recovery is bounded to comfortable speed (8 m/s).
+		# Landing visibility is now a quality metric, not validity — never forces recovery.
+		var grace_active := _air_entry_time >= 0.0 and _air_entry_time < 0.18
+		if grace_active:
+			# Continuity guarantee: inherit grounded pose for first airborne frames.
+			_composition_recovery_active = false
+		else:
+			_composition_recovery_active = soft_composition_state and float(base_evaluation.get("inner_violation", 0.0)) > 0.0001
 		_composition_valid = true
 		return
 	if not soft_composition_state and _composition_hard_valid(base_evaluation):
 		# Preserve the existing ground-camera solution when it already frames the
 		# skier. Re-solving every ground frame can turn a heading pivot into a
 		# camera teleport.
+		_composition_recovery_active = false
+		_composition_valid = true
+		return
+	# Grace: suppress soft inner-rect repositioning for first 0.18 s of AIR.
+	# Prevents takeoff snap where GROUND→AIR FOV/distance change would otherwise teleport.
+	# Hard invalid (bounds/occlusion) still recovers immediately, but bounded to 12 m/s.
+	if soft_composition_state and _air_entry_time >= 0.0 and _air_entry_time < 0.18 and _composition_hard_valid(base_evaluation):
 		_composition_recovery_active = false
 		_composition_valid = true
 		return
@@ -857,23 +936,25 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 
 	if found_candidate:
 		var correction_response := composition_hard_recovery_response if base_requires_recovery else (composition_recovery_response if base_near_edge else 0.0)
-		var correction_weight := 1.0 if base_requires_recovery else (1.0 - exp(-correction_response * delta))
-		if base_requires_recovery:
-			# The candidate has already passed the swept-volume and composition
-			# checks. Use it immediately so the ordinary spring cannot keep the
-			# camera behind the same foreground feature.
-			global_position = best_position
-			global_basis = best_basis
+		# Bounded correction: hard recovery uses damped motion (24*delta ≈ 0.8 @30Hz) plus
+		# relative speed cap (12 m/s) applied later. No immediate teleport.
+		var correction_weight := 1.0 - exp(-correction_response * delta)
+		# Clamp weight so soft recovery stays in comfortable 6-8 m/s band; hard may use 12.
+		var max_soft_step := composition_comfortable_correction_speed * delta
+		var max_hard_step := maximum_relative_correction_speed * delta
+		var desired_dist := base_position.distance_to(best_position)
+		if not base_requires_recovery and max_soft_step > 0.0 and desired_dist > max_soft_step:
+			correction_weight = minf(correction_weight, max_soft_step / maxf(desired_dist, 0.001))
+		elif base_requires_recovery and max_hard_step > 0.0 and desired_dist > max_hard_step:
+			correction_weight = minf(correction_weight, max_hard_step / maxf(desired_dist, 0.001))
+		var composed_position := base_position.lerp(best_position, correction_weight)
+		var composed_result := _safe_composition_candidate(base_position, composed_position, up, travel)
+		if bool(composed_result.get("valid", false)):
+			global_position = composed_result.position as Vector3
+			var basis_weight := correction_weight if soft_composition_state else 0.0
+			if basis_weight > 0.0:
+				global_basis = _blend_camera_basis(global_basis, best_basis, basis_weight)
 			best_evaluation = _evaluate_composition(global_position, global_basis, camera.fov, up)
-		else:
-			var composed_position := base_position.lerp(best_position, correction_weight)
-			var composed_result := _safe_composition_candidate(base_position, composed_position, up, travel)
-			if bool(composed_result.get("valid", false)):
-				global_position = composed_result.position as Vector3
-				var basis_weight := correction_weight if soft_composition_state else 0.0
-				if basis_weight > 0.0:
-					global_basis = _blend_camera_basis(global_basis, best_basis, basis_weight)
-				best_evaluation = _evaluate_composition(global_position, global_basis, camera.fov, up)
 
 	if _composition_candidate_is_valid(best_evaluation):
 		_last_compositionally_valid_pose = global_transform
@@ -882,11 +963,11 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		_composition_valid = false
 
 func _composition_candidate_is_valid(evaluation: Dictionary) -> bool:
-	if not _composition_hard_valid(evaluation):
-		return false
-	var skier := target as SkierController
-	var requires_landing := skier != null and camera_state == CameraState.AIR and skier.predicted_landing_valid and skier.velocity.dot(_filtered_surface_up) < 0.0
-	return not requires_landing or bool(evaluation.get("landing_valid", false))
+	# Landing visibility is a quality preference, not a validity gate.
+	# Only hard framing (bounds + occlusion) can invalidate a pose. Landing
+	# at 95% is the target, <75% sustained is a warn/fail in tests, but never
+	# forces a teleport.
+	return _composition_hard_valid(evaluation)
 
 func _safe_composition_candidate(from: Vector3, raw_candidate: Vector3, up: Vector3, travel: Vector3) -> Dictionary:
 	if not raw_candidate.is_finite():
@@ -1253,7 +1334,11 @@ func _update_profile(skier: SkierController, delta: float) -> void:
 		_:
 			if skier != null:
 				heading_weight = clampf(look_heading_weight_min + look_heading_weight_gain * absf(skier.heading_travel_angle_degrees) / heading_angle_reference, look_heading_weight_min, look_heading_weight_min + look_heading_weight_gain)
-	var w := 1.0 - exp(-profile_rate * delta)
+	var effective_rate := profile_rate
+	if _air_entry_time >= 0.0 and _air_entry_time < 0.25:
+		# Continuity guarantee: do not snap distance/FOV/yaw on GROUND→AIR.
+		effective_rate = profile_rate * 0.25
+	var w := 1.0 - exp(-effective_rate * delta)
 	_profile_distance = lerpf(_profile_distance, distance_delta, w)
 	_profile_height = lerpf(_profile_height, height_delta, w)
 	_profile_fov = lerpf(_profile_fov, fov_delta, w)

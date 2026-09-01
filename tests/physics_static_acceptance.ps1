@@ -133,6 +133,12 @@ Require-Match $profile 'landing_control_penalty_max' "Landing steering softness 
 Require-Match $controller '_begin_landing_control_recovery' "Successful landings must seed severity-scaled control recovery."
 Require-Match $camera 'turn_bank_share' "Camera must retain restrained turn banking."
 Require-Match $camera 'speed_fov_gain\s*:=\s*7\.0' "Camera speed FOV must stay within the approved restrained range."
+Require-Match $camera 'maximum_relative_correction_speed\s*:=\s*12\.0' "Camera must enforce a bounded relative correction speed of 12 m/s."
+Require-Match $camera 'composition_comfortable_correction_speed\s*:=\s*8\.0' "Camera must retain a comfortable correction band of 8 m/s."
+Require-Match $camera 'composition_debug_allow_legacy_300' "Camera must gate the legacy 300 m/s path behind a debug flag."
+Require-Match $camera '_previous_target_position' "Camera must chase via target displacement feed-forward."
+Require-Match $camera 'landing_visibility_hard_floor' "Camera must downgrade landing visibility to a quality metric."
+Require-Match $camera '_air_entry_time' "Camera must have AIR entry hysteresis for state-transition continuity."
 
 Require-Match $crashContext 'enum Stage\s*\{[\s\S]*RELEASE[\s\S]*IMPACT[\s\S]*FALL[\s\S]*REST' "CrashContext must own the controlled-fall stages."
 Require-Match $controller 'func enter_crash\(context:\s*CrashContext\)\s*->\s*bool' "Crash entry must use one guarded controller seam."
