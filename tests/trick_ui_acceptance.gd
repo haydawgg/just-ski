@@ -56,6 +56,8 @@ func _test_game_ui_teaching_surfaces() -> void:
 		failures.append("Options menu is missing anti-aliasing control")
 	if ui.find_child("ShadowQuality", true, false) == null:
 		failures.append("Options menu is missing shadow quality control")
+	if ui.find_child("GI", true, false) == null:
+		failures.append("Options menu is missing global illumination control")
 	if ui.find_child("RunResultsPanel", true, false) == null:
 		failures.append("Gameplay UI is missing the run results panel")
 	var guide_text := ""
@@ -65,6 +67,18 @@ func _test_game_ui_teaching_surfaces() -> void:
 		failures.append("Trick guide does not describe the implemented airborne hold model")
 	if "Recenter before each additional flick" in guide_text:
 		failures.append("Trick guide still teaches repeated airborne flicks")
+	var original_gi := bool(GameSettings.active["gi_enabled"])
+	ui._open_options()
+	var gi_control := ui.find_child("GI", true, false) as CheckButton
+	if gi_control != null:
+		gi_control.toggled.emit(not original_gi)
+		if bool(GameSettings.active["gi_enabled"]) != original_gi:
+			failures.append("Options GI edit changed active settings before Apply")
+		if bool(GameSettings.pending["gi_enabled"]) == original_gi:
+			failures.append("Options GI edit was not staged")
+	ui._cancel_options()
+	if bool(GameSettings.pending["gi_enabled"]) != bool(GameSettings.active["gi_enabled"]):
+		failures.append("Options GI Cancel did not restore the pending value")
 	if ui._quality_name(LandingSolver.Outcome.CLEAN) != "CLEAN" or ui._quality_name(LandingSolver.Outcome.SKETCHY) != "SKETCHY" or ui._quality_name(LandingSolver.Outcome.HARD) != "HARD":
 		failures.append("Landing labels did not use explicit outcomes")
 	ui._process(10.0)

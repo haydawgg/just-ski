@@ -101,7 +101,7 @@ func _build_environment() -> void:
 	# SDFGI is the appropriate real-time GI path for this procedural resort. The
 	# profile owns its sunset tuning; graphics presets can disable it later for
 	# lower-end hardware without changing the authored scene.
-	env.sdfgi_enabled = profile.gi_enabled
+	env.sdfgi_enabled = effective_gi_enabled()
 	env.sdfgi_energy = profile.gi_energy
 	env.sdfgi_bounce_feedback = clampf(profile.gi_bounce_feedback, 0.0, 0.5)
 	env.sdfgi_cascades = clampi(profile.gi_cascades, 1, 8)
@@ -768,9 +768,18 @@ func _apply_graphics_settings() -> void:
 	env.ssil_enabled = bool(GameSettings.active.get("ssil_enabled", false))
 	env.ssr_enabled = bool(GameSettings.active.get("ssr_enabled", true))
 	env.fog_enabled = bool(GameSettings.active.get("fog_enabled", true))
-	var graphics_preset := int(GameSettings.active.get("graphics_preset", 2))
-	env.sdfgi_enabled = environment_profile != null and environment_profile.gi_enabled and graphics_preset >= 2
+	env.sdfgi_enabled = effective_gi_enabled()
 	_apply_shadow_quality(int(GameSettings.active.get("shadow_quality", 2)))
+
+static func resolve_effective_gi(profile: ResortEnvironmentProfile, user_enabled: bool, graphics_preset: int) -> bool:
+	return profile != null and profile.gi_enabled and user_enabled and GameSettings.graphics_preset_allows_gi(graphics_preset)
+
+func effective_gi_enabled() -> bool:
+	return resolve_effective_gi(
+		environment_profile,
+		bool(GameSettings.active.get("gi_enabled", true)),
+		int(GameSettings.active.get("graphics_preset", 2)),
+	)
 
 func _apply_shadow_quality(quality: int) -> void:
 	if sun == null:

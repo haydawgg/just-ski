@@ -36,7 +36,7 @@ The maintained graphics settings include:
 
 Low / Medium use the Fast snow tier by default. High / Ultra use Premium snow. Editing an individual graphics option changes the preset state to Custom.
 
-The current options menu intentionally exposes a practical subset of Godot's renderer controls rather than every Forward+ feature.
+The current options menu intentionally exposes a practical subset of Godot's renderer controls rather than every Forward+ feature. It includes a staged GI toggle. GI is effective only when the selected environment profile exposes GI, the user setting `gi_enabled` is true, and the graphics preset permits GI (High, Ultra, or Custom; Low and Medium forbid it). The profile is the upper-level capability gate, the user setting is the preference, and the preset is the hardware-capability policy. Apply updates the live environment before persistence; a save failure is reported without rolling back the applied runtime state.
 
 ## Snow shading
 

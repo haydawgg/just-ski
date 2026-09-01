@@ -444,6 +444,11 @@ func _build_options_menu() -> void:
 	fog.text = "Enabled"
 	graphics_tab.add_child(_row("Mountain fog", fog))
 	fog.toggled.connect(func(value: bool) -> void: GameSettings.set_pending("fog_enabled", value))
+	var gi := CheckButton.new()
+	gi.name = "GI"
+	gi.text = "Enabled"
+	graphics_tab.add_child(_row("Global illumination", gi))
+	gi.toggled.connect(func(value: bool) -> void: GameSettings.set_pending("gi_enabled", value))
 
 	var audio_tab := VBoxContainer.new()
 	audio_tab.name = "Audio"
@@ -687,6 +692,7 @@ func _sync_options() -> void:
 	(options_panel.find_child("SSIL", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssil_enabled"]))
 	(options_panel.find_child("SSR", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssr_enabled"]))
 	(options_panel.find_child("Fog", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["fog_enabled"]))
+	(options_panel.find_child("GI", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["gi_enabled"]))
 	(options_panel.find_child("Master", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["master_volume_db"]))
 	(options_panel.find_child("Music", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["music_volume_db"]))
 	(options_panel.find_child("SFX", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["sfx_volume_db"]))

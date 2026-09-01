@@ -15,13 +15,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Cache pinned Godot binary
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/summit-sessions-godot-cache
+          key: windows-godot-4.7.2-console-731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953
+
       - name: Download pinned Godot console binary
         shell: pwsh
         run: |
           $version = '4.7.2'
-          $archive = Join-Path $env:RUNNER_TEMP "Godot_v$version-stable_win64.exe.zip"
+          $cacheRoot = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-cache'
+          $archive = Join-Path $cacheRoot "Godot_v$version-stable_win64.exe.zip"
           $url = "https://github.com/godotengine/godot/releases/download/${version}-stable/Godot_v${version}-stable_win64.exe.zip"
-          Invoke-WebRequest -Uri $url -OutFile $archive
+          New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            Invoke-WebRequest -Uri $url -OutFile $archive
+          }
           # The release artifact is pinned by version and the checksum is
           # verified before it is executed. Update this value only alongside
           # an intentional Godot version change.
@@ -30,17 +40,25 @@ jobs:
           if ($actualSha256 -ne $expectedSha256) {
             throw "Godot archive checksum is not pinned or does not match. Actual: $actualSha256"
           }
-          $godotRoot = Join-Path $env:RUNNER_TEMP 'godot-4.7.2'
+          $godotRoot = Join-Path $cacheRoot 'extracted'
           New-Item -ItemType Directory -Path $godotRoot -Force | Out-Null
-          Expand-Archive -LiteralPath $archive -DestinationPath $godotRoot -Force
-          "GODOT_PATH=$((Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse | Select-Object -First 1).FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $godotExecutable = Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse -File | Select-Object -First 1
+          if ($null -eq $godotExecutable) {
+            Expand-Archive -LiteralPath $archive -DestinationPath $godotRoot -Force
+            $godotExecutable = Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse -File | Select-Object -First 1
+          }
+          if ($null -eq $godotExecutable) {
+            throw 'Pinned Godot archive did not contain a console executable.'
+          }
+          "GODOT_PATH=$($godotExecutable.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run static and runtime quality gate
         shell: pwsh
         run: |
           $userData = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-user'
           $logs = Join-Path $env:RUNNER_TEMP 'summit-sessions-runtime-logs'
-          & .\tests\quality_gate.ps1 -RepoRoot $PWD -GodotPath $env:GODOT_PATH -UserDataRoot $userData -LogDirectory $logs
+          $captures = Join-Path $logs 'captures'
+          & .\tests\quality_gate.ps1 -RepoRoot $PWD -GodotPath $env:GODOT_PATH -UserDataRoot $userData -LogDirectory $logs -CaptureDirectory $captures
 
       - name: Upload runtime logs
         if: failure()

@@ -3,13 +3,17 @@ param(
 	[string]$GodotPath = "",
 	[string]$UserDataRoot = "",
 	[string]$LogDirectory = "",
+	[string]$CaptureDirectory = "",
 	[int]$TimeoutMilliseconds = 120000
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 if ([string]::IsNullOrWhiteSpace($GodotPath)) {
-	$GodotPath = Join-Path $RepoRoot ".tools/godot-4.7.2/Godot_v4.7.2-stable_win64_console.exe"
+	$GodotPath = [System.Environment]::GetEnvironmentVariable("GODOT_PATH")
+	if ([string]::IsNullOrWhiteSpace($GodotPath)) {
+		$GodotPath = Join-Path $RepoRoot ".tools/godot-4.7.2/Godot_v4.7.2-stable_win64_console.exe"
+	}
 }
 $godot = (Resolve-Path -LiteralPath $GodotPath -ErrorAction SilentlyContinue).Path
 if ([string]::IsNullOrWhiteSpace($godot) -or -not (Test-Path -LiteralPath $godot -PathType Leaf)) {
@@ -42,6 +46,49 @@ if ([string]::IsNullOrWhiteSpace($LogDirectory)) {
 }
 $LogDirectory = [System.IO.Path]::GetFullPath($LogDirectory)
 if (-not (Test-Path -LiteralPath $LogDirectory)) { New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null }
+if ([string]::IsNullOrWhiteSpace($CaptureDirectory)) {
+	$CaptureDirectory = Join-Path $LogDirectory "captures"
+}
+$CaptureDirectory = [System.IO.Path]::GetFullPath($CaptureDirectory)
+if (-not (Test-Path -LiteralPath $CaptureDirectory)) { New-Item -ItemType Directory -Path $CaptureDirectory -Force | Out-Null }
+$runStartedUtc = [DateTime]::UtcNow
+$captureExtensions = @(".png", ".jpg", ".jpeg", ".mp4", ".json", ".csv")
+$capturedArtifacts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$captureRoots = @(
+	(Join-Path $RepoRoot ".godot_user"),
+	$UserDataRoot
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -Unique
+
+function Copy-CaptureArtifacts {
+	param(
+		[string]$SceneName
+	)
+	$safeSceneName = ($SceneName -replace '^res://', '') -replace '[^A-Za-z0-9_-]', '_'
+	foreach ($root in $captureRoots) {
+		try {
+			$rootPath = (Resolve-Path -LiteralPath $root).Path
+			$files = Get-ChildItem -LiteralPath $rootPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+				$captureExtensions -contains $_.Extension.ToLowerInvariant() -and $_.LastWriteTimeUtc -ge $runStartedUtc
+			}
+			foreach ($file in $files) {
+				$artifactKey = "$($file.FullName)|$($file.LastWriteTimeUtc.Ticks)|$($file.Length)"
+				if (-not $capturedArtifacts.Add($artifactKey)) {
+					continue
+				}
+				$relative = $file.FullName.Substring($rootPath.Length).TrimStart([char]92, [char]47)
+				$destination = Join-Path (Join-Path $CaptureDirectory $safeSceneName) $relative
+				$destinationParent = Split-Path -Parent $destination
+				if (-not (Test-Path -LiteralPath $destinationParent)) {
+					New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+				}
+				Copy-Item -LiteralPath $file.FullName -Destination $destination -Force -ErrorAction Stop
+			}
+		}
+		catch {
+			Write-Warning "Could not preserve capture output from $root for ${SceneName}: $($_.Exception.Message)"
+		}
+	}
+}
 
 function Invoke-GodotScene {
 	param(
@@ -177,15 +224,20 @@ foreach ($scene in $scenes) {
 	if ($output -match '(?m)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:') {
 		$failures.Add("$scene emitted an engine or acceptance error")
 	}
+	Copy-CaptureArtifacts -SceneName $scene
 }
 
 if ($failures.Count -gt 0) {
 	Write-Output "Runtime logs were preserved in: $LogDirectory"
+	Write-Output "Runtime captures were preserved in: $CaptureDirectory"
 	$failures | ForEach-Object { Write-Output "FAIL: $_" }
 	exit 1
 }
 
 Write-Output "PASS: all runtime scenes completed without engine, shader, script, or acceptance errors."
+if (Get-ChildItem -LiteralPath $CaptureDirectory -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1) {
+	Write-Output "Runtime captures were preserved in: $CaptureDirectory"
+}
 if ($runRootIsTemporary -and (Test-Path -LiteralPath $UserDataRoot)) {
 	Remove-Item -LiteralPath $UserDataRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

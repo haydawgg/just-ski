@@ -2,7 +2,8 @@ param(
 	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
 	[string]$GodotPath = "",
 	[string]$UserDataRoot = "",
-	[string]$LogDirectory = ""
+	[string]$LogDirectory = "",
+	[string]$CaptureDirectory = ""
 )
 
 $ErrorActionPreference = "Continue"
@@ -38,6 +39,7 @@ try {
 			if (-not [string]::IsNullOrWhiteSpace($GodotPath)) { $scriptArguments.GodotPath = $GodotPath }
 			if (-not [string]::IsNullOrWhiteSpace($UserDataRoot)) { $scriptArguments.UserDataRoot = $UserDataRoot }
 			if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) { $scriptArguments.LogDirectory = $LogDirectory }
+			if (-not [string]::IsNullOrWhiteSpace($CaptureDirectory)) { $scriptArguments.CaptureDirectory = $CaptureDirectory }
 		}
 		if ([string]::IsNullOrWhiteSpace($shell)) {
 			# Fall back to the current host only when neither PowerShell executable

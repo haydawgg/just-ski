@@ -4,6 +4,17 @@ signal settings_applied
 signal settings_save_failed(error: Error)
 
 const CONFIG_PATH := "user://settings.cfg"
+const RENDERER_SETTING_KEYS := [
+	"render_scale",
+	"anti_aliasing",
+	"shadow_quality",
+	"snow_quality",
+	"ssao_enabled",
+	"ssil_enabled",
+	"ssr_enabled",
+	"fog_enabled",
+	"gi_enabled",
+]
 const DEFAULTS := {
 	"display_mode": 1,
 	"resolution": Vector2i(1920, 1080),
@@ -18,6 +29,7 @@ const DEFAULTS := {
 	"ssil_enabled": false,
 	"ssr_enabled": true,
 	"fog_enabled": true,
+	"gi_enabled": true,
 	"master_volume_db": -3.0,
 	"music_volume_db": -8.0,
 	"sfx_volume_db": -2.0,
@@ -59,8 +71,13 @@ func set_pending(key: String, value: Variant) -> void:
 	if not DEFAULTS.has(key):
 		return
 	pending[key] = _validated(key, value)
-	if key != "graphics_preset" and key in ["render_scale", "anti_aliasing", "shadow_quality", "snow_quality", "ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled"]:
+	if key != "graphics_preset" and key in RENDERER_SETTING_KEYS:
 		pending["graphics_preset"] = 4
+
+static func graphics_preset_allows_gi(preset: int) -> bool:
+	# Low and Medium are the explicitly GI-free capability tiers. High, Ultra,
+	# and Custom may use GI when the environment profile and user setting allow it.
+	return clampi(preset, 0, 4) >= 2
 
 func apply_pending() -> void:
 	active = _validated_settings(pending)
@@ -86,6 +103,7 @@ func apply_preset(preset: int) -> void:
 	pending["ssil_enabled"] = selected_preset >= 3
 	pending["ssr_enabled"] = selected_preset >= 2
 	pending["fog_enabled"] = selected_preset >= 1
+	pending["gi_enabled"] = graphics_preset_allows_gi(selected_preset)
 
 func save_settings(path: String = CONFIG_PATH) -> Error:
 	var config := ConfigFile.new()
@@ -112,7 +130,7 @@ func _validated(key: String, value: Variant) -> Variant:
 		"stick_deadzone": return _validated_float(key, value, 0.0, 0.45)
 		"stick_outer_deadzone": return _validated_float(key, value, 0.0, 0.25)
 		"stick_response": return _validated_float(key, value, 0.5, 3.0)
-		"ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled", "units_mph", "trick_visualizer_enabled":
+		"ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled", "gi_enabled", "units_mph", "trick_visualizer_enabled":
 			return value if typeof(value) == TYPE_BOOL else DEFAULTS[key]
 		"resolution":
 			if typeof(value) != TYPE_VECTOR2I:

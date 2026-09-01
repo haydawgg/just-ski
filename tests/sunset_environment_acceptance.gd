@@ -1,5 +1,7 @@
 extends Node
 
+const ResortModule := preload("res://world/resort.gd")
+
 var failures: Array[String] = []
 
 @onready var resort: Node3D = $Resort
@@ -10,6 +12,7 @@ func _ready() -> void:
 	var profile := resort.get("environment_profile") as ResortEnvironmentProfile
 	var world_environment := resort.get("environment") as WorldEnvironment
 	var sun := resort.get("sun") as DirectionalLight3D
+	var active_environment: Environment = null
 	if profile == null or not profile.gi_enabled:
 		failures.append("Sunset scene did not select a GI-enabled environment profile")
 	else:
@@ -26,9 +29,10 @@ func _ready() -> void:
 		failures.append("Sunset scene did not create a WorldEnvironment")
 	else:
 		var env := world_environment.environment
-		var quality_allows_gi := int(GameSettings.active.get("graphics_preset", 2)) >= 2
-		if env.sdfgi_enabled != quality_allows_gi:
-			failures.append("Sunset SDFGI enabled=%s did not follow profile/quality gating" % env.sdfgi_enabled)
+		active_environment = env
+		var expected_gi: bool = bool(resort.call("effective_gi_enabled"))
+		if env.sdfgi_enabled != expected_gi:
+			failures.append("Sunset SDFGI enabled=%s did not follow profile/user/preset gating (expected %s)" % [env.sdfgi_enabled, expected_gi])
 		if env.sdfgi_bounce_feedback > 0.5:
 			failures.append("Sunset SDFGI bounce feedback %.2f exceeds the safe limit" % env.sdfgi_bounce_feedback)
 		if env.sdfgi_cascades < 2 or env.sdfgi_max_distance < 128.0:
@@ -45,6 +49,7 @@ func _ready() -> void:
 	var local_lights := resort.find_children("*", "OmniLight3D", true, false).size() + resort.find_children("*", "SpotLight3D", true, false).size()
 	if local_lights > 0:
 		failures.append("Sunset scene added %d local lights instead of using the sun/SDFGI setup" % local_lights)
+	_test_gi_policy(resort, active_environment)
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
 		print("SUNSET_ENVIRONMENT_PASS: warm sky, low sun, static SDFGI geometry, shadows, and quality gating validated")
@@ -53,3 +58,42 @@ func _ready() -> void:
 	for failure: String in failures:
 		push_error("SUNSET_ENVIRONMENT_FAIL: " + failure)
 	get_tree().quit(1)
+
+func _test_gi_policy(sunset_resort: Node3D, env: Environment) -> void:
+	var sunset_profile := sunset_resort.get("environment_profile") as ResortEnvironmentProfile
+	var default_profile := preload("res://resources/environment/default_resort_environment_profile.tres") as ResortEnvironmentProfile
+	if ResortModule.resolve_effective_gi(default_profile, true, 3):
+		failures.append("A GI-disabled environment profile incorrectly enabled GI")
+	if not ResortModule.resolve_effective_gi(sunset_profile, true, 2):
+		failures.append("A GI-capable profile/high preset combination did not allow GI")
+	if ResortModule.resolve_effective_gi(sunset_profile, true, 1):
+		failures.append("A Medium preset incorrectly allowed GI")
+	if env == null:
+		return
+	var original_active := GameSettings.active.duplicate(true)
+	var original_pending := GameSettings.pending.duplicate(true)
+	var original_environment_gi := env.sdfgi_enabled
+	GameSettings.begin_edit()
+	GameSettings.set_pending("gi_enabled", not bool(original_active["gi_enabled"]))
+	if env.sdfgi_enabled != original_environment_gi:
+		failures.append("Staging GI changed the active environment before Apply")
+	GameSettings.cancel_pending()
+	if bool(GameSettings.pending["gi_enabled"]) != bool(original_active["gi_enabled"]):
+		failures.append("Cancel did not restore the pending GI value")
+	GameSettings.begin_edit()
+	GameSettings.set_pending("graphics_preset", 1)
+	GameSettings.apply_pending()
+	if env.sdfgi_enabled:
+		failures.append("Applying a GI-forbidden preset left SDFGI enabled")
+	GameSettings.begin_edit()
+	GameSettings.apply_preset(2)
+	GameSettings.apply_pending()
+	if not env.sdfgi_enabled:
+		failures.append("Applying GI with a capable profile and preset did not enable SDFGI")
+	var active_before_save_failure := GameSettings.active.duplicate(true)
+	var save_error := GameSettings.save_settings("res://tests")
+	if save_error == OK or not env.sdfgi_enabled or GameSettings.active != active_before_save_failure:
+		failures.append("A GI save failure did not preserve the applied runtime state")
+	GameSettings.active = original_active
+	GameSettings.pending = original_pending
+	GameSettings.apply_pending()

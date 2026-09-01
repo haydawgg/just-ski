@@ -6,6 +6,11 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $project = Get-Content -Raw (Join-Path $RepoRoot "project.godot")
 $graphics = Get-Content -Raw (Join-Path $RepoRoot "docs/GRAPHICS.md")
+$settings = Get-Content -Raw (Join-Path $RepoRoot "autoload/game_settings.gd")
+$resort = Get-Content -Raw (Join-Path $RepoRoot "world/resort.gd")
+$workflow = Get-Content -Raw (Join-Path $RepoRoot ".github/workflows/quality.yml")
+$runtimeGate = Get-Content -Raw (Join-Path $RepoRoot "tests/runtime_quality_gate.ps1")
+$gitignore = Get-Content -Raw (Join-Path $RepoRoot ".gitignore")
 $failures = [System.Collections.Generic.List[string]]::new()
 
 function Get-ProjectValue([string]$key) {
@@ -31,6 +36,27 @@ if ($graphics -notmatch ([regex]::Escape("${overrideWidth}×${overrideHeight}"))
 }
 if ($windowMode -eq "3" -and $graphics -notmatch "fullscreen") {
 	$failures.Add("GRAPHICS.md does not document fullscreen startup for project window mode 3.")
+}
+if ($settings -notmatch '"gi_enabled"\s*:\s*true' -or $settings -notmatch '"gi_enabled",\s*"units_mph"') {
+	$failures.Add("GameSettings does not define a persisted GI default and validation path.")
+}
+if ($settings -notmatch 'graphics_preset_allows_gi' -or $settings -notmatch 'key != "graphics_preset" and key in RENDERER_SETTING_KEYS') {
+	$failures.Add("GameSettings does not expose the explicit GI preset/custom policy.")
+}
+if ($resort -notmatch 'resolve_effective_gi' -or $resort -notmatch 'effective_gi_enabled') {
+	$failures.Add("Resort does not expose the canonical profile/user/preset GI resolver.")
+}
+if ($graphics -notmatch 'gi_enabled' -or $graphics -notmatch 'Low and Medium forbid it') {
+	$failures.Add("GRAPHICS.md does not document the profile/user/preset GI ownership model.")
+}
+if ($workflow -notmatch 'windows-2025' -or $workflow -notmatch 'actions/cache@v4' -or $workflow -notmatch '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953') {
+	$failures.Add("Quality Gate workflow is missing the pinned Windows/Godot cache contract.")
+}
+if ($runtimeGate -notmatch '\[System\.Environment\]::GetEnvironmentVariable\("GODOT_PATH"\)' -or $runtimeGate -notmatch 'Copy-CaptureArtifacts') {
+	$failures.Add("Runtime quality gate is missing GODOT_PATH resolution or capture preservation.")
+}
+if ($gitignore -notmatch '(?m)^\.godot_logs/$' -or $gitignore -notmatch '(?m)^\.tmp_male_base_mesh/$') {
+	$failures.Add("Generated runtime output and the removed temporary asset directory are not ignored.")
 }
 
 if ($failures.Count -gt 0) {
