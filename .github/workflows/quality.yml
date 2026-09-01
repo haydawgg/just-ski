@@ -74,7 +74,13 @@ jobs:
       - name: Cache project import state
         uses: actions/cache@v4
         with:
-          path: .godot/imported
+          # Imported assets alone are not enough for a clean GDScript boot:
+          # Godot also needs the generated class and UID registries to resolve
+          # project-level class_name declarations in every shard.
+          path: |
+            .godot/imported
+            .godot/global_script_class_cache.cfg
+            .godot/uid_cache.bin
           key: windows-godot-${{ env.GODOT_VERSION }}-imported-${{ hashFiles('project.godot', '**/*.gd', '**/*.tscn', '**/*.tres', '**/*.res', '**/*.svg', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.webp', '**/*.glb', '**/*.gltf', '**/*.obj', '**/*.mtl', '**/*.ogg', '**/*.wav') }}
           restore-keys: |
             windows-godot-${{ env.GODOT_VERSION }}-imported-
@@ -150,7 +156,10 @@ jobs:
       - name: Restore project import state
         uses: actions/cache@v4
         with:
-          path: .godot/imported
+          path: |
+            .godot/imported
+            .godot/global_script_class_cache.cfg
+            .godot/uid_cache.bin
           key: windows-godot-${{ env.GODOT_VERSION }}-imported-${{ hashFiles('project.godot', '**/*.gd', '**/*.tscn', '**/*.tres', '**/*.res', '**/*.svg', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.webp', '**/*.glb', '**/*.gltf', '**/*.obj', '**/*.mtl', '**/*.ogg', '**/*.wav') }}
           restore-keys: |
             windows-godot-${{ env.GODOT_VERSION }}-imported-
