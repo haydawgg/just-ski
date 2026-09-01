@@ -46,9 +46,11 @@ The following slices have since landed on `master` and passed the local full
 Quality Gate from isolated temporary Godot user directories:
 
 - M1.1 CI/runtime stabilization: explicit `GODOT_PATH` resolution, pinned
-  Godot 4.7.2 download/checksum, cache, timeout-safe process-tree cleanup,
-  stdout/stderr preservation, and failure captures are implemented in
-  `tests/runtime_quality_gate.ps1` and `.github/workflows/quality.yml`.
+  Godot 4.7.2 download/checksum, hashed import caching, timeout-safe
+  process-tree cleanup, stdout/stderr preservation, failure captures, and
+  five parallel runtime shards behind a required `quality` aggregator are
+  implemented in `tests/runtime_quality_gate.ps1` and
+  `.github/workflows/quality.yml`.
 - M1.2 GI settings, profile/preset/user gating, staged UI, persistence error
   reporting, and acceptance coverage are implemented.
 - M1.4 repository hygiene, M1.5's post-initial-decomposition baseline, and
@@ -67,12 +69,12 @@ Quality Gate from isolated temporary Godot user directories:
   procedure. A project-level distribution license remains intentionally
   undecided.
 
-Remaining external or gate-dependent work is explicit: the pushed commit
-`2a71dcb` still needs its hosted Quality Gate result recorded and the `master`
-branch check configured as required; physical Xbox/PlayStation/multi-device
-validation remains pending as documented in `docs/CONTROLLER_VALIDATION.md`;
-and the project license requires the owner's distribution decision. These are
-not inferred from headless tests.
+Remaining external or gate-dependent work is explicit: the sharded hosted
+Quality Gate still needs its first green PR result recorded before merging;
+physical Xbox/PlayStation/multi-device validation remains pending as
+documented in `docs/CONTROLLER_VALIDATION.md`; and the project license
+requires the owner's distribution decision. These are not inferred from
+headless tests.
 
 ---
 

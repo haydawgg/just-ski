@@ -10,7 +10,7 @@ $settings = Get-Content -Raw (Join-Path $RepoRoot "autoload/game_settings.gd")
 $resort = Get-Content -Raw (Join-Path $RepoRoot "world/resort.gd")
 $workflow = Get-Content -Raw (Join-Path $RepoRoot ".github/workflows/quality.yml")
 $runtimeGate = Get-Content -Raw (Join-Path $RepoRoot "tests/runtime_quality_gate.ps1")
-$gitignore = Get-Content -Raw (Join-Path $RepoRoot ".gitignore")
+$gitignore = (Get-Content -Raw (Join-Path $RepoRoot ".gitignore")) -replace "`r", ""
 $baselinePath = Join-Path $RepoRoot "docs/BASELINE.md"
 $controllerValidationPath = Join-Path $RepoRoot "docs/CONTROLLER_VALIDATION.md"
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -54,8 +54,25 @@ if ($graphics -notmatch 'gi_enabled' -or $graphics -notmatch 'Low and Medium for
 if ($workflow -notmatch 'windows-2025' -or $workflow -notmatch 'actions/cache@v4' -or $workflow -notmatch '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953') {
 	$failures.Add("Quality Gate workflow is missing the pinned Windows/Godot cache contract.")
 }
+if ($workflow -notmatch '(?m)^  static:' -or $workflow -notmatch '(?m)^  runtime:' -or $workflow -notmatch '(?m)^  quality:') {
+	$failures.Add("Quality Gate workflow is missing separate static, runtime, and required quality jobs.")
+}
+foreach ($requiredShard in @("environment-camera", "physics", "animation", "tricks-gameplay", "systems-media")) {
+	if ($workflow -notmatch ([regex]::Escape("- $requiredShard"))) {
+		$failures.Add("Quality Gate workflow is missing runtime shard $requiredShard.")
+	}
+}
+if ($workflow -notmatch 'hashFiles\([^\r\n]*project\.godot' -or $workflow -notmatch '\.godot/imported') {
+	$failures.Add("Quality Gate workflow is missing the project import-state cache keyed from project/assets.")
+}
+if ($workflow -notmatch 'if: \$\{\{ always\(\) \}\}' -or $workflow -notmatch 'needs\.runtime\.result') {
+	$failures.Add("Quality Gate workflow is missing the final all-shards quality aggregator.")
+}
 if ($runtimeGate -notmatch '\[System\.Environment\]::GetEnvironmentVariable\("GODOT_PATH"\)' -or $runtimeGate -notmatch 'Copy-CaptureArtifacts') {
 	$failures.Add("Runtime quality gate is missing GODOT_PATH resolution or capture preservation.")
+}
+if ($runtimeGate -notmatch '\[string\]\$Shard' -or $runtimeGate -notmatch 'RUNTIME_SHARD' -or $runtimeGate -notmatch 'PASS \{0\} .*\{1\}s') {
+	$failures.Add("Runtime quality gate is missing shard selection or per-scene timing output.")
 }
 if ($gitignore -notmatch '(?m)^\.godot_logs/$' -or $gitignore -notmatch '(?m)^\.tmp_male_base_mesh/$') {
 	$failures.Add("Generated runtime output and the removed temporary asset directory are not ignored.")

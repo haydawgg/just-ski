@@ -3,7 +3,8 @@ param(
 	[string]$GodotPath = "",
 	[string]$UserDataRoot = "",
 	[string]$LogDirectory = "",
-	[string]$CaptureDirectory = ""
+	[string]$CaptureDirectory = "",
+	[string]$Shard = ""
 )
 
 $ErrorActionPreference = "Continue"
@@ -14,11 +15,7 @@ if (-not (Test-Path -LiteralPath $RepoRoot -PathType Container)) {
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 
 $checks = @(
-	"tests/physics_static_acceptance.ps1",
-	"tests/shader_static_acceptance.ps1",
-	"tests/config_docs_static_acceptance.ps1",
-	"tests/world_authoring_static_acceptance.ps1",
-	"tests/release_static_acceptance.ps1",
+	"tests/static_quality_gate.ps1",
 	"tests/runtime_quality_gate.ps1"
 )
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -38,6 +35,7 @@ try {
 		}
 		$scriptArguments = @{ RepoRoot = $RepoRoot }
 		if ($relativePath -eq "tests/runtime_quality_gate.ps1") {
+			if (-not [string]::IsNullOrWhiteSpace($Shard)) { $scriptArguments.Shard = $Shard }
 			if (-not [string]::IsNullOrWhiteSpace($GodotPath)) { $scriptArguments.GodotPath = $GodotPath }
 			if (-not [string]::IsNullOrWhiteSpace($UserDataRoot)) { $scriptArguments.UserDataRoot = $UserDataRoot }
 			if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) { $scriptArguments.LogDirectory = $LogDirectory }
