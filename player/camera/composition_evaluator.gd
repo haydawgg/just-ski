@@ -27,6 +27,54 @@ static func rect_violation(value: Rect2, container: Rect2) -> float:
 		maxf(container.position.y - value.position.y, value_end.y - container_end.y)
 	))
 
+static func evaluate_landmarks(
+	projected_points: Array[Dictionary],
+	foreground_occluded_count: int,
+	landmark_count: int,
+	hard_rect: Rect2,
+	inner_rect: Rect2
+) -> Dictionary:
+	var bounds := Rect2()
+	var bounds_initialized := false
+	var average_depth := 0.0
+	var depth_count := 0
+	var body_occluded := foreground_occluded_count
+	var behind_count := 0
+	for projected: Dictionary in projected_points:
+		var depth_val := float(projected.get("depth", -1.0))
+		if depth_val <= 0.01:
+			behind_count += 1
+			body_occluded += 1
+			continue
+		var screen := projected.get("screen", Vector2(INF, INF)) as Vector2
+		if not screen.is_finite():
+			behind_count += 1
+			body_occluded += 1
+			continue
+		if not bounds_initialized:
+			bounds = Rect2(screen, Vector2.ZERO)
+			bounds_initialized = true
+		else:
+			bounds = bounds.expand(screen)
+		average_depth += depth_val
+		depth_count += 1
+	if not bounds_initialized:
+		bounds = Rect2(-10.0, -10.0, 20.0, 20.0)
+	var depth := average_depth / maxf(float(depth_count), 1.0)
+	var body_occlusion := float(body_occluded) / maxf(float(landmark_count), 1.0)
+	var hard_violation := rect_violation(bounds, hard_rect)
+	var inner_violation := rect_violation(bounds, inner_rect)
+	if behind_count > 0:
+		hard_violation = INF
+		inner_violation = INF
+	return {
+		"skier_screen_rect": bounds,
+		"hard_violation": hard_violation,
+		"inner_violation": inner_violation,
+		"body_occlusion": body_occlusion,
+		"average_depth": depth,
+	}
+
 static func screen_correction_world_offset(
 	evaluation: Dictionary,
 	desired_rect: Rect2,

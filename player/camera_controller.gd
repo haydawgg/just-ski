@@ -1131,42 +1131,20 @@ func _evaluate_composition(
 	_record_composition_evaluation()
 	var landmarks := _composition_landmarks()
 	var viewport_size := _composition_viewport_size()
-	var bounds := Rect2()
-	var bounds_initialized := false
-	var average_depth := 0.0
-	var depth_count := 0
+	var projected_points: Array[Dictionary] = []
 	var body_occluded := 0
-	var behind_count := 0
 	for world_position: Vector3 in landmarks:
 		var projected := _project_composition_point(camera_position, camera_basis, fov, viewport_size, world_position)
-		var depth_val := float(projected.depth)
-		if depth_val <= 0.01:
-			behind_count += 1
-			body_occluded += 1
-			continue
-		var screen := projected.screen as Vector2
-		if not screen.is_finite():
-			behind_count += 1
-			body_occluded += 1
-			continue
-		if not bounds_initialized:
-			bounds = Rect2(screen, Vector2.ZERO)
-			bounds_initialized = true
-		else:
-			bounds = bounds.expand(screen)
-		average_depth += depth_val
-		depth_count += 1
+		projected_points.append(projected)
 		if include_body_occlusion and _is_foreground_occluded(camera_position, world_position):
 			body_occluded += 1
-	if not bounds_initialized:
-		bounds = Rect2(-10.0, -10.0, 20.0, 20.0)
-	var depth := average_depth / maxf(float(depth_count), 1.0)
-	var body_occlusion := float(body_occluded) / maxf(float(landmarks.size()), 1.0)
-	var hard_violation := _rect_violation(bounds, composition_hard_rect)
-	var inner_violation := _rect_violation(bounds, composition_inner_rect)
-	if behind_count > 0:
-		hard_violation = INF
-		inner_violation = INF
+	var landmark_evaluation := CompositionEvaluatorModule.evaluate_landmarks(
+		projected_points,
+		body_occluded,
+		landmarks.size(),
+		composition_hard_rect,
+		composition_inner_rect
+	)
 	var landing_screen := Vector2.ZERO
 	var landing_violation := 0.0
 	var landing_occlusion := 0.0
@@ -1176,20 +1154,20 @@ func _evaluate_composition(
 	if descending:
 		var landing_projection := _project_composition_point(camera_position, camera_basis, fov, viewport_size, skier.predicted_landing_point)
 		landing_screen = landing_projection.screen as Vector2
-		landing_violation = _rect_violation(Rect2(landing_screen, Vector2.ZERO), composition_landing_rect)
+		landing_violation = CompositionEvaluatorModule.rect_violation(Rect2(landing_screen, Vector2.ZERO), composition_landing_rect)
 		landing_occlusion = 1.0 if include_landing_occlusion and _is_foreground_occluded(camera_position, skier.predicted_landing_point) else 0.0
 		landing_valid = landing_violation <= 0.0001 and landing_occlusion <= maximum_landing_occlusion_fraction
 	var evaluation := {
-		"skier_screen_rect": bounds,
+		"skier_screen_rect": landmark_evaluation.get("skier_screen_rect", Rect2()),
 		"landing_screen_position": landing_screen,
-		"hard_violation": hard_violation,
-		"inner_violation": inner_violation,
+		"hard_violation": landmark_evaluation.get("hard_violation", INF),
+		"inner_violation": landmark_evaluation.get("inner_violation", INF),
 		"landing_violation": landing_violation,
 		"landing_occlusion": landing_occlusion,
 		"landing_valid": landing_valid,
-		"body_occlusion": body_occlusion,
-		"foreground_occlusion": maxf(body_occlusion, landing_occlusion),
-		"average_depth": depth,
+		"body_occlusion": landmark_evaluation.get("body_occlusion", 1.0),
+		"foreground_occlusion": maxf(float(landmark_evaluation.get("body_occlusion", 1.0)), landing_occlusion),
+		"average_depth": landmark_evaluation.get("average_depth", 0.0),
 	}
 	_composition_evaluation_frame_id = _composition_frame_id
 	_composition_evaluation_position = camera_position
@@ -1249,9 +1227,6 @@ func _project_composition_point(camera_position: Vector3, camera_basis: Basis, f
 
 func _is_foreground_occluded(camera_position: Vector3, world_position: Vector3) -> bool:
 	return _collision_solver.foreground_occluded(camera_position, world_position, surface_clearance)
-
-func _rect_violation(value: Rect2, container: Rect2) -> float:
-	return CompositionEvaluatorModule.rect_violation(value, container)
 
 func _constrain_landing_look_weight(base_target: Vector3, landing_target: Vector3, requested_weight: float, up: Vector3) -> float:
 	if requested_weight <= 0.0:

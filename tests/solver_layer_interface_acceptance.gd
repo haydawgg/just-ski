@@ -151,6 +151,29 @@ func _test_camera_interfaces() -> void:
 	var evaluation := {"hard_violation": 0.0, "body_occlusion": 0.0}
 	if not CompositionEvaluator.hard_valid(evaluation, 0.25):
 		failures.append("Composition evaluator rejected a valid hard pose")
+	var projected_points: Array[Dictionary] = []
+	projected_points.append({"screen": Vector2(0.5, 0.5), "depth": 4.0})
+	projected_points.append({"screen": Vector2(0.6, 0.55), "depth": 5.0})
+	var landmark_evaluation := CompositionEvaluator.evaluate_landmarks(
+		projected_points,
+		0,
+		projected_points.size(),
+		Rect2(0.0, 0.0, 1.0, 1.0),
+		Rect2(0.1, 0.1, 0.8, 0.8)
+	)
+	if float(landmark_evaluation.get("average_depth", 0.0)) <= 0.0 or float(landmark_evaluation.get("hard_violation", INF)) != 0.0:
+		failures.append("Composition evaluator did not preserve valid landmark bounds")
+	var behind_points: Array[Dictionary] = []
+	behind_points.append({"screen": Vector2(0.5, 0.5), "depth": -1.0})
+	var behind_evaluation := CompositionEvaluator.evaluate_landmarks(
+		behind_points,
+		0,
+		behind_points.size(),
+		Rect2(0.0, 0.0, 1.0, 1.0),
+		Rect2(0.1, 0.1, 0.8, 0.8)
+	)
+	if float(behind_evaluation.get("hard_violation", 0.0)) != INF:
+		failures.append("Composition evaluator did not hard-fail a behind-camera landmark")
 	var framing := CameraFramingSolver.new()
 	framing.configure(0.5, 1.15, 3.4, 9.0, 20.0)
 	framing.reset(0.0, true)
