@@ -1,0 +1,51 @@
+name: Quality Gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download pinned Godot console binary
+        shell: pwsh
+        run: |
+          $version = '4.7.2'
+          $archive = Join-Path $env:RUNNER_TEMP "Godot_v$version-stable_win64.exe.zip"
+          $url = "https://github.com/godotengine/godot/releases/download/${version}-stable/Godot_v${version}-stable_win64.exe.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          # The release artifact is pinned by version and the checksum is
+          # verified before it is executed. Update this value only alongside
+          # an intentional Godot version change.
+          $expectedSha256 = '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953'
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Godot archive checksum is not pinned or does not match. Actual: $actualSha256"
+          }
+          $godotRoot = Join-Path $env:RUNNER_TEMP 'godot-4.7.2'
+          New-Item -ItemType Directory -Path $godotRoot -Force | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $godotRoot -Force
+          "GODOT_PATH=$((Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse | Select-Object -First 1).FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run static and runtime quality gate
+        shell: pwsh
+        run: |
+          $userData = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-user'
+          $logs = Join-Path $env:RUNNER_TEMP 'summit-sessions-runtime-logs'
+          & .\tests\quality_gate.ps1 -RepoRoot $PWD -GodotPath $env:GODOT_PATH -UserDataRoot $userData -LogDirectory $logs
+
+      - name: Upload runtime logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-quality-logs
+          path: ${{ runner.temp }}/summit-sessions-runtime-logs
+          if-no-files-found: warn

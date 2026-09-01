@@ -258,7 +258,7 @@ func _test_released_grab_scoring_regression() -> void:
 	add_child(tricks)
 	var landed_name := [""]
 	var landed_points := [0]
-	tricks.trick_landed.connect(func(name: String, points: int, _quality: float) -> void:
+	tricks.trick_landed.connect(func(name: String, points: int, _quality: float, _outcome: int) -> void:
 		landed_name[0] = name
 		landed_points[0] = points
 	)
@@ -277,7 +277,7 @@ func _test_released_grab_scoring_regression() -> void:
 	tricks.update_air(Vector3.ZERO, 0.2, command)
 	if "Safety Grab Left" not in tricks.current_name():
 		failures.append("Animation-time grab release erased gameplay trick history")
-	tricks.land(1.0, false)
+	tricks.land(1.0, false, LandingSolver.Outcome.CLEAN)
 	if "Safety Grab Left" not in landed_name[0] or landed_points[0] <= 870:
 		failures.append("Released grab was not preserved for landing name/score")
 	remove_child(tricks)

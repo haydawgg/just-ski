@@ -111,7 +111,7 @@ func _on_landed(result: Dictionary) -> void:
 		"impact": snappedf(float(result.impact), 0.001),
 	})
 
-func _on_trick_landed(text: String, points: int, quality: float) -> void:
+func _on_trick_landed(text: String, points: int, quality: float, _outcome: int) -> void:
 	completed_tricks.append({"text": text, "points": points, "quality": snappedf(quality, 0.001)})
 
 func _physics_process(delta: float) -> void:

@@ -99,14 +99,14 @@ func _test_residual_penalizes_landing_quality() -> void:
 	var over_quality := [0.0]
 
 	var clean := _new_tricks(TrickCommand.Kind.SPIN_LEFT)
-	clean.trick_landed.connect(func(_name: String, _points: int, quality: float) -> void: clean_quality[0] = quality)
+	clean.trick_landed.connect(func(_name: String, _points: int, quality: float, _outcome: int) -> void: clean_quality[0] = quality)
 	_apply_degrees(clean, Vector3.UP, -180.0)
-	clean.land(1.0, false)
+	clean.land(1.0, false, LandingSolver.Outcome.CLEAN)
 
 	var over := _new_tricks(TrickCommand.Kind.SPIN_LEFT)
-	over.trick_landed.connect(func(_name: String, _points: int, quality: float) -> void: over_quality[0] = quality)
+	over.trick_landed.connect(func(_name: String, _points: int, quality: float, _outcome: int) -> void: over_quality[0] = quality)
 	_apply_degrees(over, Vector3.UP, -243.0)
-	over.land(1.0, false)
+	over.land(1.0, false, LandingSolver.Outcome.CLEAN)
 
 	if clean_quality[0] < 0.99:
 		failures.append("Exact completed spin unexpectedly lost landing quality")

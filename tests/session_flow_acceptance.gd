@@ -19,7 +19,7 @@ func _ready() -> void:
 func _physics_process(_delta: float) -> void:
 	frame += 1
 	if frame == 30:
-		skier.scoring.accept_trick("Test 360", 1200, 0.8)
+		skier.scoring.accept_trick("Test 360", 1200, 0.8, LandingSolver.Outcome.CLEAN)
 		skier.velocity = Vector3.ZERO
 		skier.global_position = finish_trigger.global_position
 	elif frame == 60:

@@ -11,7 +11,7 @@ const CLEAN_ROTATION_RESIDUAL_DEGREES := 25.0
 const SKETCHY_ROTATION_RESIDUAL_DEGREES := 55.0
 
 signal trick_changed(text: String)
-signal trick_landed(text: String, points: int, quality: float)
+signal trick_landed(text: String, points: int, quality: float, outcome: int)
 
 enum GrabPose {
 	NONE,
@@ -171,7 +171,7 @@ func update_grind(delta: float, selected_pose: int = 0) -> void:
 	var rail_name := "50-50" if rail_pose == 0 else ("Boardslide Left" if rail_pose < 0 else "Boardslide Right")
 	trick_changed.emit("%s %.1fs" % [rail_name, grind_seconds])
 
-func land(quality: float, switch_landing: bool, link_bonus: int = 0, rotation_quality_applied: bool = false) -> void:
+func land(quality: float, switch_landing: bool, outcome: int, link_bonus: int = 0, rotation_quality_applied: bool = false) -> void:
 	if not active:
 		return
 	var name := current_name()
@@ -203,7 +203,7 @@ func land(quality: float, switch_landing: bool, link_bonus: int = 0, rotation_qu
 		points = int(grind_seconds * 300.0)
 	var scored_quality := clampf(quality if rotation_quality_applied else quality * _rotation_quality_factor(), 0.2, 1.0)
 	points = int(points * scored_quality)
-	trick_landed.emit(name, points, scored_quality)
+	trick_landed.emit(name, points, scored_quality, outcome)
 	reset()
 
 func current_name() -> String:

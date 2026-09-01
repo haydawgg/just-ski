@@ -366,7 +366,7 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 	var landed_count := [0]
 	var landed_name := [""]
 	var landed_points := [0]
-	tricks.trick_landed.connect(func(name: String, points: int, _quality: float) -> void:
+	tricks.trick_landed.connect(func(name: String, points: int, _quality: float, _outcome: int) -> void:
 		landed_count[0] += 1
 		landed_name[0] = name
 		landed_points[0] = points
@@ -376,7 +376,7 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 	command.committed = true
 	tricks.begin_air(false, TrickCommand.Kind.SPIN_LEFT)
 	tricks.update_air(Vector3.ZERO, 0.2, command)
-	tricks.land(1.0, false)
+	tricks.land(1.0, false, LandingSolver.Outcome.CLEAN)
 	if landed_count[0] != 0:
 		failures.append("A recognized input with no completed physical rotation earned points")
 
@@ -396,7 +396,7 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 	tricks.update_air(Vector3.ZERO, 0.2, command)
 	if "Safety Grab Left" not in tricks.current_name():
 		failures.append("Releasing a grab before touchdown erased it from the active trick")
-	tricks.land(1.0, false)
+	tricks.land(1.0, false, LandingSolver.Outcome.CLEAN)
 	if landed_count[0] != 1:
 		failures.append("Completed spin and grab did not emit a landed trick")
 	if "Left 360" not in landed_name[0] or "Safety Grab Left" not in landed_name[0]:
@@ -415,7 +415,7 @@ func _test_motion_driven_recognition_and_scoring() -> void:
 	tricks.update_air(Vector3.ZERO, 0.1, command)
 	if "Shifty Left" not in tricks.current_name() or tricks.grab_pose != TrickController.GrabPose.NONE:
 		failures.append("Releasing a shifty erased its name or contaminated the grab channel")
-	tricks.land(1.0, false)
+	tricks.land(1.0, false, LandingSolver.Outcome.CLEAN)
 	if landed_count[0] != 2 or "Shifty Left" not in landed_name[0]:
 		failures.append("Shifty did not produce a separately recognized landed style")
 	if landed_points[0] < 220:
@@ -427,7 +427,7 @@ func _test_live_degrees_are_not_finalized() -> void:
 	var live_text := [""]
 	var landed_text := [""]
 	tricks.trick_changed.connect(func(text: String) -> void: live_text[0] = text)
-	tricks.trick_landed.connect(func(text: String, _points: int, _quality: float) -> void: landed_text[0] = text)
+	tricks.trick_landed.connect(func(text: String, _points: int, _quality: float, _outcome: int) -> void: landed_text[0] = text)
 	var command := TrickCommand.new()
 	command.kind = TrickCommand.Kind.SPIN_LEFT
 	command.committed = true
@@ -437,7 +437,7 @@ func _test_live_degrees_are_not_finalized() -> void:
 		failures.append("Airborne trick text did not report live degrees: %s" % live_text[0])
 	if tricks.current_name() != "Left 180":
 		failures.append("Finalized trick naming stopped using scored rotation buckets")
-	tricks.land(1.0, false)
+	tricks.land(1.0, false, LandingSolver.Outcome.CLEAN)
 	if landed_text[0] != "Left 180":
 		failures.append("Contact result did not use the finalized scored trick: %s" % landed_text[0])
 	tricks.queue_free()

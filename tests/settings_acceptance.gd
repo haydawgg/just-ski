@@ -3,6 +3,7 @@ extends Node
 var original: Dictionary
 
 func _ready() -> void:
+	_test_validation_schema()
 	original = GameSettings.active.duplicate(true)
 	var original_scale := float(GameSettings.active["render_scale"])
 	var staged_scale := 0.55 if not is_equal_approx(original_scale, 0.55) else 0.65
@@ -42,6 +43,36 @@ func _ready() -> void:
 	AudioManager.shutdown_audio()
 	print("SETTINGS_PASS: pending, Cancel, Apply, renderer update, AA/shadow, validation, and persistence checks passed")
 	get_tree().quit(0)
+
+func _test_validation_schema() -> void:
+	_check(GameSettings._validated("display_mode", -1) == 0, "Display mode did not clamp to the lower bound")
+	_check(GameSettings._validated("display_mode", 99) == 2, "Display mode did not clamp to the upper bound")
+	_check(GameSettings._validated("vsync_mode", -1) == 0, "VSync did not clamp to the lower bound")
+	_check(GameSettings._validated("vsync_mode", 99) == 2, "VSync did not clamp to the upper bound")
+	_check(is_equal_approx(float(GameSettings._validated("render_scale", 0.1)), 0.5), "Render scale did not clamp to the lower bound")
+	_check(is_equal_approx(float(GameSettings._validated("render_scale", 1.9)), 1.5), "Render scale did not clamp to the upper bound")
+	_check(is_equal_approx(float(GameSettings._validated("master_volume_db", -99.0)), -30.0), "Master volume did not clamp to the UI range")
+	_check(is_equal_approx(float(GameSettings._validated("music_volume_db", 10.0)), 0.0), "Music volume did not clamp to the UI range")
+	_check(GameSettings._validated("resolution", Vector2i(1, 99999)) == Vector2i(960, 4320), "Resolution did not clamp each axis to the safe range")
+	_check(GameSettings._validated("ssao_enabled", "true") == GameSettings.DEFAULTS["ssao_enabled"], "Malformed boolean did not fall back to its default")
+	_check(GameSettings._validated("display_mode", "fullscreen") == GameSettings.DEFAULTS["display_mode"], "Malformed integer did not fall back to its default")
+	_check(GameSettings._validated("resolution", Vector2(1920, 1080)) == GameSettings.DEFAULTS["resolution"], "Malformed resolution type did not fall back to its default")
+	_check(GameSettings._validated("render_scale", INF) == GameSettings.DEFAULTS["render_scale"], "Non-finite numeric value did not fall back to its default")
+	var missing_defaults := GameSettings._validated_settings({"render_scale": 0.75})
+	_check(missing_defaults.size() == GameSettings.DEFAULTS.size(), "Missing settings keys were not restored from defaults")
+	_check(missing_defaults["resolution"] == GameSettings.DEFAULTS["resolution"] and missing_defaults["fog_enabled"] == GameSettings.DEFAULTS["fog_enabled"], "Missing settings values did not use defaults")
+	GameSettings.apply_preset(99)
+	_check(int(GameSettings.pending["graphics_preset"]) == 4, "Invalid graphics preset did not clamp safely")
+	_check(GameSettings.save_settings() == OK, "Normal settings save did not return OK")
+	var active_before_failure := GameSettings.active.duplicate(true)
+	var save_failures: Array[Error] = []
+	var on_save_failed := func(error: Error) -> void: save_failures.append(error)
+	GameSettings.settings_save_failed.connect(on_save_failed)
+	var save_error := GameSettings.save_settings("res://tests")
+	GameSettings.settings_save_failed.disconnect(on_save_failed)
+	_check(save_error != OK, "Invalid settings path unexpectedly reported success")
+	_check(save_failures.size() == 1 and save_failures[0] == save_error, "Settings save failure was not reported through its signal")
+	_check(GameSettings.active == active_before_failure, "Failed settings save rolled back or changed active settings")
 
 func _check(condition: bool, message: String) -> void:
 	if not condition:

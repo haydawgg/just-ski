@@ -25,7 +25,7 @@ func _test_guarded_crash_entry_and_respawn_cleanup() -> void:
 	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(7.0, -2.0, -14.0))
 	skier.angular_velocity = Vector3(0.8, 2.2, -0.5)
 	skier.scoring.begin_feature("jump")
-	skier.scoring.accept_trick("Baseline 360", 400, 0.9)
+	skier.scoring.accept_trick("Baseline 360", 400, 0.9, LandingSolver.Outcome.CLEAN)
 	var score_before := skier.scoring.snapshot()
 	var crash_signals := [0]
 	skier.crashed.connect(func() -> void: crash_signals[0] += 1)

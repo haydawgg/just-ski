@@ -6,7 +6,7 @@ This document describes the current visual and settings architecture. Renderer b
 
 Summit Sessions targets Godot 4.7 Forward+.
 
-The project uses a 1600×900 viewport coordinate space and starts in a 1280×720 window. 3D render scaling is applied through the viewport's 3D scale, so lowering render scale does not resize the UI coordinate system.
+`project.godot` is the source of truth for display configuration. The current project uses a 1920×1080 viewport coordinate space, a 1920×1080 window override, and starts in fullscreen mode (`window/size/mode=3`). 3D render scaling is applied through the viewport's 3D scale, so lowering render scale does not resize the UI coordinate system.
 
 ## Settings model
 

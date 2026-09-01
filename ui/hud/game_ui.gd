@@ -51,6 +51,7 @@ func _ready() -> void:
 	InputManager.device_changed.connect(_on_device_changed)
 	SessionManager.marker_changed.connect(_on_marker_changed)
 	InputManager.controller_connection_changed.connect(_on_controller_connection)
+	GameSettings.settings_save_failed.connect(_on_settings_save_failed)
 	ClipRecorder.recording_changed.connect(_on_recording_changed)
 	ClipRecorder.encoding_changed.connect(_on_clip_encoding_changed)
 	ClipRecorder.armed_changed.connect(_on_recorder_armed)
@@ -306,10 +307,11 @@ func _build_trick_guide() -> void:
 		"Right stick down → diagonal: pop into cork",
 	])
 	_add_guide_section(guide, "AIR ROTATIONS", [
-		"Flick left/right: spin impulse",
-		"Flick up: frontflip   •   Flick down: backflip",
-		"Flick diagonal: left/right cork",
-		"Recenter before each additional flick; left stick trims yaw",
+		"After takeoff, recenter once to arm airborne management",
+		"Hold the committed direction to compact and preserve angular momentum",
+		"Hold the opposite direction to open up and check the rotation",
+		"Airborne input shapes body and inertia; it does not create repeated rotation impulses",
+		"Left stick provides a finite yaw trim",
 	])
 	_add_guide_section(guide, "GRABS & TWEAKS", [
 		"LT/L2: left hand   •   RT/R2: right hand   •   Both: double grab",
@@ -400,7 +402,7 @@ func _build_options_menu() -> void:
 	var scale := HSlider.new()
 	scale.name = "RenderScale"
 	scale.min_value = 0.5
-	scale.max_value = 1.25
+	scale.max_value = 1.5
 	scale.step = 0.05
 	graphics_tab.add_child(_row("3D render scale", scale))
 	scale.value_changed.connect(func(value: float) -> void: GameSettings.set_pending("render_scale", value))
@@ -820,10 +822,10 @@ func _on_trick_changed(text: String) -> void:
 		trick_result_time = 0.0
 		trick_result_label.visible = false
 
-func _on_score_awarded(text: String, awarded: int, quality: float, snapshot: Dictionary) -> void:
+func _on_score_awarded(text: String, awarded: int, quality: float, outcome: int, snapshot: Dictionary) -> void:
 	_on_score_changed(snapshot)
 	var link_note := "  LINE" if text.begins_with("Line Link") else ""
-	_show_trick_result("%s  +%d  [%s]%s" % [text, awarded, _quality_name(quality), link_note])
+	_show_trick_result("%s  +%d  [%s]%s" % [text, awarded, _quality_name(outcome), link_note])
 
 func _on_score_changed(snapshot: Dictionary) -> void:
 	total_score = int(snapshot.get("total_score", 0))
@@ -868,7 +870,7 @@ func _on_run_finished(snapshot: Dictionary) -> void:
 		retry.grab_focus()
 
 func _on_landed(result: Dictionary) -> void:
-	_show_trick_result(_quality_name(float(result.score)) + " LANDING")
+	_show_trick_result(_quality_name(int(result.get("outcome", LandingSolver.Outcome.BAIL))) + " LANDING")
 
 func _on_crashed() -> void:
 	_show_notice("BAIL — recover on snow")
@@ -886,6 +888,9 @@ func _on_marker_changed(_position: Vector3) -> void:
 
 func _on_controller_connection(connected: bool) -> void:
 	_show_notice("CONTROLLER CONNECTED" if connected else "CONTROLLER DISCONNECTED — KEYBOARD ACTIVE")
+
+func _on_settings_save_failed(error: Error) -> void:
+	_show_notice("SETTINGS COULD NOT BE SAVED (%d)" % int(error))
 
 func notify_course_recovery(reason: String = "") -> void:
 	_show_notice("RETURNING TO THE SLOPE" if reason.is_empty() else "RETURNING TO THE SLOPE — %s" % reason.replace("_", " "))
@@ -961,11 +966,12 @@ func _show_trick_result(text: String) -> void:
 	trick_result_time = 1.25
 	trick_result_label.visible = true
 
-func _quality_name(quality: float) -> String:
-	if quality >= 0.72: return "CLEAN"
-	if quality >= 0.42: return "SKETCHY"
-	if quality >= 0.25: return "HARD"
-	return "BAIL"
+func _quality_name(outcome: int) -> String:
+	match outcome:
+		LandingSolver.Outcome.CLEAN: return "CLEAN"
+		LandingSolver.Outcome.SKETCHY: return "SKETCHY"
+		LandingSolver.Outcome.HARD: return "HARD"
+		_: return "BAIL"
 
 func _medal_for_score(score: int) -> String:
 	if score >= 6000:

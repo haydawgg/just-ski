@@ -1,7 +1,7 @@
 class_name RunScoring
 extends Node
 
-signal score_awarded(text: String, awarded_points: int, quality: float, snapshot: Dictionary)
+signal score_awarded(text: String, awarded_points: int, quality: float, outcome: int, snapshot: Dictionary)
 signal score_changed(snapshot: Dictionary)
 signal run_finished(snapshot: Dictionary)
 
@@ -39,7 +39,7 @@ func step(delta: float, speed: float) -> void:
 func begin_feature(kind: String) -> void:
 	pending_feature_kind = kind
 
-func accept_trick(text: String, base_points: int, quality: float) -> void:
+func accept_trick(text: String, base_points: int, quality: float, outcome: int) -> void:
 	if finished:
 		return
 	if base_points <= 0:
@@ -62,7 +62,7 @@ func accept_trick(text: String, base_points: int, quality: float) -> void:
 	var awarded := int(round(float(adjusted_points) * combo_multiplier))
 	total_score += awarded
 	landed_trick_count += 1
-	if quality >= 0.72:
+	if outcome == LandingSolver.Outcome.CLEAN:
 		clean_trick_count += 1
 	if awarded > best_trick_points:
 		best_trick_points = awarded
@@ -72,7 +72,7 @@ func accept_trick(text: String, base_points: int, quality: float) -> void:
 		link_remaining = line_link_window
 	pending_feature_kind = ""
 	var current := snapshot()
-	score_awarded.emit(scored_text, awarded, quality, current)
+	score_awarded.emit(scored_text, awarded, quality, outcome, current)
 	score_changed.emit(current)
 
 func bail() -> void:

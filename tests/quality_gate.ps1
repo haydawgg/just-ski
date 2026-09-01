@@ -1,5 +1,8 @@
 param(
-	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)
+	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+	[string]$GodotPath = "",
+	[string]$UserDataRoot = "",
+	[string]$LogDirectory = ""
 )
 
 $ErrorActionPreference = "Continue"
@@ -12,6 +15,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $checks = @(
 	"tests/physics_static_acceptance.ps1",
 	"tests/shader_static_acceptance.ps1",
+	"tests/config_docs_static_acceptance.ps1",
 	"tests/runtime_quality_gate.ps1"
 )
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -29,15 +33,21 @@ try {
 			$failures.Add("Missing quality check: $relativePath")
 			continue
 		}
+		$scriptArguments = @{ RepoRoot = $RepoRoot }
+		if ($relativePath -eq "tests/runtime_quality_gate.ps1") {
+			if (-not [string]::IsNullOrWhiteSpace($GodotPath)) { $scriptArguments.GodotPath = $GodotPath }
+			if (-not [string]::IsNullOrWhiteSpace($UserDataRoot)) { $scriptArguments.UserDataRoot = $UserDataRoot }
+			if (-not [string]::IsNullOrWhiteSpace($LogDirectory)) { $scriptArguments.LogDirectory = $LogDirectory }
+		}
 		if ([string]::IsNullOrWhiteSpace($shell)) {
 			# Fall back to the current host only when neither PowerShell executable
 			# can be resolved (useful for embedded hosts).
-			& $scriptPath -RepoRoot $RepoRoot
+			& $scriptPath @scriptArguments
 		}
 		else {
 			# Each check owns its exit code. A child process lets this wrapper run
 			# every check and report all failures in one invocation.
-			& $shell -NoProfile -File $scriptPath -RepoRoot $RepoRoot
+			& $shell -NoProfile -File $scriptPath @scriptArguments
 		}
 		$exitCode = $LASTEXITCODE
 		if ($exitCode -ne 0) {

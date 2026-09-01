@@ -123,7 +123,7 @@ Require-Match $snowVfx 'allows_snow_effects' "Snow VFX must reject non-snow feat
 Require-Match $contact 'enum\s+SurfaceClass' "Contact must distinguish physical snow kind from presentation surface class."
 Reject-Match $snowVfx 'RayCast3D|intersect_ray|PhysicsRayQueryParameters3D' "Environment VFX cannot create a second terrain-contact system."
 Require-Match $settings '"snow_quality"\s*:\s*1' "High defaults must select premium snow."
-Require-Match $settings 'pending\["snow_quality"\]\s*=\s*1\s+if\s+preset\s*>=\s*2\s+else\s+0' "Low/Medium and High/Ultra preset mapping is missing."
+Require-Match $settings 'pending\["snow_quality"\]\s*=\s*1\s+if\s+(?:preset|selected_preset)\s*>=\s*2\s+else\s+0' "Low/Medium and High/Ultra preset mapping is missing."
 Require-Match $ui 'SnowQuality' "Graphics options must expose snow quality."
 
 $diffusePath = Join-Path $RepoRoot "assets/materials/snow_02/snow_02_diff_2k.jpg"

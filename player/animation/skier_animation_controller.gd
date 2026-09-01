@@ -6,6 +6,14 @@ const PoseShapeDefinition = preload("res://player/animation/skier_pose_shape_def
 const PoseDriverModule = preload("res://player/animation/skier_pose_driver.gd")
 const PrimitiveRigModule = preload("res://player/animation/primitive_skier_rig.gd")
 const SkeletonRigModule = preload("res://player/animation/skeleton_skier_rig.gd")
+const GroundPoseLayerModule = preload("res://player/animation/ground_pose_layer.gd")
+const AirTrickPoseLayerModule = preload("res://player/animation/air_trick_pose_layer.gd")
+const GrabPoseLayerModule = preload("res://player/animation/grab_pose_layer.gd")
+const StylePoseLayerModule = preload("res://player/animation/style_pose_layer.gd")
+const LandingPoseLayerModule = preload("res://player/animation/landing_pose_layer.gd")
+const RailPoseLayerModule = preload("res://player/animation/rail_pose_layer.gd")
+const CrashReactionLayerModule = preload("res://player/animation/crash_reaction_layer.gd")
+const SecondaryMotionLayerModule = preload("res://player/animation/secondary_motion_layer.gd")
 
 enum AnimationEvent {
 	POP,
@@ -67,6 +75,14 @@ var pose_driver: SkierPoseDriver
 var rig_adapter: SkierRigAdapter
 var rig_fallback_reason := ""
 var requested_rig_adapter := "skeleton"
+var _ground_pose_layer := GroundPoseLayerModule.new()
+var _air_trick_pose_layer := AirTrickPoseLayerModule.new()
+var _grab_pose_layer := GrabPoseLayerModule.new()
+var _style_pose_layer := StylePoseLayerModule.new()
+var _landing_pose_layer := LandingPoseLayerModule.new()
+var _rail_pose_layer := RailPoseLayerModule.new()
+var _crash_reaction_layer := CrashReactionLayerModule.new()
+var _secondary_motion_layer := SecondaryMotionLayerModule.new()
 
 var _rotation_targets: Dictionary = {}
 var _position_targets: Dictionary = {}
@@ -504,9 +520,9 @@ func equipment_attachment_snapshot() -> Dictionary:
 
 func _update_skiing_dynamics(frame: SkierAnimationFrame, delta: float) -> void:
 	var grounded := frame.locomotion_state == STATE_GROUND
-	var desired_crouch := smoothstep(0.02, 1.0, frame.speed_ratio) if grounded else 0.0
+	var desired_crouch := _ground_pose_layer.crouch_target(frame, grounded)
 	_crouch_amount = lerpf(_crouch_amount, desired_crouch, 1.0 - exp(-profile.pose_response * delta))
-	_carve_target = _calculate_carve_target(frame) if grounded else 0.0
+	_carve_target = _ground_pose_layer.carve_target(frame, profile) if grounded else 0.0
 	if absf(_carve_target) > 0.12:
 		var direction := signf(_carve_target)
 		if _last_loaded_direction != 0.0 and direction != _last_loaded_direction:
@@ -516,14 +532,10 @@ func _update_skiing_dynamics(frame: SkierAnimationFrame, delta: float) -> void:
 		_last_loaded_direction = 0.0
 	if _crossover_time > 0.0:
 		_crossover_time = maxf(0.0, _crossover_time - delta)
-	var slarve_target := 0.0
-	if grounded and not frame.braking:
-		var skid_demand := smoothstep(profile.slarve_skid_start, profile.slarve_skid_full, clampf(frame.skid_ratio, 0.0, 1.0))
-		var heading_demand := smoothstep(0.08, maxf(profile.slarve_heading_reference, 0.09), absf(frame.heading_velocity_delta))
-		slarve_target = skid_demand * lerpf(0.58, 1.0, heading_demand)
-		var side_source := frame.heading_velocity_delta if absf(frame.heading_velocity_delta) > 0.05 else frame.skid
-		if absf(side_source) > 0.02:
-			_slarve_side = signf(side_source)
+	var slarve_target := _ground_pose_layer.slarve_target(frame, profile) if grounded else 0.0
+	var slarve_side := _ground_pose_layer.slarve_side(frame)
+	if grounded and absf(slarve_side) > 0.02:
+		_slarve_side = slarve_side
 	_slarve_weight = _damp(_slarve_weight, slarve_target, profile.leg_carve_response, delta)
 	if _slarve_weight < 0.01 and not grounded:
 		_slarve_side = 0.0
@@ -533,25 +545,6 @@ func _update_skiing_dynamics(frame: SkierAnimationFrame, delta: float) -> void:
 	_torso_carve = _damp(_torso_carve, _carve_target, profile.torso_carve_response, delta)
 	_arm_carve = _damp(_arm_carve, _carve_target, profile.arm_carve_response, delta)
 	_pole_carve = _damp(_pole_carve, _arm_carve, profile.secondary_response, delta)
-
-func _calculate_carve_target(frame: SkierAnimationFrame) -> float:
-	var edge_strength := absf(clampf(frame.edge, -1.0, 1.0))
-	if edge_strength < 0.01:
-		return 0.0
-	var speed_load := smoothstep(0.08, 0.9, clampf(frame.speed_ratio, 0.0, 1.0))
-	var lateral_load := clampf(absf(frame.lateral_acceleration) / maxf(profile.lateral_acceleration_reference, 0.01), 0.0, 1.0)
-	var turn_load := clampf(absf(frame.turn_rate) / maxf(profile.turn_rate_reference, 0.01), 0.0, 1.0)
-	var intent := absf(clampf(frame.turn_input, -1.0, 1.0))
-	var tracking := clampf(frame.carve_ratio, 0.0, 1.0) * (1.0 - clampf(frame.skid_ratio, 0.0, 1.0) * 0.72)
-	var physical_load := maxf(lateral_load, turn_load * 0.82)
-	var intensity := edge_strength * clampf(
-		0.18 + speed_load * 0.22 + physical_load * 0.32 + tracking * 0.16 + intent * 0.12,
-		0.0,
-		1.0
-	)
-	if frame.braking:
-		intensity *= 0.45
-	return signf(frame.edge) * intensity
 
 func _initialize_secondary_motion_state() -> void:
 	_previous_left_hand_position = to_local(left_hand.global_position)
@@ -628,21 +621,25 @@ func _update_secondary_motion_signals(frame: SkierAnimationFrame, delta: float) 
 	_previous_landing_compression = _landing_compression
 	_secondary_signals_initialized = true
 
-	var acceleration_activity := maxf(
-		absf(_filtered_lateral_accel) / maxf(profile.secondary_max_lateral_accel, 0.01),
-		maxf(
-			absf(_filtered_vertical_accel) / maxf(profile.secondary_max_vertical_accel, 0.01),
-			absf(_filtered_yaw_accel) / maxf(profile.secondary_max_yaw_accel, 0.01)
-		)
+	var acceleration_activity := _secondary_motion_layer.acceleration_activity(
+		_filtered_lateral_accel,
+		_filtered_vertical_accel,
+		_filtered_yaw_accel,
+		profile
 	)
-	var state_activity := maxf(
+	var state_activity := _secondary_motion_layer.state_activity(
 		_landing_compression,
-		maxf(_rail_entry_compression, maxf(_trick_pose_weight, maxf(_grab_pose_weight, _crossover_release())))
+		_rail_entry_compression,
+		_trick_pose_weight,
+		_grab_pose_weight,
+		_crossover_release()
 	)
-	var speed_activity := smoothstep(0.08, 0.85, clampf(frame.speed_ratio, 0.0, 1.0))
-	var secondary_target := clampf(acceleration_activity * 0.62 + state_activity * 0.48 + speed_activity * 0.16, 0.0, 1.0)
-	if frame.locomotion_state == STATE_BAIL:
-		secondary_target = 0.0
+	var secondary_target := _secondary_motion_layer.target(
+		acceleration_activity,
+		state_activity,
+		frame.speed_ratio,
+		frame.locomotion_state == STATE_BAIL
+	)
 	_secondary_motion_weight = _damp(_secondary_motion_weight, secondary_target, profile.secondary_signal_response, delta)
 
 	var torso_target := Vector3(
@@ -705,55 +702,14 @@ func _update_jump_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var grounded := frame.locomotion_state == STATE_GROUND and frame.grounded
 	var anticipation_target := clampf(frame.compression, 0.0, 1.0) if grounded else 0.0
 	_jump_anticipation = _damp(_jump_anticipation, anticipation_target, profile.jump_anticipation_response, delta)
-	if frame.locomotion_state != STATE_AIR:
-		_air_size = _damp(_air_size, 0.0, profile.air_phase_response, delta)
-		_air_takeoff_weight = _damp(_air_takeoff_weight, 0.0, profile.air_phase_response, delta)
-		_air_early_weight = _damp(_air_early_weight, 0.0, profile.air_phase_response, delta)
-		_air_apex_weight = _damp(_air_apex_weight, 0.0, profile.air_phase_response, delta)
-		_air_descent_weight = _damp(_air_descent_weight, 0.0, profile.air_phase_response, delta)
-		_air_flex = _damp(_air_flex, 0.0, profile.air_phase_response, delta)
-		_air_phase_name = "Ground"
-		return
-
-	var takeoff_size := smoothstep(
-		minf(profile.air_small_takeoff_speed, profile.air_large_takeoff_speed),
-		maxf(profile.air_small_takeoff_speed, profile.air_large_takeoff_speed),
-		frame.takeoff_upward_speed
-	)
-	if frame.takeoff_type == SkierAnimationFrame.TakeoffType.CHARGED_POP:
-		takeoff_size = maxf(takeoff_size, frame.takeoff_charge)
-	elif frame.takeoff_type == SkierAnimationFrame.TakeoffType.TERRAIN_TAKEOFF:
-		takeoff_size *= 0.82
-	_air_size = _damp(_air_size, clampf(takeoff_size, 0.0, 1.0), profile.air_phase_response, delta)
-
-	var hold_time := maxf(profile.air_takeoff_hold_time, 0.02) * lerpf(0.65, 1.15, _air_size)
-	var takeoff_target := 1.0 - smoothstep(0.0, hold_time, frame.air_time)
-	if frame.takeoff_type == SkierAnimationFrame.TakeoffType.TERRAIN_TAKEOFF:
-		takeoff_target *= lerpf(0.55, 0.82, _air_size)
-	var apex_band := maxf(profile.air_apex_velocity_band, 0.05)
-	var ascent_reference := maxf(frame.takeoff_upward_speed * 0.82, apex_band * 1.5)
-	var early_target := (1.0 - takeoff_target) * smoothstep(apex_band * 0.35, ascent_reference, frame.air_upward_velocity)
-	var apex_target := (1.0 - takeoff_target) * (1.0 - smoothstep(apex_band * 0.28, apex_band * 1.35, absf(frame.air_upward_velocity)))
-	var descent_target := (1.0 - takeoff_target) * smoothstep(
-		apex_band * 0.25,
-		maxf(profile.air_descent_velocity_reference, apex_band),
-		-frame.air_upward_velocity
-	)
-	if frame.predicted_landing_time >= 0.0:
-		var proximity := 1.0 - smoothstep(0.12, maxf(profile.landing_anticipation_time, 0.13), frame.predicted_landing_time)
-		descent_target = maxf(descent_target, proximity * (1.0 - takeoff_target))
-	_air_takeoff_weight = _damp(_air_takeoff_weight, takeoff_target, profile.air_phase_response, delta)
-	_air_early_weight = _damp(_air_early_weight, early_target, profile.air_phase_response, delta)
-	_air_apex_weight = _damp(_air_apex_weight, apex_target, profile.air_phase_response, delta)
-	_air_descent_weight = _damp(_air_descent_weight, descent_target, profile.air_phase_response, delta)
-	if _air_takeoff_weight > 0.42:
-		_air_phase_name = "Takeoff"
-	elif _air_descent_weight > 0.28:
-		_air_phase_name = "Descent"
-	elif _air_apex_weight > 0.32:
-		_air_phase_name = "Apex"
-	else:
-		_air_phase_name = "Early Air"
+	_air_trick_pose_layer.update_jump_animation(frame, delta, profile)
+	_air_size = _air_trick_pose_layer.air_size
+	_air_takeoff_weight = _air_trick_pose_layer.air_takeoff_weight
+	_air_early_weight = _air_trick_pose_layer.air_early_weight
+	_air_apex_weight = _air_trick_pose_layer.air_apex_weight
+	_air_descent_weight = _air_trick_pose_layer.air_descent_weight
+	_air_flex = _air_trick_pose_layer.air_flex
+	_air_phase_name = _air_trick_pose_layer.air_phase_name
 
 func _update_trick_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var maximum_rate := maxf(profile.trick_max_animation_rate, 0.1)
@@ -880,8 +836,7 @@ func _cache_style_definitions() -> void:
 func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var live_pose := frame.grab_pose
 	var live_definition := _grab_definitions_by_pose.get(live_pose) as Resource
-	var legacy_strength := 1.0 if live_pose != TrickController.GrabPose.NONE and frame.grab_amount <= 0.0 and frame.grab_input_strength <= 0.0 else 0.0
-	var input_strength := clampf(maxf(frame.grab_input_strength, maxf(frame.grab_amount, legacy_strength)), 0.0, 1.0)
+	var input_strength := _grab_pose_layer.input_strength(frame, TrickController.GrabPose.NONE)
 	var airborne := frame.locomotion_state == STATE_AIR
 	var pose_changed := live_pose != TrickController.GrabPose.NONE and live_pose != _grab_pose_id
 	if pose_changed:
@@ -901,16 +856,15 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var minimum_air_time := profile.grab_min_contact_air_time
 	if _grab_definition != null:
 		minimum_air_time = maxf(minimum_air_time, _grab_definition.minimum_air_time)
-	var airborne_readiness := (
-		clampf(frame.air_time / maxf(minimum_air_time, 0.01), 0.0, 1.0)
-		if airborne and frame.air_time > 0.0
-		else (1.0 if airborne else 0.0)
+	var pose_target := _grab_pose_layer.pose_target(
+		input_strength,
+		airborne,
+		frame.air_time,
+		minimum_air_time,
+		_landing_anticipation,
+		_grab_pose_weight,
+		profile
 	)
-	var pose_target := input_strength * airborne_readiness
-	if input_strength > 0.0 and _landing_anticipation > 0.0:
-		var held_landing_floor := profile.grab_late_hold_floor * input_strength
-		var landing_target := maxf(held_landing_floor, pose_target * (1.0 - profile.grab_landing_release_strength))
-		pose_target = lerpf(pose_target, landing_target, _landing_anticipation)
 	var response := profile.grab_pose_response if pose_target > _grab_pose_weight else (
 		profile.grab_release_response if frame.grab_release_time > 0.0 else profile.grab_recover_response
 	)
@@ -924,24 +878,28 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var reach_error := _grab_primary_reach_error()
 	if _grab_definition == null or input_strength <= 0.0 or not airborne:
 		_grab_contact_latched = false
-	elif target_was_active and _grab_pose_weight > 0.48 and frame.air_time >= minimum_air_time:
-		var threshold: float = float(_grab_definition.contact_maintain_distance) if _grab_contact_latched else float(_grab_definition.contact_acquire_distance)
-		_grab_contact_latched = reach_error <= threshold
+	elif target_was_active:
+		_grab_contact_latched = _grab_pose_layer.should_latch_contact(
+			_grab_definition,
+			input_strength,
+			airborne,
+			_grab_pose_weight,
+			frame.air_time,
+			minimum_air_time,
+			_grab_contact_latched,
+			reach_error
+		)
 	var contact_target := 1.0 if _grab_contact_latched else 0.0
 	_grab_contact_weight = _damp(_grab_contact_weight, contact_target, profile.grab_contact_response, delta)
 
-	if _grab_definition == null or _grab_pose_weight < 0.01:
-		_grab_phase_name = "IDLE"
-	elif input_strength <= 0.0:
-		_grab_phase_name = "RELEASE" if frame.grab_release_time > 0.0 and _grab_pose_weight > 0.16 else "RECOVER"
-	elif _grab_pose_weight < 0.28:
-		_grab_phase_name = "SETUP"
-	elif _grab_contact_weight > 0.72:
-		_grab_phase_name = "HOLD"
-	elif _grab_contact_latched or _grab_contact_weight > 0.08:
-		_grab_phase_name = "CONTACT"
-	else:
-		_grab_phase_name = "REACH"
+	_grab_phase_name = _grab_pose_layer.phase_name(
+		_grab_definition,
+		_grab_pose_weight,
+		input_strength,
+		frame.grab_release_time,
+		_grab_contact_weight,
+		_grab_contact_latched
+	)
 
 	if live_pose == TrickController.GrabPose.NONE and _grab_pose_weight < 0.01:
 		_grab_pose_id = TrickController.GrabPose.NONE
@@ -952,123 +910,29 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 func _update_style_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var live_pose := frame.style_pose
 	var live_definition := _style_definitions_by_pose.get(live_pose) as Resource
-	var legacy_strength := 1.0 if live_pose != TrickController.StylePose.NONE and frame.style_amount <= 0.0 else 0.0
-	var input_strength := clampf(maxf(frame.style_amount, legacy_strength), 0.0, 1.0)
+	var input_strength := _style_pose_layer.input_strength(frame, TrickController.StylePose.NONE)
 	if live_pose != TrickController.StylePose.NONE and live_pose != _style_pose_id:
 		_style_pose_id = live_pose
 		_style_definition = live_definition
 	elif live_pose != TrickController.StylePose.NONE and _style_definition == null:
 		_style_definition = live_definition
-	if frame.locomotion_state != STATE_AIR or live_pose == TrickController.StylePose.NONE:
-		input_strength = 0.0
 	var rise_scale := float(_style_definition.pose_response_scale) if _style_definition != null else 1.0
 	var release_scale := float(_style_definition.release_response_scale) if _style_definition != null else 1.0
 	var response := profile.style_pose_response * (rise_scale if input_strength > _style_pose_weight else release_scale)
 	_style_pose_weight = _damp(_style_pose_weight, input_strength, response, delta)
-	if _style_definition == null or _style_pose_weight < 0.01:
-		_style_phase_name = "IDLE"
-	elif input_strength > 0.0:
-		_style_phase_name = "HOLD" if _style_pose_weight > 0.72 else "SETUP"
-	else:
-		_style_phase_name = "RELEASE"
+	_style_phase_name = _style_pose_layer.phase_name(_style_definition, _style_pose_weight, input_strength)
 	if live_pose == TrickController.StylePose.NONE and _style_pose_weight < 0.01:
 		_style_pose_id = TrickController.StylePose.NONE
 		_style_definition = null
 
-func _score_landing_error(error: float, good: float, bad: float) -> float:
-	if not is_finite(error) or not is_finite(good) or not is_finite(bad):
-		return 0.0
-	var good_limit := maxf(good, 0.0)
-	var bad_limit := maxf(bad, good_limit + 0.001)
-	return 1.0 - smoothstep(good_limit, bad_limit, absf(error))
-
 func _finite_vector(value: Vector3) -> bool:
-	return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
+	return value.is_finite()
 
 func _landing_readiness_targets(frame: SkierAnimationFrame) -> Dictionary:
-	var empty := {
-		"valid": false,
-		"inputs_valid": false,
-		"heading": 0.0,
-		"pitch": 0.0,
-		"spin": 0.0,
-		"upright": 0.0,
-		"residual": 0.0,
-		"projected_heading_error": 0.0,
-		"projected_residual": 0.0,
-	}
-	if frame.locomotion_state != STATE_AIR or not frame.predicted_landing_valid or not is_finite(frame.predicted_landing_time) or frame.predicted_landing_time < 0.0:
-		return empty
-	var landing_normal := frame.predicted_landing_normal
-	if not _finite_vector(landing_normal) or landing_normal.length_squared() <= 0.000001:
-		return empty
-	landing_normal = landing_normal.normalized()
-	var time_to_contact := clampf(frame.predicted_landing_time, 0.0, 2.0)
-	var body_up_valid := frame.body_up_valid and _finite_vector(frame.body_up) and frame.body_up.length_squared() > 0.000001
-	var ski_forward_valid := frame.ski_forward_valid and _finite_vector(frame.ski_forward) and frame.ski_forward.length_squared() > 0.000001
-	var ski_up_valid := frame.ski_up_valid and _finite_vector(frame.ski_up) and frame.ski_up.length_squared() > 0.000001
-	var desired_heading_valid := _finite_vector(frame.velocity_heading) and frame.velocity_heading.length_squared() > 0.000001
-	var local_angular_valid := _finite_vector(frame.angular_velocity)
-	var world_angular_valid := frame.angular_velocity_world_valid and _finite_vector(frame.angular_velocity_world)
-	var residual_valid := _finite_vector(frame.rotation_residual)
-	var heading_valid := ski_forward_valid and desired_heading_valid and world_angular_valid
-	var pitch_valid := ski_forward_valid and ski_up_valid
-	var upright_valid := body_up_valid
-	var spin_valid := local_angular_valid
-	var maneuver_residual_valid := local_angular_valid and residual_valid
-	var ski_forward := frame.ski_forward.normalized() if ski_forward_valid else Vector3.FORWARD
-	var body_up := frame.body_up.normalized() if body_up_valid else Vector3.UP
-	var heading := ski_forward.slide(landing_normal)
-	var desired_heading := frame.velocity_heading.slide(landing_normal)
-	var heading_error := 0.0
-	if heading_valid and heading.length_squared() > 0.000001 and desired_heading.length_squared() > 0.000001:
-		heading_error = heading.normalized().signed_angle_to(desired_heading.normalized(), landing_normal)
-	else:
-		heading_valid = false
-	var projected_heading_error := 0.0
-	if heading_valid and is_finite(heading_error):
-		var yaw_rate_about_landing := frame.angular_velocity_world.dot(landing_normal)
-		projected_heading_error = wrapf(heading_error + yaw_rate_about_landing * time_to_contact, -PI, PI)
-	else:
-		heading_valid = false
-	var pitch_error := 0.0
-	if pitch_valid:
-		var ski_forward_plane := ski_forward.slide(landing_normal)
-		if ski_forward_plane.length_squared() > 0.000001:
-			pitch_error = absf(atan2(ski_forward.dot(landing_normal), ski_forward_plane.length()))
-		else:
-			pitch_valid = false
-	var spin_error := frame.angular_velocity.length() if spin_valid else NAN
-	var upright_error := acos(clampf(body_up.dot(landing_normal), -1.0, 1.0)) if upright_valid else NAN
-	var projected_residual := 0.0
-	if maneuver_residual_valid:
-		var projected_residual_vector := Vector3(
-			wrapf(frame.rotation_residual.x + frame.angular_velocity.x * time_to_contact, -PI, PI),
-			wrapf(frame.rotation_residual.y + frame.angular_velocity.y * time_to_contact, -PI, PI),
-			wrapf(frame.rotation_residual.z + frame.angular_velocity.z * time_to_contact, -PI, PI)
-		)
-		if _finite_vector(projected_residual_vector):
-			projected_residual = maxf(
-				absf(projected_residual_vector.x),
-				maxf(absf(projected_residual_vector.y), absf(projected_residual_vector.z))
-			)
-		else:
-			maneuver_residual_valid = false
-	var inputs_valid := heading_valid and pitch_valid and spin_valid and upright_valid and maneuver_residual_valid
-	return {
-		"valid": true,
-		"inputs_valid": inputs_valid,
-		"heading": _score_landing_error(projected_heading_error, profile.landing_readiness_heading_good, profile.landing_readiness_heading_bad) if heading_valid else 0.0,
-		"pitch": _score_landing_error(pitch_error, profile.landing_readiness_pitch_good, profile.landing_readiness_pitch_bad) if pitch_valid else 0.0,
-		"spin": _score_landing_error(spin_error, profile.landing_readiness_spin_good, profile.landing_readiness_spin_bad) if spin_valid else 0.0,
-		"upright": _score_landing_error(upright_error, profile.landing_readiness_upright_good, profile.landing_readiness_upright_bad) if upright_valid else 0.0,
-		"residual": _score_landing_error(projected_residual, profile.landing_readiness_residual_good, profile.landing_readiness_residual_bad) if maneuver_residual_valid else 0.0,
-		"projected_heading_error": projected_heading_error,
-		"projected_residual": projected_residual,
-	}
+	return _landing_pose_layer.readiness_targets(frame, profile)
 
 func _update_landing_readiness(frame: SkierAnimationFrame, delta: float) -> void:
-	var targets := _landing_readiness_targets(frame)
+	var targets := _landing_pose_layer.readiness_targets(frame, profile)
 	var valid := bool(targets.valid)
 	_landing_readiness_valid = valid and bool(targets.inputs_valid)
 	var time_to_contact := frame.predicted_landing_time if valid else -1.0
@@ -1099,7 +963,7 @@ func _update_landing_readiness(frame: SkierAnimationFrame, delta: float) -> void
 		_landing_readiness = 0.0
 	_landing_projected_heading_error = float(targets.projected_heading_error) if valid else 0.0
 	_landing_projected_residual = float(targets.projected_residual) if valid else 0.0
-	_landing_ready = _landing_ready_for_values(_landing_readiness_valid, _landing_anticipation, _landing_readiness)
+	_landing_ready = _landing_pose_layer.ready_for_values(_landing_readiness_valid, _landing_anticipation, _landing_readiness, profile)
 
 func _landing_readiness_response(current: float, target: float, rise_response: float, fall_response: float) -> float:
 	return rise_response if target > current else fall_response
@@ -1256,7 +1120,7 @@ func _clear_landing_state() -> void:
 	_landing_outcome = 0
 
 func _update_rail_animation(frame: SkierAnimationFrame, delta: float) -> void:
-	var approach_target := frame.rail_approach_anticipation if frame.locomotion_state != STATE_GRIND else 0.0
+	var approach_target := _rail_pose_layer.approach_target(frame)
 	_rail_approach_anticipation = _damp(_rail_approach_anticipation, approach_target, profile.rail_approach_response, delta)
 
 	var influence_target := 1.0 if frame.locomotion_state == STATE_GRIND else 0.0
@@ -1273,14 +1137,9 @@ func _update_rail_animation(frame: SkierAnimationFrame, delta: float) -> void:
 			_rail_entry_compression = _damp(_rail_entry_compression, 0.0, profile.rail_entry_recovery_response, delta)
 			if _rail_entry_compression < 0.03:
 				_rail_entry_active = false
-		var slide_target := 0.0
-		if frame.rail_pose < 0:
-			slide_target = -profile.rail_slide_max_angle
-		elif frame.rail_pose > 0:
-			slide_target = profile.rail_slide_max_angle
+		var slide_target := _rail_pose_layer.slide_target(frame.rail_pose, profile.rail_slide_max_angle)
 		_rail_slide_angle = _damp(_rail_slide_angle, slide_target, profile.rail_slide_response, delta)
-		var end_window := maxf(profile.rail_exit_anticipation_distance, 0.05)
-		var exit_target := clampf(1.0 - smoothstep(0.0, end_window, frame.rail_distance_to_end), 0.0, 1.0)
+		var exit_target := _rail_pose_layer.exit_target(frame.rail_distance_to_end, profile.rail_exit_anticipation_distance)
 		_rail_exit_anticipation = _damp(_rail_exit_anticipation, exit_target, profile.rail_exit_response, delta)
 		_rail_pole_lag = _damp(_rail_pole_lag, _rail_entry_compression * profile.rail_entry_pole_lag, profile.secondary_response, delta)
 		if _rail_entry_compression > 0.1:
@@ -2296,10 +2155,9 @@ func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
 		_add_rotation(right_pole, Vector3(-wobble * 0.3, 0, 0))
 
 func _update_pre_bail_response(frame: SkierAnimationFrame, delta: float) -> void:
-	var target := clampf(frame.pre_bail_weight, 0.0, 1.0) if frame.locomotion_state == STATE_AIR else 0.0
-	var response := profile.pre_bail_response if target > _pre_bail_weight else profile.secondary_release_response
-	_pre_bail_weight = lerpf(_pre_bail_weight, target, 1.0 - exp(-response * delta))
-	_pre_bail_side = lerpf(_pre_bail_side, clampf(frame.pre_bail_side, -1.0, 1.0), 1.0 - exp(-response * delta))
+	var result := _crash_reaction_layer.step_pre_bail(_pre_bail_weight, _pre_bail_side, frame, delta, profile)
+	_pre_bail_weight = float(result.get("weight", 0.0))
+	_pre_bail_side = float(result.get("side", 0.0))
 
 func _apply_pre_bail_layer(frame: SkierAnimationFrame) -> void:
 	if frame.locomotion_state != STATE_AIR or _pre_bail_weight <= 0.01:

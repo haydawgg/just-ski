@@ -58,6 +58,15 @@ func _test_game_ui_teaching_surfaces() -> void:
 		failures.append("Options menu is missing shadow quality control")
 	if ui.find_child("RunResultsPanel", true, false) == null:
 		failures.append("Gameplay UI is missing the run results panel")
+	var guide_text := ""
+	for node: Node in ui.find_children("*", "Label", true, false):
+		guide_text += "\n" + (node as Label).text
+	if "recenter once" not in guide_text.to_lower() or "does not create repeated rotation impulses" not in guide_text.to_lower():
+		failures.append("Trick guide does not describe the implemented airborne hold model")
+	if "Recenter before each additional flick" in guide_text:
+		failures.append("Trick guide still teaches repeated airborne flicks")
+	if ui._quality_name(LandingSolver.Outcome.CLEAN) != "CLEAN" or ui._quality_name(LandingSolver.Outcome.SKETCHY) != "SKETCHY" or ui._quality_name(LandingSolver.Outcome.HARD) != "HARD":
+		failures.append("Landing labels did not use explicit outcomes")
 	ui._process(10.0)
 	if ui.hint_label.visible:
 		failures.append("Onboarding controls remained permanently visible during normal play")
@@ -94,7 +103,7 @@ func _test_scoring_finish_contract() -> void:
 	add_child(scoring)
 	var finish_events := [0]
 	scoring.run_finished.connect(func(_snapshot: Dictionary) -> void: finish_events[0] += 1)
-	scoring.accept_trick("Left 360", 1000, 0.8)
+	scoring.accept_trick("Left 360", 1000, 0.8, LandingSolver.Outcome.CLEAN)
 	scoring.bail()
 	scoring.finish_run()
 	scoring.finish_run()
@@ -105,6 +114,12 @@ func _test_scoring_finish_contract() -> void:
 		failures.append("Run scoring did not retain the best trick")
 	if int(snapshot.landed_trick_count) != 1 or int(snapshot.clean_trick_count) != 1 or int(snapshot.bail_count) != 1:
 		failures.append("Run scoring summary counters were incorrect")
+	var outcome_scoring := RunScoring.new()
+	add_child(outcome_scoring)
+	outcome_scoring.accept_trick("Sketchy 360", 1000, 0.99, LandingSolver.Outcome.SKETCHY)
+	if int(outcome_scoring.snapshot().clean_trick_count) != 0:
+		failures.append("Run scoring inferred CLEAN from a high quality float instead of the explicit outcome")
+	outcome_scoring.queue_free()
 	scoring.reset_run()
 	if bool(scoring.snapshot().finished) or int(scoring.snapshot().total_score) != 0:
 		failures.append("Reset run did not clear the finished score")

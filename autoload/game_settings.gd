@@ -1,6 +1,7 @@
 extends Node
 
 signal settings_applied
+signal settings_save_failed(error: Error)
 
 const CONFIG_PATH := "user://settings.cfg"
 const DEFAULTS := {
@@ -62,49 +63,84 @@ func set_pending(key: String, value: Variant) -> void:
 		pending["graphics_preset"] = 4
 
 func apply_pending() -> void:
-	active = pending.duplicate(true)
+	active = _validated_settings(pending)
+	pending = active.duplicate(true)
 	_apply_display()
 	_apply_audio()
-	save_settings()
+	var save_error := save_settings()
+	if save_error != OK:
+		push_warning("GAME_SETTINGS_SAVE_WARNING: Active settings were applied but could not be persisted (%s)" % error_string(save_error))
 	settings_applied.emit()
 
 func apply_preset(preset: int) -> void:
-	pending["graphics_preset"] = clampi(preset, 0, 4)
-	if preset == 4:
+	var selected_preset := clampi(preset, 0, 4)
+	pending["graphics_preset"] = selected_preset
+	if selected_preset == 4:
 		return
 	var scales := [0.65, 0.8, 1.0, 1.0]
-	pending["render_scale"] = scales[preset]
-	pending["anti_aliasing"] = 0 if preset == 0 else 1
-	pending["shadow_quality"] = preset
-	pending["snow_quality"] = 1 if preset >= 2 else 0
-	pending["ssao_enabled"] = preset >= 1
-	pending["ssil_enabled"] = preset >= 3
-	pending["ssr_enabled"] = preset >= 2
-	pending["fog_enabled"] = preset >= 1
+	pending["render_scale"] = scales[selected_preset]
+	pending["anti_aliasing"] = 0 if selected_preset == 0 else 1
+	pending["shadow_quality"] = selected_preset
+	pending["snow_quality"] = 1 if selected_preset >= 2 else 0
+	pending["ssao_enabled"] = selected_preset >= 1
+	pending["ssil_enabled"] = selected_preset >= 3
+	pending["ssr_enabled"] = selected_preset >= 2
+	pending["fog_enabled"] = selected_preset >= 1
 
-func save_settings() -> void:
+func save_settings(path: String = CONFIG_PATH) -> Error:
 	var config := ConfigFile.new()
 	for key: String in active.keys():
 		config.set_value("settings", key, active[key])
-	config.save(CONFIG_PATH)
+	var error := config.save(path)
+	if error != OK:
+		push_warning("GAME_SETTINGS_SAVE_ERROR: Could not save settings (%s)" % error_string(error))
+		settings_save_failed.emit(error)
+	return error
 
 func _validated(key: String, value: Variant) -> Variant:
 	match key:
-		"fps_cap": return clampi(int(value), 0, 360)
-		"render_scale": return clampf(float(value), 0.5, 1.5)
-		"anti_aliasing": return clampi(int(value), 0, 1)
-		"shadow_quality": return clampi(int(value), 0, 3)
-		"snow_quality": return clampi(int(value), 0, 1)
-		"graphics_preset": return clampi(int(value), 0, 4)
-		"controller_rumble", "landing_assist": return clampf(float(value), 0.0, 1.0)
-		"stick_deadzone": return clampf(float(value), 0.0, 0.45)
-		"stick_outer_deadzone": return clampf(float(value), 0.0, 0.25)
-		"stick_response": return clampf(float(value), 0.5, 3.0)
+		"display_mode", "vsync_mode":
+			return _validated_int(key, value, 0, 2)
+		"fps_cap": return _validated_int(key, value, 0, 360)
+		"render_scale": return _validated_float(key, value, 0.5, 1.5)
+		"anti_aliasing": return _validated_int(key, value, 0, 1)
+		"shadow_quality": return _validated_int(key, value, 0, 3)
+		"snow_quality": return _validated_int(key, value, 0, 1)
+		"graphics_preset": return _validated_int(key, value, 0, 4)
+		"master_volume_db", "music_volume_db", "sfx_volume_db": return _validated_float(key, value, -30.0, 0.0)
+		"controller_rumble", "landing_assist": return _validated_float(key, value, 0.0, 1.0)
+		"stick_deadzone": return _validated_float(key, value, 0.0, 0.45)
+		"stick_outer_deadzone": return _validated_float(key, value, 0.0, 0.25)
+		"stick_response": return _validated_float(key, value, 0.5, 3.0)
+		"ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled", "units_mph", "trick_visualizer_enabled":
+			return value if typeof(value) == TYPE_BOOL else DEFAULTS[key]
 		"resolution":
-			var size := value as Vector2i
+			if typeof(value) != TYPE_VECTOR2I:
+				return DEFAULTS[key]
+			var size: Vector2i = value
 			return Vector2i(clampi(size.x, 960, 7680), clampi(size.y, 540, 4320))
 		_:
-			return value
+			return DEFAULTS[key]
+
+func _validated_int(key: String, value: Variant, minimum: int, maximum: int) -> int:
+	if typeof(value) != TYPE_INT:
+		return int(DEFAULTS[key])
+	return clampi(int(value), minimum, maximum)
+
+func _validated_float(key: String, value: Variant, minimum: float, maximum: float) -> float:
+	if typeof(value) not in [TYPE_INT, TYPE_FLOAT]:
+		return float(DEFAULTS[key])
+	var numeric := float(value)
+	if not is_finite(numeric):
+		return float(DEFAULTS[key])
+	return clampf(numeric, minimum, maximum)
+
+func _validated_settings(source: Dictionary) -> Dictionary:
+	var result := DEFAULTS.duplicate(true)
+	for key: String in DEFAULTS.keys():
+		if source.has(key):
+			result[key] = _validated(key, source[key])
+	return result
 
 func _apply_display() -> void:
 	Engine.max_fps = int(active["fps_cap"])

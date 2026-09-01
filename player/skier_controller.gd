@@ -5,6 +5,11 @@ signal respawn_applied(transform: Transform3D)
 
 const SkierVisualScene := preload("res://player/animation/skier_visual.tscn")
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
+const GroundMotionSolverModule := preload("res://player/motion/ground_motion_solver.gd")
+const AirMotionSolverModule := preload("res://player/motion/air_motion_solver.gd")
+const RailMotionSolverModule := preload("res://player/motion/rail_motion_solver.gd")
+const LandingTransitionModule := preload("res://player/motion/landing_transition.gd")
+const CollisionCrashEvaluatorModule := preload("res://player/motion/collision_crash_evaluator.gd")
 
 signal state_changed(state_name: String)
 signal telemetry_updated(data: Dictionary)
@@ -98,6 +103,11 @@ var respawn_count := 0
 var recovery_frozen := false
 var contact_shadow: MeshInstance3D
 var contact_shadow_material: ShaderMaterial
+var _ground_motion_solver := GroundMotionSolverModule.new()
+var _air_motion_solver := AirMotionSolverModule.new()
+var _rail_motion_solver := RailMotionSolverModule.new()
+var _landing_transition := LandingTransitionModule.new()
+var _collision_crash_evaluator := CollisionCrashEvaluatorModule.new()
 
 func _ready() -> void:
 	collision_layer = 2
@@ -179,13 +189,11 @@ func _physics_process(delta: float) -> void:
 	telemetry_updated.emit(telemetry())
 
 func _update_ground(delta: float) -> void:
-	if not contact.grounded:
-		coyote_remaining -= delta
-		if coyote_remaining <= 0.0:
-			_enter_air()
-			return
-	else:
-		coyote_remaining = profile.coyote_time
+	var ground_contact := _ground_motion_solver.resolve_contact(contact.grounded, coyote_remaining, delta, profile.coyote_time)
+	coyote_remaining = ground_contact.coyote_remaining
+	if ground_contact.should_enter_air:
+		_enter_air()
+		return
 	_update_landing_control_recovery(delta)
 	var normal := contact.average_normal
 	var forward_on_slope := (-global_basis.z).slide(normal)
@@ -271,7 +279,16 @@ func _update_ground(delta: float) -> void:
 		var vane := 1.0 - absf(edge_amount) / maxf(profile.weathervane_edge, 0.001)
 		heading_yaw += clampf(align, -profile.weathervane_rate * vane * delta, profile.weathervane_rate * vane * delta)
 	var turned_forward := ski_forward.rotated(normal, heading_yaw).normalized()
-	turned_forward = _constrain_heading_to_travel(turned_forward, normal, speed_ratio, delta)
+	turned_forward = _ground_motion_solver.constrain_heading_to_travel(
+		turned_forward,
+		velocity,
+		normal,
+		speed_ratio,
+		delta,
+		profile.low_speed_heading_travel_limit_degrees,
+		profile.high_speed_heading_travel_limit_degrees,
+		profile.heading_travel_limit_response
+	)
 	var turned_right := turned_forward.cross(normal).normalized()
 	lateral_slip = velocity.dot(turned_right)
 	var travel_for_angle := velocity.slide(normal)
@@ -406,23 +423,16 @@ func _clear_landing_orientation_settle() -> void:
 	landing_residual_angular_velocity = Vector3.ZERO
 
 func _constrain_heading_to_travel(candidate: Vector3, normal: Vector3, speed_ratio: float, delta: float) -> Vector3:
-	var travel := velocity.slide(normal)
-	if travel.length_squared() <= 0.01:
-		return candidate
-	travel = travel.normalized()
-	if candidate.dot(travel) < 0.0:
-		travel = -travel
-	var maximum_angle := deg_to_rad(lerpf(
+	return _ground_motion_solver.constrain_heading_to_travel(
+		candidate,
+		velocity,
+		normal,
+		speed_ratio,
+		delta,
 		profile.low_speed_heading_travel_limit_degrees,
 		profile.high_speed_heading_travel_limit_degrees,
-		speed_ratio
-	))
-	var signed_angle := travel.signed_angle_to(candidate, normal)
-	var excess := absf(signed_angle) - maximum_angle
-	if excess <= 0.0:
-		return candidate
-	var correction := minf(excess, profile.heading_travel_limit_response * delta)
-	return candidate.rotated(normal, -signf(signed_angle) * correction).normalized()
+		profile.heading_travel_limit_response
+	)
 
 func _update_air(delta: float) -> void:
 	air_time += delta
@@ -431,19 +441,15 @@ func _update_air(delta: float) -> void:
 	brake_amount = 0.0
 	skid_amount = 0.0
 	tuck_amount = 0.0
-	velocity += Vector3.DOWN * profile.air_gravity * delta
-	velocity.y = maxf(velocity.y, -profile.air_terminal_speed)
+	var air_motion := _air_motion_solver.step_gravity(velocity, delta, profile.air_gravity, profile.air_terminal_speed)
+	velocity = air_motion.velocity
 	if trick_command.committed:
 		angular_velocity += trick_command.rotation_impulse
 	if trick_rotation_state.active and trick_command.takeoff_release_impulse.length_squared() > 0.0000001:
 		trick_rotation_state.record_takeoff_release(trick_command.takeoff_release_impulse, delta)
 	var predicted := _predict_landing_time()
 	if trick_rotation_state.active:
-		var assist_availability := smoothstep(
-			0.0,
-			1.0,
-			predicted / maxf(profile.air_landing_window, 0.01)
-		) if predicted >= 0.0 else 1.0
+		var assist_availability := _air_motion_solver.landing_assist_availability(predicted, profile.air_landing_window)
 		var trim_acceleration := Vector3(
 			-trick_sample.left_stick.y * profile.air_flip_trim_acceleration,
 			-trick_sample.left_stick.x * flick_profile.air_yaw_trim_acceleration,
@@ -533,13 +539,18 @@ func _update_grind(delta: float) -> void:
 	brake_amount = 0.0
 	skid_amount = 0.0
 	var slope_acceleration := Vector3.DOWN.dot(tangent) * profile.gravity
-	rail_speed += slope_acceleration * delta
-	rail_speed = move_toward(rail_speed, 0.0, (profile.rail_friction + active_rail.base_friction) * delta)
-	# Allow reverse travel on uphill / rainbow features instead of dying at a stop.
-	if absf(rail_speed) < 0.35 and absf(slope_acceleration) > 1.0:
-		rail_speed = signf(slope_acceleration) * 0.35
-	rail_offset += rail_speed * rail_direction * delta
-	if rail_offset <= 0.02 or rail_offset >= active_rail.path_length - 0.02:
+	var rail_motion := _rail_motion_solver.advance(
+		rail_speed,
+		rail_offset,
+		rail_direction,
+		active_rail.path_length,
+		slope_acceleration,
+		profile.rail_friction + active_rail.base_friction,
+		delta
+	)
+	rail_speed = rail_motion.speed
+	rail_offset = rail_motion.offset
+	if rail_motion.reached_end:
 		_exit_rail(false)
 		return
 	# Balance: left stick counters drift; kinks and boardslides add instability.
@@ -549,12 +560,14 @@ func _update_grind(delta: float) -> void:
 	rail_prev_tangent = tangent
 	var boardslide_factor := 1.0 + absf(float(rail_pose)) * profile.rail_boardslide_instability
 	var drift := (profile.rail_balance_drift + kink * profile.rail_kink_instability) * boardslide_factor
-	if absf(rail_balance) > 0.08:
-		rail_balance += signf(rail_balance) * drift * delta
-	else:
-		rail_balance += active_rail.drift_bias * drift * delta
-	rail_balance += -rail_balance_input * profile.rail_balance_input_gain * delta
-	rail_balance = clampf(rail_balance, -1.35, 1.35)
+	rail_balance = _rail_motion_solver.update_balance(
+		rail_balance,
+		rail_balance_input,
+		drift,
+		active_rail.drift_bias,
+		profile.rail_balance_input_gain,
+		delta
+	)
 	if absf(rail_balance) >= profile.rail_balance_fail:
 		_slip_off_rail()
 		return
@@ -690,17 +703,10 @@ func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE, normalized_charge: f
 	state_changed.emit("Air")
 
 func _handle_landing() -> void:
-	var result := LandingSolver.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
+	var transition := _landing_transition.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
+	var result: Dictionary = transition.data
 	_apply_trick_rotation_to_landing(result)
-	if int(result.outcome) != LandingSolver.Outcome.BAIL:
-		var assisted_score := minf(1.0, float(result.score) + float(GameSettings.active.get("landing_assist", 0.35)) * 0.06)
-		result.score = assisted_score
-		if assisted_score >= profile.clean_threshold and float(result.upright_dot) >= profile.clean_upright_dot and float(result.impact) <= profile.bail_impact_speed * profile.clean_impact_ratio:
-			result.outcome = LandingSolver.Outcome.CLEAN
-		elif assisted_score >= profile.sketchy_threshold and float(result.upright_dot) >= profile.sketchy_upright_dot and float(result.impact) <= profile.bail_impact_speed * profile.sketchy_impact_ratio:
-			result.outcome = LandingSolver.Outcome.SKETCHY
-		else:
-			result.outcome = LandingSolver.Outcome.HARD
+	_landing_transition.apply_assist(transition, float(GameSettings.active.get("landing_assist", 0.35)), profile)
 	var should_present_landing := landing_feedback_armed
 	landing_feedback_armed = false
 	_capture_landing_context(result, true)
@@ -729,7 +735,7 @@ func _handle_landing() -> void:
 	state = State.GROUND
 	if trick.had_trick_intent:
 		scoring.begin_feature("jump")
-	trick.land(quality, velocity.dot(-global_basis.z) < 0.0, 0, true)
+	trick.land(quality, velocity.dot(-global_basis.z) < 0.0, int(result.outcome), 0, true)
 	trick_rotation_state.reset()
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
@@ -823,7 +829,7 @@ func _update_wall_pin(delta: float) -> void:
 	velocity += hop
 
 func _reseat_on_snow() -> void:
-	var result := LandingSolver.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
+	var result: Dictionary = _landing_transition.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile).data
 	_capture_landing_context(result, false)
 	animation_controller.trigger(
 		SkierAnimationController.AnimationEvent.LAND_CLEAN,
@@ -911,7 +917,7 @@ func _exit_rail(pop_off: bool) -> void:
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_EXIT, clampf(absf(rail_speed) / 20.0, 0.25, 1.0), rail_direction)
 	if trick.grind_seconds > 0.05:
 		scoring.begin_feature("rail")
-		trick.land(0.85, false)
+		trick.land(0.85, false, LandingSolver.Outcome.CLEAN)
 	active_rail = null
 	rail_balance = 0.0
 	rail_capture_blend_remaining = 0.0
@@ -1048,40 +1054,18 @@ func _clear_crash_state() -> void:
 	bail_recovering = false
 
 func _evaluate_feature_crash_after_motion() -> void:
-	if state not in [State.GROUND, State.AIR]:
-		return
-	for diagnostic: Dictionary in last_collision_diagnostics:
-		if (int(diagnostic.get("collider_layer", 0)) & 4) == 0:
-			continue
-		var speed_before := float(diagnostic.get("speed_before", 0.0))
-		var incoming_normal_speed := float(diagnostic.get("incoming_normal_speed", 0.0))
-		var speed_retention := float(diagnostic.get("speed_retention", 1.0))
-		if speed_before < profile.feature_collision_min_speed:
-			continue
-		if incoming_normal_speed < profile.feature_collision_min_normal_speed:
-			continue
-		if speed_retention > profile.feature_collision_max_speed_retention:
-			continue
-		var normal := diagnostic.get("normal", Vector3.UP) as Vector3
-		var before := diagnostic.get("velocity_before", velocity) as Vector3
-		var after := diagnostic.get("velocity_after", velocity) as Vector3
-		var context := CrashContext.new()
-		context.begin(
-			CrashContext.Reason.FEATURE_IMPACT,
-			CrashContext.Source.OBSTACLE,
-			state,
-			before,
-			after,
-			normal,
-			incoming_normal_speed,
-			angular_velocity.length(),
-			0.0,
-			0.0,
-			clampf(-normal.dot(global_basis.x), -1.0, 1.0)
-		)
-		context.attach_collision_diagnostic(diagnostic)
+	var context := _collision_crash_evaluator.evaluate(
+		last_collision_diagnostics,
+		state,
+		profile.feature_collision_min_speed,
+		profile.feature_collision_min_normal_speed,
+		profile.feature_collision_max_speed_retention,
+		angular_velocity.length(),
+		global_basis,
+		velocity
+	)
+	if context != null:
 		enter_crash(context)
-		return
 
 func _recover_from_bail() -> void:
 	bail_recovering = false

@@ -1,20 +1,117 @@
 param(
-	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)
+	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+	[string]$GodotPath = "",
+	[string]$UserDataRoot = "",
+	[string]$LogDirectory = "",
+	[int]$TimeoutMilliseconds = 120000
 )
 
 $ErrorActionPreference = "Stop"
-$godot = Join-Path $RepoRoot ".tools/godot-4.7.2/Godot_v4.7.2-stable_win64_console.exe"
-if (-not (Test-Path -LiteralPath $godot -PathType Leaf)) {
-	Write-Output "FAIL: Godot console executable was not found: $godot"
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+if ([string]::IsNullOrWhiteSpace($GodotPath)) {
+	$GodotPath = Join-Path $RepoRoot ".tools/godot-4.7.2/Godot_v4.7.2-stable_win64_console.exe"
+}
+$godot = (Resolve-Path -LiteralPath $GodotPath -ErrorAction SilentlyContinue).Path
+if ([string]::IsNullOrWhiteSpace($godot) -or -not (Test-Path -LiteralPath $godot -PathType Leaf)) {
+	Write-Output "FAIL: Godot console executable was not found: $GodotPath"
 	exit 1
 }
 
-$godotUserRoaming = Join-Path $RepoRoot ".godot_user/roaming"
+$runRootIsTemporary = $false
+if ([string]::IsNullOrWhiteSpace($UserDataRoot)) {
+	$UserDataRoot = Join-Path $RepoRoot ".godot_user"
+}
+else {
+	# Only clean a newly-created directory underneath the OS temp root. An
+	# explicit existing path belongs to the caller and is left untouched.
+	$requestedUserDataRoot = [System.IO.Path]::GetFullPath($UserDataRoot)
+	$tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+	$runRootIsTemporary = (-not (Test-Path -LiteralPath $requestedUserDataRoot)) -and $requestedUserDataRoot.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)
+	$UserDataRoot = $requestedUserDataRoot
+}
+$UserDataRoot = [System.IO.Path]::GetFullPath($UserDataRoot)
+$godotUserRoaming = Join-Path $UserDataRoot "roaming"
 if (-not (Test-Path -LiteralPath $godotUserRoaming)) { New-Item -ItemType Directory -Path $godotUserRoaming -Force | Out-Null }
-$godotUserLocal = Join-Path $RepoRoot ".godot_user/local"
+$godotUserLocal = Join-Path $UserDataRoot "local"
 if (-not (Test-Path -LiteralPath $godotUserLocal)) { New-Item -ItemType Directory -Path $godotUserLocal -Force | Out-Null }
 $env:APPDATA = (Resolve-Path $godotUserRoaming).Path
 $env:LOCALAPPDATA = (Resolve-Path $godotUserLocal).Path
+
+if ([string]::IsNullOrWhiteSpace($LogDirectory)) {
+	$LogDirectory = Join-Path $RepoRoot ".godot_logs"
+}
+$LogDirectory = [System.IO.Path]::GetFullPath($LogDirectory)
+if (-not (Test-Path -LiteralPath $LogDirectory)) { New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null }
+
+function Invoke-GodotScene {
+	param(
+		[string]$Executable,
+		[string]$WorkingDirectory,
+		[string]$Scene,
+		[int]$TimeoutMs,
+		[string]$StdoutPath,
+		[string]$StderrPath
+	)
+
+	$startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+	$startInfo.FileName = $Executable
+	$escapedRoot = $WorkingDirectory.Replace('"', '\"')
+	$startInfo.Arguments = '--headless --path "' + $escapedRoot + '" ' + $Scene
+	$startInfo.WorkingDirectory = $WorkingDirectory
+	$startInfo.UseShellExecute = $false
+	$startInfo.CreateNoWindow = $true
+	$startInfo.RedirectStandardOutput = $true
+	$startInfo.RedirectStandardError = $true
+	$process = [System.Diagnostics.Process]::new()
+	$process.StartInfo = $startInfo
+	$stdoutTask = $null
+	$stderrTask = $null
+	try {
+		if (-not $process.Start()) {
+			$message = "Could not start Godot."
+			[System.IO.File]::WriteAllText($StdoutPath, "")
+			[System.IO.File]::WriteAllText($StderrPath, $message)
+			return [pscustomobject]@{ ExitCode = 1; Output = $message; TimedOut = $false }
+		}
+		$stdoutTask = $process.StandardOutput.ReadToEndAsync()
+		$stderrTask = $process.StandardError.ReadToEndAsync()
+		if (-not $process.WaitForExit($TimeoutMs)) {
+			try {
+				$process.Kill($true)
+			}
+			catch {
+				# Windows PowerShell/.NET Framework lacks Kill(bool). taskkill's
+				# /T flag keeps the timeout path tree-safe on that host too.
+				try { & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null } catch { try { $process.Kill() } catch { } }
+			}
+			try { $process.WaitForExit() } catch { }
+			$stdout = if ($null -ne $stdoutTask) { $stdoutTask.GetAwaiter().GetResult() } else { "" }
+			$stderr = if ($null -ne $stderrTask) { $stderrTask.GetAwaiter().GetResult() } else { "" }
+			[System.IO.File]::WriteAllText($StdoutPath, $stdout)
+			[System.IO.File]::WriteAllText($StderrPath, $stderr)
+			return [pscustomobject]@{ ExitCode = 124; Output = "TIMEOUT: Godot did not exit within $TimeoutMs ms.`n$stdout$stderr"; TimedOut = $true }
+		}
+		# WaitForExit(timeout) can return before asynchronous stream readers have
+		# drained. The second wait makes the exit code and captured output stable.
+		$process.WaitForExit()
+		$exitCode = [int]$process.ExitCode
+		$stdout = $stdoutTask.GetAwaiter().GetResult()
+		$stderr = $stderrTask.GetAwaiter().GetResult()
+		[System.IO.File]::WriteAllText($StdoutPath, $stdout)
+		[System.IO.File]::WriteAllText($StderrPath, $stderr)
+		return [pscustomobject]@{ ExitCode = $exitCode; Output = "$stdout$stderr"; TimedOut = $false }
+	}
+	catch {
+		$message = "Godot process failed: $($_.Exception.Message)"
+		[System.IO.File]::WriteAllText($StdoutPath, "")
+		[System.IO.File]::WriteAllText($StderrPath, $message)
+		return [pscustomobject]@{ ExitCode = 1; Output = $message; TimedOut = $false }
+	}
+	finally {
+		$process.Dispose()
+	}
+}
+
 $scenes = @(
 	"res://tests/runtime_smoke.tscn",
 	"res://tests/environment_visual_acceptance.tscn",
@@ -32,6 +129,8 @@ $scenes = @(
 	"res://tests/physics_benchmark.tscn",
 	"res://tests/physics_collision_acceptance.tscn",
 	"res://tests/settings_acceptance.tscn",
+	"res://tests/input_manager_acceptance.tscn",
+	"res://tests/solver_layer_interface_acceptance.tscn",
 	"res://tests/animation_acceptance.tscn",
 	"res://tests/character_equipment_scale_acceptance.tscn",
 	"res://tests/character_presentation_acceptance.tscn",
@@ -65,39 +164,15 @@ $scenes = @(
 $failures = [System.Collections.Generic.List[string]]::new()
 foreach ($scene in $scenes) {
 	Write-Output "===== $scene ====="
-	$stdoutPath = [System.IO.Path]::GetTempFileName()
-	$stderrPath = [System.IO.Path]::GetTempFileName()
-	$process = $null
-	$exitCode = 1
-	$output = ""
-	try {
-		$quotedRepoRoot = '"' + $RepoRoot.Replace('"', '\\"') + '"'
-		$process = Start-Process -FilePath $godot `
-			-ArgumentList @("--headless", "--path", $quotedRepoRoot, $scene) `
-			-RedirectStandardOutput $stdoutPath `
-			-RedirectStandardError $stderrPath `
-			-WindowStyle Hidden `
-			-PassThru
-		if (-not $process.WaitForExit(120000)) {
-			try { $process.Kill() } catch { }
-			try { $process.WaitForExit() } catch { }
-			$exitCode = 124
-			$output = "TIMEOUT: Godot did not exit within 120 seconds."
-		}
-		else {
-			$exitCode = $process.ExitCode
-			$stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw } else { "" }
-			$stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw } else { "" }
-			$output = "$stdout$stderr"
-		}
-	}
-	finally {
-		if (Test-Path -LiteralPath $stdoutPath) { Remove-Item -LiteralPath $stdoutPath -Force }
-		if (Test-Path -LiteralPath $stderrPath) { Remove-Item -LiteralPath $stderrPath -Force }
-	}
+	$safeName = ($scene -replace '^res://', '') -replace '[^A-Za-z0-9_-]', '_'
+	$stdoutPath = Join-Path $LogDirectory ($safeName + ".stdout.log")
+	$stderrPath = Join-Path $LogDirectory ($safeName + ".stderr.log")
+	$result = Invoke-GodotScene -Executable $godot -WorkingDirectory $RepoRoot -Scene $scene -TimeoutMs $TimeoutMilliseconds -StdoutPath $stdoutPath -StderrPath $stderrPath
+	$exitCode = [int]$result.ExitCode
+	$output = [string]$result.Output
 	Write-Output $output.TrimEnd()
 	if ($exitCode -ne 0) {
-		$failures.Add("$scene exited with code $exitCode")
+		$failures.Add("$scene exited with code $exitCode; logs: $stdoutPath, $stderrPath")
 	}
 	if ($output -match '(?m)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:') {
 		$failures.Add("$scene emitted an engine or acceptance error")
@@ -105,8 +180,12 @@ foreach ($scene in $scenes) {
 }
 
 if ($failures.Count -gt 0) {
+	Write-Output "Runtime logs were preserved in: $LogDirectory"
 	$failures | ForEach-Object { Write-Output "FAIL: $_" }
 	exit 1
 }
 
 Write-Output "PASS: all runtime scenes completed without engine, shader, script, or acceptance errors."
+if ($runRootIsTemporary -and (Test-Path -LiteralPath $UserDataRoot)) {
+	Remove-Item -LiteralPath $UserDataRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

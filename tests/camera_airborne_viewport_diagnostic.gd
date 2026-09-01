@@ -496,7 +496,7 @@ func _run_foreground_occlusion_reproduction(step: float) -> void:
 			continue
 		var frame_snapshot := camera_rig.debug_snapshot()
 		if not bool(frame_snapshot.get("composition_valid", false)) or not camera_rig._camera_destination_is_clear(camera_rig.global_position):
-			failures.append("Foreground feature produced an invalid or colliding camera pose at %s after warmup" % camera_rig.global_position)
+			failures.append("Foreground feature produced an invalid or colliding camera pose at %s after warmup: valid=%s rect=%s body_occ=%.2f" % [camera_rig.global_position, frame_snapshot.get("composition_valid", false), frame_snapshot.get("skier_screen_rect", Rect2()), float(frame_snapshot.get("foreground_occlusion_fraction", 0.0))])
 			break
 	var snapshot := camera_rig.debug_snapshot()
 	if not bool(snapshot.get("composition_valid", false)):

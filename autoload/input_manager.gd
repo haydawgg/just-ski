@@ -2,16 +2,27 @@ extends Node
 
 signal device_changed(device_name: String)
 signal controller_connection_changed(connected: bool)
+signal active_controller_changed(device_id: int, family: String)
 
 var last_device := "keyboard"
+var active_joypad_id := -1
+var active_controller_family := "controller"
+var connected_joypads: Dictionary = {}
 
 func _ready() -> void:
-	Input.joy_connection_changed.connect(_on_joy_connection_changed)
+	if not Input.joy_connection_changed.is_connected(_on_joy_connection_changed):
+		Input.joy_connection_changed.connect(_on_joy_connection_changed)
+	for device: int in Input.get_connected_joypads():
+		_register_controller(device)
+	if not connected_joypads.is_empty():
+		_select_lowest_connected_controller()
 
 func _input(event: InputEvent) -> void:
 	var next_device := last_device
 	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
-		next_device = _controller_family(event.device)
+		_register_controller(event.device)
+		_set_active_controller(event.device)
+		next_device = active_controller_family
 	elif event is InputEventKey or event is InputEventMouse:
 		next_device = "keyboard"
 	if next_device != last_device:
@@ -39,35 +50,108 @@ func vector(left: StringName, right: StringName, up: StringName, down: StringNam
 	return value.limit_length(1.0)
 
 func glyph(action: StringName) -> String:
-	var pad := last_device != "keyboard"
+	var pad := last_device != "keyboard" and active_joypad_id >= 0 and connected_joypads.has(active_joypad_id)
+	var family := active_controller_family if pad else "keyboard"
 	match action:
 		&"jump": return "Right stick flick" if pad else "Space"
-		&"respawn": return "Y / Triangle" if pad else "R"
+		&"respawn": return _family_glyph(family, "Y", "Triangle") if pad else "R"
 		&"set_marker": return "D-pad Up" if pad else "T"
-		&"brake": return "LT / L2" if pad else "Ctrl"
-		&"grab_left": return "LT / L2" if pad else "Q"
-		&"grab_right": return "RT / R2" if pad else "E"
+		&"brake": return _family_glyph(family, "LT", "L2") if pad else "Ctrl"
+		&"grab_left": return _family_glyph(family, "LT", "L2") if pad else "Q"
+		&"grab_right": return _family_glyph(family, "RT", "R2") if pad else "E"
 		_: return str(action)
 
 func rumble(weak: float, strong: float, duration: float) -> void:
-	if last_device == "keyboard":
+	var device := _rumble_target()
+	if device < 0:
 		return
 	var strength := float(GameSettings.active.get("controller_rumble", 0.75))
-	Input.start_joy_vibration(0, weak * strength, strong * strength, duration)
+	Input.start_joy_vibration(device, weak * strength, strong * strength, duration)
+
+func _rumble_target() -> int:
+	return active_joypad_id if active_joypad_id >= 0 and connected_joypads.has(active_joypad_id) else -1
 
 func stop_rumble() -> void:
+	var devices := {}
+	for device: Variant in connected_joypads.keys():
+		devices[int(device)] = true
 	for device: int in Input.get_connected_joypads():
-		Input.stop_joy_vibration(device)
+		devices[device] = true
+	for device: Variant in devices.keys():
+		Input.stop_joy_vibration(int(device))
 
 func _controller_family(device: int) -> String:
-	var name := Input.get_joy_name(device).to_lower()
+	return _controller_family_from_name(Input.get_joy_name(device))
+
+func _controller_family_from_name(raw_name: String) -> String:
+	var name := raw_name.to_lower()
 	if "playstation" in name or "dualshock" in name or "dualsense" in name:
 		return "playstation"
 	if "xbox" in name or "xinput" in name:
 		return "xbox"
 	return "controller"
 
-func _on_joy_connection_changed(_device: int, connected: bool) -> void:
-	if not connected:
-		stop_rumble()
-	controller_connection_changed.emit(connected)
+func _family_glyph(family: String, xbox_glyph: String, playstation_glyph: String) -> String:
+	if family == "xbox":
+		return xbox_glyph
+	if family == "playstation":
+		return playstation_glyph
+	return "%s / %s" % [xbox_glyph, playstation_glyph]
+
+func _register_controller(device: int) -> void:
+	if device < 0:
+		return
+	connected_joypads[device] = _controller_family(device)
+
+func _set_active_controller(device: int) -> void:
+	if device < 0:
+		return
+	if not connected_joypads.has(device):
+		_register_controller(device)
+	var family := str(connected_joypads.get(device, "controller"))
+	var changed := active_joypad_id != device or active_controller_family != family
+	active_joypad_id = device
+	active_controller_family = family
+	if changed:
+		active_controller_changed.emit(active_joypad_id, active_controller_family)
+
+func _select_lowest_connected_controller() -> void:
+	if connected_joypads.is_empty():
+		_clear_active_controller()
+		return
+	var ids: Array[int] = []
+	for device: Variant in connected_joypads.keys():
+		ids.append(int(device))
+	ids.sort()
+	_set_active_controller(ids[0])
+	if last_device != "keyboard" and last_device != active_controller_family:
+		last_device = active_controller_family
+		device_changed.emit(last_device)
+
+func _clear_active_controller() -> void:
+	var changed := active_joypad_id != -1 or active_controller_family != "controller"
+	active_joypad_id = -1
+	active_controller_family = "controller"
+	if changed:
+		active_controller_changed.emit(active_joypad_id, active_controller_family)
+
+func _on_joy_connection_changed(device: int, connected: bool) -> void:
+	var had_controller := not connected_joypads.is_empty()
+	if connected:
+		_register_controller(device)
+		if active_joypad_id < 0:
+			_select_lowest_connected_controller()
+	else:
+		connected_joypads.erase(device)
+		if active_joypad_id == device:
+			if connected_joypads.is_empty():
+				_clear_active_controller()
+				if last_device != "keyboard":
+					last_device = "keyboard"
+					device_changed.emit(last_device)
+			else:
+				_select_lowest_connected_controller()
+	stop_rumble()
+	var has_controller := not connected_joypads.is_empty()
+	if had_controller != has_controller:
+		controller_connection_changed.emit(has_controller)
