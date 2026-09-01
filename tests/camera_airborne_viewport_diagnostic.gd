@@ -38,9 +38,10 @@ func _ready() -> void:
 		_run_foreground_occlusion_reproduction(step)
 		_run_respawn_initialization_reproduction(step)
 		_run_hockey_stop_reproduction(step)
+		_run_fallback_contract_reproduction(step)
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("CAMERA_VIEWPORT_PASS: airborne composition, landing framing, recovery, rates, and respawn initialization passed")
+		print("CAMERA_VIEWPORT_PASS: airborne composition, landing framing, recovery, rates, fallbacks, yaw, and respawn initialization passed")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
@@ -65,6 +66,7 @@ func _run_airborne_composition_reproduction(step: float) -> void:
 
 	var previous_distance := camera_rig.global_position.distance_to(skier.global_position)
 	var previous_fov := camera_rig.camera.fov
+	var previous_yaw := float(camera_rig.debug_snapshot().get("actual_yaw_degrees", 0.0))
 	var landing_frames := 0
 	var landing_visible_frames := 0
 	var recovery_seen := false
@@ -88,6 +90,13 @@ func _run_airborne_composition_reproduction(step: float) -> void:
 		camera_rig._physics_process(step)
 		var bounds := _projected_landmark_bounds(camera_rig, skier)
 		var snapshot := camera_rig.debug_snapshot()
+		var yaw := float(snapshot.get("actual_yaw_degrees", 0.0))
+		var yaw_step := absf(rad_to_deg(angle_difference(deg_to_rad(previous_yaw), deg_to_rad(yaw))))
+		var yaw_limit := camera_rig.maximum_camera_yaw_rate_degrees * step + 0.07
+		if yaw_step > yaw_limit:
+			failures.append("Airborne %.0f Hz frame %d rendered yaw step %.3f exceeded %.3f" % [1.0 / step, frame_index, yaw_step, yaw_limit])
+			break
+		previous_yaw = yaw
 		if not bool(snapshot.get("composition_valid", false)):
 			failures.append("Airborne %.0f Hz frame %d reported invalid composition" % [1.0 / step, frame_index])
 			break
@@ -401,6 +410,9 @@ func _validate_camera_exports(camera_rig: SkiCameraController, step: float) -> b
 	if absf(camera_rig.composition_comfortable_correction_speed - 8.0) > 0.01:
 		failures.append("Camera %.0f Hz composition_comfortable_correction_speed %.2f != expected 8.0" % [1.0 / step, camera_rig.composition_comfortable_correction_speed])
 		valid = false
+	if absf(camera_rig.maximum_camera_yaw_rate_degrees - 90.0) > 0.01:
+		failures.append("Camera %.0f Hz maximum_camera_yaw_rate_degrees %.2f != expected 90.0" % [1.0 / step, camera_rig.maximum_camera_yaw_rate_degrees])
+		valid = false
 	if absf(camera_rig.hockey_divergence_threshold_degrees - 18.0) > 0.01:
 		failures.append("Camera %.0f Hz hockey_divergence_threshold_degrees %.2f != expected 18.0" % [1.0 / step, camera_rig.hockey_divergence_threshold_degrees])
 		valid = false
@@ -563,13 +575,10 @@ func _run_hockey_stop_reproduction(step: float) -> void:
 	for i: int in ceili(0.5 / step):
 		skier.global_position += Vector3(0.0, 0.0, -25.0 * step)
 		camera_rig._physics_process(step)
-	var prev_cam := camera_rig.global_position
 	var prev_skier := skier.global_position
 	var prev_yaw := float(camera_rig.debug_snapshot().get("actual_yaw_degrees", 0.0))
 	var prev_center := _projected_landmark_bounds(camera_rig, skier).get_center()
 	var hockey_hold_seen := false
-	var max_yaw_step := 0.0
-	var max_rel := 0.0
 	var frames := ceili(1.2 / step)
 	for frame_index: int in frames:
 		var t := float(frame_index) * step
@@ -589,15 +598,14 @@ func _run_hockey_stop_reproduction(step: float) -> void:
 		var prev_sk := prev_skier
 		camera_rig._physics_process(step)
 		var pos := camera_rig.global_position
-		var yaw := float(camera_rig.debug_snapshot().get("actual_yaw_degrees", 0.0))
+		var snapshot := camera_rig.debug_snapshot()
+		var yaw := float(snapshot.get("actual_yaw_degrees", 0.0))
 		var yaw_step := absf(rad_to_deg(angle_difference(deg_to_rad(prev_yaw), deg_to_rad(yaw))))
-		max_yaw_step = maxf(max_yaw_step, yaw_step)
 		var yaw_limit := camera_rig.maximum_camera_yaw_rate_degrees * step + 0.06
 		if yaw_step > yaw_limit + 0.01:
 			failures.append("Hockey-stop %.0f Hz frame %d yaw step %.3f exceeded 90 deg/s limit %.3f" % [1.0/step, frame_index, yaw_step, yaw_limit])
 			break
 		var rel := (pos - prev_pos - (skier.global_position - prev_sk)).length()
-		max_rel = maxf(max_rel, rel)
 		var rel_limit := camera_rig.maximum_relative_correction_speed * step + 0.045
 		if rel > rel_limit + 0.001:
 			failures.append("Hockey-stop %.0f Hz frame %d relative correction %.3f exceeded 12 m/s limit %.3f" % [1.0/step, frame_index, rel, rel_limit])
@@ -607,7 +615,7 @@ func _run_hockey_stop_reproduction(step: float) -> void:
 		if screen_delta > 0.09:
 			failures.append("Hockey-stop %.0f Hz frame %d screen center jump %.3f exceeded 0.09" % [1.0/step, frame_index, screen_delta])
 			break
-		if camera_rig._ground_heading_hold_timer > 0.0 or (skier.braking and skier.brake_amount > 0.45 and divergence > 18.0):
+		if bool(snapshot.get("hockey_heading_hold_active", false)):
 			hockey_hold_seen = true
 		prev_yaw = yaw
 		prev_skier = skier.global_position
@@ -620,6 +628,41 @@ func _run_hockey_stop_reproduction(step: float) -> void:
 	skier.free()
 	remove_child(floor)
 	floor.free()
+
+func _run_fallback_contract_reproduction(step: float) -> void:
+	var skier := SkierController.new()
+	skier.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(skier)
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_position = Vector3.ZERO
+	skier.velocity = Vector3(0.0, 0.0, -38.0)
+	var camera_rig := SkiCameraController.new()
+	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(camera_rig)
+	camera_rig.set_target(skier)
+	var frame_start := camera_rig.global_position
+	var target_displacement := Vector3(0.0, 0.0, -38.0 * step)
+	skier.global_position += target_displacement
+	var feed_forward_hold := frame_start + target_displacement
+	if not camera_rig._fallback_pose_is_valid(feed_forward_hold, frame_start, target_displacement, Vector3.UP, step):
+		failures.append("Fallback contract %.0f Hz rejected valid feed-forward hold" % [1.0 / step])
+		_remove_target_and_camera(skier, camera_rig)
+		return
+	var over_relative := feed_forward_hold + Vector3.RIGHT * (camera_rig.maximum_relative_correction_speed * step + 0.12)
+	if camera_rig._fallback_pose_is_valid(over_relative, frame_start, target_displacement, Vector3.UP, step):
+		failures.append("Fallback contract %.0f Hz accepted over-cap relative correction" % [1.0 / step])
+	var too_close := skier.global_position + Vector3(0.0, camera_rig.minimum_camera_up_offset, -camera_rig.minimum_camera_distance * 0.45)
+	if camera_rig._fallback_pose_is_valid(too_close, frame_start, target_displacement, Vector3.UP, step):
+		failures.append("Fallback contract %.0f Hz accepted too-close pose" % [1.0 / step])
+	var too_far := skier.global_position + Vector3(0.0, 1.0, -(camera_rig.maximum_camera_distance + 1.0))
+	if camera_rig._fallback_pose_is_valid(too_far, frame_start, target_displacement, Vector3.UP, step):
+		failures.append("Fallback contract %.0f Hz accepted too-far pose" % [1.0 / step])
+	var too_low := skier.global_position + Vector3(0.0, camera_rig.minimum_camera_up_offset - 0.2, -camera_rig.follow_distance)
+	if camera_rig._fallback_pose_is_valid(too_low, frame_start, target_displacement, Vector3.UP, step):
+		failures.append("Fallback contract %.0f Hz accepted low up-offset pose" % [1.0 / step])
+	_remove_target_and_camera(skier, camera_rig)
 
 func _projected_landmark_bounds(camera_rig: SkiCameraController, skier: SkierController) -> Rect2:
 	var bounds := Rect2()

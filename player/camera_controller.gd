@@ -653,12 +653,12 @@ func _physics_process(delta: float) -> void:
 	camera.fov = clampf(fov_before + fov_step, 1.0, 179.0)
 	_last_fov_rate = absf(camera.fov - fov_before) / maxf(delta, 0.0001)
 
-	# Composition evaluates candidate poses before the final distance, movement,
-	# surface, and collision guards below. Keep the smoothed orientation from
-	# before that evaluation so a rejected or rate-limited candidate cannot
-	# replace the orientation controller.
+	# Composition owns position only. Orientation stays authoritative in the
+	# yaw/pitch controller above so AIR/CRASH recovery cannot bypass the 90 deg/s
+	# rendered-yaw envelope with a candidate-basis blend.
 	var composition_basis := global_basis
 	_apply_screen_composition(frame_start_position, up, travel, look_target, delta)
+	global_basis = composition_basis
 	var final_position := global_position
 	var final_distance := final_position.distance_to(target.global_position)
 	var frame_distance := _previous_target_distance if _previous_target_distance > 0.0 else frame_start_position.distance_to(target.global_position)
@@ -700,22 +700,18 @@ func _physics_process(delta: float) -> void:
 	# Use frame_start + target_displacement (not raw old world pose) to avoid 1.27 m / 38 m/s jump.
 	var feed_forward_hold := frame_start_position + target_displacement
 	feed_forward_hold = _stabilize_camera_position(feed_forward_hold, up, travel, false)
-	var feed_forward_hold_is_clear := feed_forward_hold.is_finite() and _camera_destination_is_clear(feed_forward_hold)
-	var feed_forward_hold_trace := _trace_camera_candidate(frame_start_position, feed_forward_hold)
-	var feed_forward_hold_blocked := not feed_forward_hold_is_clear or bool(feed_forward_hold_trace.get("hit", false))
-	var feed_forward_hold_distance := feed_forward_hold.distance_to(target.global_position) if feed_forward_hold.is_finite() else INF
-	var feed_forward_hold_up := (feed_forward_hold - target.global_position).dot(up) if feed_forward_hold.is_finite() else -INF
-	var feed_forward_hold_valid := feed_forward_hold.is_finite() and feed_forward_hold_distance >= minimum_camera_distance - 0.001 and feed_forward_hold_distance <= maximum_camera_distance + 0.001 and feed_forward_hold_up >= minimum_camera_up_offset - 0.001 and not feed_forward_hold_blocked
+	var feed_forward_hold_valid := _fallback_pose_is_valid(feed_forward_hold, frame_start_position, target_displacement, up, delta)
+	var emergency_fallback_used := false
 	var final_offset := final_position - target.global_position
 	if final_offset.length_squared() > 0.001 and final_offset.length() < minimum_camera_distance:
 		# A straight interpolation between two valid radial poses can cross the
 		# minimum-distance sphere when the heading pivots. Hold the prior valid
 		# pose instead of projecting onto the sphere and snapping its direction.
-		# Prefer feed-forward hold to respect relative motion; fall back to old pose only if hold is unsafe.
 		if feed_forward_hold_valid:
 			final_position = feed_forward_hold
 		else:
 			final_position = frame_start_position
+			emergency_fallback_used = true
 		final_offset = final_position - target.global_position
 	var final_up_offset := final_offset.dot(up)
 	if final_up_offset < minimum_camera_up_offset and final_offset.length_squared() > 0.001:
@@ -734,11 +730,13 @@ func _physics_process(delta: float) -> void:
 					final_position = feed_forward_hold
 				else:
 					final_position = frame_start_position
+					emergency_fallback_used = true
 		else:
 			if feed_forward_hold_valid:
 				final_position = feed_forward_hold
 			else:
 				final_position = frame_start_position
+				emergency_fallback_used = true
 		final_offset = final_position - target.global_position
 	# Absolute maximum distance must be enforced after all rate limits and
 	# translation clamps. This is the final guard before committing the pose.
@@ -755,6 +753,7 @@ func _physics_process(delta: float) -> void:
 				final_position = feed_forward_hold
 			else:
 				final_position = frame_start_position
+				emergency_fallback_used = true
 	# Ensure the final translation-capped pose is still above the snow surface.
 	if get_world_3d() != null:
 		_camera_surface_query.from = final_position + up * 8.0
@@ -769,45 +768,38 @@ func _physics_process(delta: float) -> void:
 					final_position = feed_forward_hold
 				else:
 					final_position = frame_start_position
+					emergency_fallback_used = true
 	# All radial/translation/surface clamps above can change the swept segment.
 	# Revalidate the final segment and destination before committing the pose.
 	var final_trace := _trace_camera_candidate(frame_start_position, final_position)
 	if bool(final_trace.get("hit", false)) or not _camera_destination_is_clear(final_position):
 		var stable_relative_pose := target.global_position + _last_stable_camera_offset
 		stable_relative_pose = _stabilize_camera_position(stable_relative_pose, up, travel, false)
-		var stable_is_clear := stable_relative_pose.is_finite() and _camera_destination_is_clear(stable_relative_pose)
-		var stable_trace := _trace_camera_candidate(frame_start_position, stable_relative_pose)
-		var stable_blocked := not stable_is_clear or bool(stable_trace.get("hit", false))
-		var stable_distance := stable_relative_pose.distance_to(target.global_position) if stable_relative_pose.is_finite() else INF
-		var stable_up := (stable_relative_pose - target.global_position).dot(up) if stable_relative_pose.is_finite() else -INF
-		var stable_relative := stable_relative_pose - (frame_start_position + target_displacement)
-		var stable_relative_limit := maximum_relative_correction_speed * delta + 0.02
-		var stable_valid := stable_is_clear and not stable_blocked and stable_distance >= minimum_camera_distance - 0.001 and stable_distance <= maximum_camera_distance + 0.001 and stable_up >= minimum_camera_up_offset - 0.001 and stable_relative.length() <= stable_relative_limit
+		var stable_valid := _fallback_pose_is_valid(stable_relative_pose, frame_start_position, target_displacement, up, delta)
 		var trace_position := final_trace.get("position", frame_start_position) as Vector3
-		var trace_is_clear := trace_position.is_finite() and _camera_destination_is_clear(trace_position)
-		var trace_relative := trace_position - (frame_start_position + target_displacement)
-		var trace_valid := trace_is_clear and trace_relative.length() <= stable_relative_limit
+		var trace_valid := _fallback_pose_is_valid(trace_position, frame_start_position, target_displacement, up, delta)
 		if feed_forward_hold_valid:
 			final_position = feed_forward_hold
+			emergency_fallback_used = false
 		elif stable_valid:
 			final_position = stable_relative_pose
+			emergency_fallback_used = false
 		elif trace_valid:
 			final_position = trace_position
+			emergency_fallback_used = false
 		else:
+			# Safety emergency: keeping the old world pose may exceed the relative
+			# motion cap, but it is preferable to committing a colliding camera.
 			final_position = frame_start_position
+			emergency_fallback_used = true
 	global_position = final_position
-	# Authoritative stable state: only the committed final pose updates the offset.
-	_last_stable_camera_offset = global_position - target.global_position
-	# A composition candidate can carry a basis that is correct for its proposed
-	# position but wrong for the final committed position after the clamps above.
-	# Preserve the already-smoothed orientation in that case; otherwise the next
-	# frame's screen-space solver can alternate between incompatible candidate
-	# sides and feed the position correction back into yaw.
-	if camera_state in [CameraState.GROUND, CameraState.LANDING, CameraState.RAIL]:
-		# On the stable follow path, composition is allowed to move the camera but
-		# never to replace the trajectory-smoothed orientation. Ground recovery can
-		# otherwise turn a small screen correction into a camera orbit.
-		global_basis = composition_basis
+	# Authoritative stable state: only a fully valid, non-emergency committed pose
+	# may replace the previous target-relative fallback offset.
+	if not emergency_fallback_used and _fallback_pose_is_valid(global_position, frame_start_position, target_displacement, up, delta):
+		_last_stable_camera_offset = global_position - target.global_position
+	# Composition is position-only, so the rendered basis remains the yaw/pitch
+	# controller's bounded orientation in every state.
+	global_basis = composition_basis
 	_last_distance_rate = absf(global_position.distance_to(target.global_position) - frame_distance) / maxf(delta, 0.0001)
 	_previous_target_distance = global_position.distance_to(target.global_position)
 	_previous_target_position = target.global_position
@@ -868,7 +860,7 @@ func _air_framing_target(player_position: Vector3, up: Vector3, delta: float) ->
 	_air_anchor_height = lerpf(_air_anchor_height, target_height, 1.0 - exp(-response * delta))
 	return player_position + up * (_air_anchor_height - player_height)
 
-func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, travel: Vector3, look_target: Vector3, delta: float) -> void:
+func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, travel: Vector3, _look_target: Vector3, delta: float) -> void:
 	if target == null or not _composition_initialized or camera == null:
 		return
 	var base_position := global_position
@@ -939,12 +931,10 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		candidates.append(base_position + hard_correction)
 
 	var best_position := base_position
-	var best_basis := global_basis
 	var best_evaluation := base_evaluation
 	var best_score := INF
 	var found_candidate := false
 	var best_safe_position := base_position
-	var best_safe_basis := global_basis
 	var best_safe_evaluation := base_evaluation
 	var best_safe_score := INF
 	var found_safe_candidate := false
@@ -953,14 +943,14 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		if not bool(safe_result.get("valid", false)):
 			continue
 		var candidate_position := safe_result.position as Vector3
-		var candidate_basis := global_basis if candidate_position.distance_squared_to(base_position) < 0.000001 else _look_basis_for_pose(candidate_position, look_target, up)
-		var evaluation := _evaluate_composition(candidate_position, candidate_basis, camera.fov, up)
+		# Composition is position-only: evaluate every candidate with the already
+		# bounded rendered basis instead of inventing a candidate-specific yaw.
+		var evaluation := _evaluate_composition(candidate_position, global_basis, camera.fov, up)
 		var score := _composition_score(evaluation, candidate_position.distance_to(base_position))
 		if not found_safe_candidate or score < best_safe_score:
 			found_safe_candidate = true
 			best_safe_score = score
 			best_safe_position = candidate_position
-			best_safe_basis = candidate_basis
 			best_safe_evaluation = evaluation
 		if not _composition_candidate_is_valid(evaluation):
 			continue
@@ -968,7 +958,6 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 			found_candidate = true
 			best_score = score
 			best_position = candidate_position
-			best_basis = candidate_basis
 			best_evaluation = evaluation
 
 	var base_requires_recovery := not _composition_candidate_is_valid(base_evaluation)
@@ -979,10 +968,9 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		var fallback_position := _last_compositionally_valid_pose.origin
 		var fallback_result := _safe_composition_candidate(base_position, fallback_position, up, travel)
 		if bool(fallback_result.get("valid", false)):
-			var fallback_evaluation := _evaluate_composition(fallback_result.position as Vector3, _last_compositionally_valid_pose.basis, camera.fov, up)
+			var fallback_evaluation := _evaluate_composition(fallback_result.position as Vector3, global_basis, camera.fov, up)
 			if _composition_candidate_is_valid(fallback_evaluation):
 				best_position = fallback_result.position as Vector3
-				best_basis = _last_compositionally_valid_pose.basis
 				best_evaluation = fallback_evaluation
 				found_candidate = true
 		if not found_candidate and found_safe_candidate:
@@ -990,16 +978,14 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 			# collision-safe correction immediately; the recovery flag and invalid
 			# telemetry tell callers that the hard guarantee could not be met.
 			best_position = best_safe_position
-			best_basis = best_safe_basis
 			best_evaluation = best_safe_evaluation
 			found_candidate = true
 
 	if found_candidate:
 		var correction_response := composition_hard_recovery_response if base_requires_recovery else (composition_recovery_response if base_near_edge else 0.0)
-		# Bounded correction: hard recovery uses damped motion (24*delta ≈ 0.8 @30Hz) plus
-		# relative speed cap (12 m/s) applied later. No immediate teleport.
+		# Bounded correction: hard recovery uses damped motion plus the relative
+		# 12 m/s cap applied later. Soft recovery stays in the 8 m/s band.
 		var correction_weight := 1.0 - exp(-correction_response * delta)
-		# Clamp weight so soft recovery stays in comfortable 6-8 m/s band; hard may use 12.
 		var max_soft_step := composition_comfortable_correction_speed * delta
 		var max_hard_step := maximum_relative_correction_speed * delta
 		var desired_dist := base_position.distance_to(best_position)
@@ -1011,9 +997,6 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		var composed_result := _safe_composition_candidate(base_position, composed_position, up, travel)
 		if bool(composed_result.get("valid", false)):
 			global_position = composed_result.position as Vector3
-			var basis_weight := correction_weight if soft_composition_state else 0.0
-			if basis_weight > 0.0:
-				global_basis = _blend_camera_basis(global_basis, best_basis, basis_weight)
 			best_evaluation = _evaluate_composition(global_position, global_basis, camera.fov, up)
 
 	if _composition_candidate_is_valid(best_evaluation):
@@ -1070,6 +1053,25 @@ func _camera_destination_is_clear(position: Vector3) -> bool:
 	_camera_destination_query.transform = Transform3D(Basis.IDENTITY, position)
 	_record_shape_queries()
 	return get_world_3d().direct_space_state.intersect_shape(_camera_destination_query, 1).is_empty()
+
+func _fallback_pose_is_valid(candidate: Vector3, frame_start_position: Vector3, target_displacement: Vector3, up: Vector3, delta: float) -> bool:
+	if target == null or not candidate.is_finite():
+		return false
+	var safe_up := up.normalized() if up.length_squared() > 0.001 else Vector3.UP
+	var offset := candidate - target.global_position
+	var distance := offset.length()
+	if distance < minimum_camera_distance - 0.001 or distance > maximum_camera_distance + 0.001:
+		return false
+	if offset.dot(safe_up) < minimum_camera_up_offset - 0.001:
+		return false
+	var relative := candidate - (frame_start_position + target_displacement)
+	var relative_limit := maximum_relative_correction_speed * delta + 0.02
+	if relative.length() > relative_limit:
+		return false
+	if not _camera_destination_is_clear(candidate):
+		return false
+	var trace := _trace_camera_candidate(frame_start_position, candidate)
+	return not bool(trace.get("hit", false))
 
 func _keep_composition_camera_behind(candidate: Vector3, up: Vector3, travel: Vector3) -> Vector3:
 	if target == null or camera_state not in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]:
@@ -1343,11 +1345,6 @@ func _look_basis_for_pose(camera_position: Vector3, look_target: Vector3, up: Ve
 	var banked_up := Vector3.UP.rotated(blended_forward, _smoothed_bank)
 	return Basis.looking_at(blended_forward, banked_up)
 
-func _blend_camera_basis(from: Basis, to: Basis, weight: float) -> Basis:
-	var blended_forward := _slerp_direction(-from.z, -to.z, clampf(weight, 0.0, 1.0))
-	var banked_up := Vector3.UP.rotated(blended_forward, _smoothed_bank)
-	return Basis.looking_at(blended_forward, banked_up)
-
 func _update_composition_telemetry(up: Vector3, delta: float) -> void:
 	var evaluation := _evaluate_composition(global_position, global_basis, camera.fov, up)
 	_skier_screen_rect = evaluation.get("skier_screen_rect", Rect2()) as Rect2
@@ -1451,6 +1448,7 @@ func debug_snapshot() -> Dictionary:
 		"fov_rate": _last_fov_rate,
 		"speed_distance_offset": _smoothed_speed_distance,
 		"carve_look_ahead_offset": _smoothed_carve_look_ahead_offset,
+		"hockey_heading_hold_active": _ground_heading_hold_timer > 0.0,
 	}
 
 func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
