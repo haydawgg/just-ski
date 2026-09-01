@@ -9,9 +9,12 @@ var landing_captured := false
 var isolation_mode := "baseline"
 var feature_isolation_name := ""
 var capture_path := OUTPUT_PATH
+var profile_snow_quality := -1
+var profile_output_path := "res://.godot_user/captures/sunset_visual_profile.json"
 
 func _ready() -> void:
 	_parse_visual_arguments()
+	_apply_profile_settings()
 	_apply_isolation()
 	var skier := get_node_or_null("Resort/Skier") as SkierController
 	if skier != null:
@@ -25,6 +28,20 @@ func _parse_visual_arguments() -> void:
 			feature_isolation_name = argument.trim_prefix("--sunset-feature=")
 		elif argument.begins_with("--capture-path="):
 			capture_path = argument.trim_prefix("--capture-path=")
+		elif argument.begins_with("--profile-snow-quality="):
+			profile_snow_quality = clampi(int(argument.trim_prefix("--profile-snow-quality=")), 0, 1)
+		elif argument.begins_with("--profile-path="):
+			profile_output_path = argument.trim_prefix("--profile-path=")
+
+func _apply_profile_settings() -> void:
+	if profile_snow_quality < 0:
+		return
+	var active := GameSettings.active.duplicate(true)
+	active["snow_quality"] = profile_snow_quality
+	GameSettings.active = active
+	GameSettings.pending = active.duplicate(true)
+	GameSettings.settings_applied.emit()
+	AudioManager.reset_profiling()
 
 func _apply_isolation() -> void:
 	var resort := get_node_or_null("Resort") as Node3D
@@ -170,6 +187,30 @@ func _capture() -> void:
 
 func _finish(exit_code: int) -> void:
 	var average_fps := float(frame_time_samples) / maxf(frame_time_sum, 0.001)
-	print("SUNSET_VISUAL_PERF: average rendered FPS %.1f samples=%d" % [average_fps, frame_time_samples])
+	var average_frame_ms := 1000.0 / maxf(average_fps, 0.001)
+	var render_profile := {
+		"is_headless": OS.has_feature("headless"),
+		"display_server": DisplayServer.get_name(),
+		"snow_quality": profile_snow_quality,
+		"isolation_mode": isolation_mode,
+		"frame_samples": frame_time_samples,
+		"average_rendered_fps": average_fps,
+		"average_frame_ms": average_frame_ms,
+		"objects": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_OBJECTS_IN_FRAME),
+		"primitives": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME),
+		"draw_calls": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
+		"video_memory_bytes": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED),
+		"texture_memory_bytes": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED),
+		"buffer_memory_bytes": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED),
+		"audio": AudioManager.profiling_snapshot(),
+	}
+	var profile_absolute_path := ProjectSettings.globalize_path(profile_output_path)
+	DirAccess.make_dir_recursive_absolute(profile_absolute_path.get_base_dir())
+	var profile_file := FileAccess.open(profile_absolute_path, FileAccess.WRITE)
+	if profile_file != null:
+		profile_file.store_string(JSON.stringify(render_profile, "\t"))
+		profile_file.close()
+	print("SUNSET_VISUAL_PERF: average rendered FPS %.1f frame_ms %.2f samples=%d" % [average_fps, average_frame_ms, frame_time_samples])
+	print("SUNSET_RENDER_PROFILE: %s" % JSON.stringify(render_profile))
 	AudioManager.shutdown_audio()
 	get_tree().quit(exit_code)

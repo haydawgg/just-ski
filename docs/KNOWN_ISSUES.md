@@ -18,7 +18,7 @@ This file tracks unresolved behavior, missing production work, and checks that s
 ## Graphics and performance
 
 - **Snow presentation still needs representative GPU profiling.** Fast and Premium snow compile and run, but near/far detail blending, crystal response, subsurface strength, and production GPU cost need a dedicated profiling pass.
-- **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, and FPS cap. FSR2, HDR, GI-mode selection, reflection-quality controls, and risky-resolution confirmation are not implemented.
+- **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, FPS cap, and a profile-gated GI toggle. FSR2, HDR, reflection-quality controls, and risky-resolution confirmation are not implemented.
 - **The resort is not final production art.** The summit-to-first-landing slice now has authored deterministic terrain shoulders, ridge backdrop, lift-line dressing, and cataloged boulder decorations. The lower run and hub remain graybox-oriented and still need a separate art/LOD pass plus a profiler-driven 1080p High optimization pass.
 
 ## Audio and capture

@@ -8,6 +8,7 @@ func _ready() -> void:
 	var width := 960
 	var height := 540
 	var directory := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
+	var memory_before := _static_memory_bytes()
 	print("DIAG downloads dir: '%s'" % directory)
 	if directory.is_empty():
 		print("DIAG FAIL: no Downloads dir reported")
@@ -26,11 +27,13 @@ func _ready() -> void:
 				var b := 150 + (f % 100)
 				image.fill_rect(Rect2i(x, y, 4, 4), Color8(r, g, b))
 		frames.append(image.save_jpg_to_buffer(0.75))
-	print("DIAG synthetic frames built and JPEG-encoded in %d ms (%d frames)" % [Time.get_ticks_msec() - started, frames.size()])
+	var memory_after_capture := _static_memory_bytes()
+	print("DIAG synthetic frames built and JPEG-encoded in %d ms (%d frames) memory_before=%d memory_after_capture=%d delta=%d" % [Time.get_ticks_msec() - started, frames.size(), memory_before, memory_after_capture, memory_after_capture - memory_before])
 
 	started = Time.get_ticks_msec()
 	var bytes := Mp4Encoder.encode(frames, 30, width, height)
-	print("DIAG mux took %d ms, %d bytes" % [Time.get_ticks_msec() - started, bytes.size()])
+	var memory_after_encode := _static_memory_bytes()
+	print("DIAG mux took %d ms, %d bytes memory_after_encode=%d delta_from_capture=%d" % [Time.get_ticks_msec() - started, bytes.size(), memory_after_encode, memory_after_encode - memory_after_capture])
 	if bytes.is_empty():
 		print("DIAG FAIL: encode produced no bytes")
 		get_tree().quit(1)
@@ -59,3 +62,6 @@ func _ready() -> void:
 		check.close()
 	print("DIAG PASS: wrote %s (%d bytes on disk)" % [path, size])
 	get_tree().quit(0)
+
+func _static_memory_bytes() -> int:
+	return int(Performance.get_monitor(Performance.MEMORY_STATIC))

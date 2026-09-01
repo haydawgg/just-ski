@@ -24,6 +24,9 @@ var last_skid_rumble_ms := 0
 var last_rail_rumble_ms := 0
 var _shutdown_requested := false
 var _headless_audio := false
+var _profile_process_samples := 0
+var _profile_process_total_usec := 0
+var _profile_process_max_usec := 0
 
 func _ready() -> void:
 	# Headless acceptance runs do not have a listener or an audio device. Avoid
@@ -55,6 +58,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if playback == null:
 		return
+	var profile_started_usec := Time.get_ticks_usec()
 	target_speed = lerpf(target_speed, desired_speed, 1.0 - exp(-7.0 * delta))
 	target_skid = lerpf(target_skid, desired_skid, 1.0 - exp(-12.0 * delta))
 	target_rail = lerpf(target_rail, desired_rail, 1.0 - exp(-15.0 * delta))
@@ -88,6 +92,24 @@ func _process(delta: float) -> void:
 		var left := wind_filter_left * wind_amplitude * gust + glide_left * surface_amplitude + edge_sing + rail_tone + pop_tone + impact_noise
 		var right := wind_filter_right * wind_amplitude * gust + glide_right * surface_amplitude - edge_sing + rail_tone + pop_tone + impact_noise
 		playback.push_frame(Vector2(clampf(left * output_gain, -0.9, 0.9), clampf(right * output_gain, -0.9, 0.9)))
+	var process_usec := Time.get_ticks_usec() - profile_started_usec
+	_profile_process_samples += 1
+	_profile_process_total_usec += process_usec
+	_profile_process_max_usec = maxi(_profile_process_max_usec, process_usec)
+
+func reset_profiling() -> void:
+	_profile_process_samples = 0
+	_profile_process_total_usec = 0
+	_profile_process_max_usec = 0
+
+func profiling_snapshot() -> Dictionary:
+	return {
+		"samples": _profile_process_samples,
+		"total_usec": _profile_process_total_usec,
+		"average_usec": float(_profile_process_total_usec) / maxf(float(_profile_process_samples), 1.0),
+		"max_usec": _profile_process_max_usec,
+		"headless": _headless_audio,
+	}
 
 func update_surface_audio(speed: float, skid: float, grinding: bool, surface_kind: int = 0, airborne: bool = false) -> void:
 	desired_speed = speed

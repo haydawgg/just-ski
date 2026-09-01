@@ -11,6 +11,8 @@ $resort = Get-Content -Raw (Join-Path $RepoRoot "world/resort.gd")
 $workflow = Get-Content -Raw (Join-Path $RepoRoot ".github/workflows/quality.yml")
 $runtimeGate = Get-Content -Raw (Join-Path $RepoRoot "tests/runtime_quality_gate.ps1")
 $gitignore = Get-Content -Raw (Join-Path $RepoRoot ".gitignore")
+$baselinePath = Join-Path $RepoRoot "docs/BASELINE.md"
+$controllerValidationPath = Join-Path $RepoRoot "docs/CONTROLLER_VALIDATION.md"
 $failures = [System.Collections.Generic.List[string]]::new()
 
 function Get-ProjectValue([string]$key) {
@@ -57,6 +59,28 @@ if ($runtimeGate -notmatch '\[System\.Environment\]::GetEnvironmentVariable\("GO
 }
 if ($gitignore -notmatch '(?m)^\.godot_logs/$' -or $gitignore -notmatch '(?m)^\.tmp_male_base_mesh/$') {
 	$failures.Add("Generated runtime output and the removed temporary asset directory are not ignored.")
+}
+if (-not (Test-Path -LiteralPath $baselinePath -PathType Leaf)) {
+	$failures.Add("docs/BASELINE.md is missing.")
+}
+else {
+	$baseline = Get-Content -Raw $baselinePath
+	foreach ($requiredBaselineText in @("post-initial-decomposition baseline", "Baseline commit:", "Godot:", "Camera and runtime performance", "Snow/GPU and audio profiling", "Clip capture memory")) {
+		if ($baseline -notmatch [regex]::Escape($requiredBaselineText)) {
+			$failures.Add("docs/BASELINE.md is missing required section/content: $requiredBaselineText")
+		}
+	}
+}
+if (-not (Test-Path -LiteralPath $controllerValidationPath -PathType Leaf)) {
+	$failures.Add("docs/CONTROLLER_VALIDATION.md is missing.")
+}
+else {
+	$controllerValidation = Get-Content -Raw $controllerValidationPath
+	foreach ($requiredControllerText in @("Xbox", "PlayStation", "lowest connected ID", "rumble", "Pending: no physical gamepad was connected")) {
+		if ($controllerValidation -notmatch [regex]::Escape($requiredControllerText)) {
+			$failures.Add("docs/CONTROLLER_VALIDATION.md is missing required hardware-validation coverage: $requiredControllerText")
+		}
+	}
 }
 
 if ($failures.Count -gt 0) {
