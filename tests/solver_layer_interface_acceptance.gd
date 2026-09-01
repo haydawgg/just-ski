@@ -18,6 +18,11 @@ func _ready() -> void:
 	get_tree().quit(1)
 
 func _test_motion_interfaces() -> void:
+	var probe_offsets := PHYSICS_PROFILE.contact_probe_offsets()
+	if probe_offsets.size() != 4 or probe_offsets[0] != PHYSICS_PROFILE.left_front_probe_offset or probe_offsets[3] != PHYSICS_PROFILE.right_rear_probe_offset:
+		failures.append("Physics profile did not expose the four configured ski contact probes")
+	if PHYSICS_PROFILE.ground_probe_distance <= PHYSICS_PROFILE.ground_probe_reach or PHYSICS_PROFILE.ground_probe_origin_height <= 0.0:
+		failures.append("Physics profile contact probe dimensions were not valid")
 	var ground := GroundMotionSolver.new()
 	var grounded := ground.resolve_contact(true, 0.0, 1.0 / 60.0, PHYSICS_PROFILE.coyote_time)
 	if grounded.should_enter_air or grounded.coyote_remaining <= 0.0:

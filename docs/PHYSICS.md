@@ -17,7 +17,7 @@ Normal transitions are Ground → Air on pop or lost support, Air → Ground on 
 
 ## Contact and collision
 
-Snow contact is sampled at four logical ski positions. The solver produces average support data for gameplay and left/right contact data for presentation. Contact follows terrain orientation rather than the skier's visual body orientation.
+Snow contact is sampled at four logical ski positions. Their front/rear and left/right offsets, probe distance, and probe-origin height are data in the active `SkiPhysicsProfile`; the solver retains a compatibility default for direct callers without a profile. The solver produces average support data for gameplay and left/right contact data for presentation. Contact follows terrain orientation rather than the skier's visual body orientation.
 
 The player uses a `CharacterBody3D` collision body. Terrain and solid features remain physical collision surfaces. Rails use spline capture for grind travel rather than relying on the player capsule to balance on rail geometry.
 

@@ -10,6 +10,8 @@ const NORMAL_DISAGREEMENT_SOFT := 0.08
 const NORMAL_DISAGREEMENT_HARD := 0.5
 const DISTANCE_DISCONTINUITY_SOFT := 0.12
 const DISTANCE_DISCONTINUITY_HARD := 0.5
+## Fallback for direct solver callers that do not have a physics profile. The
+## production controller supplies the same geometry from SkiPhysicsProfile.
 const PROBE_OFFSETS := [
 	Vector3(-0.34, 0.0, -0.72),
 	Vector3(-0.34, 0.0, 0.72),
@@ -57,8 +59,16 @@ var right_rear_normal := Vector3.UP
 var _left_had_contact := false
 var _right_had_contact := false
 
-func sample(body: CharacterBody3D, distance: float = 1.45, band: float = 0.5) -> void:
+func sample(
+	body: CharacterBody3D,
+	distance: float = 1.45,
+	band: float = 0.5,
+	probe_offsets: Array[Vector3] = [],
+	probe_origin_height: float = 0.35
+) -> void:
 	grounded_band = maxf(band, 0.05)
+	var active_probe_offsets := PROBE_OFFSETS if probe_offsets.is_empty() else probe_offsets
+	var safe_probe_origin_height := maxf(probe_origin_height, 0.0)
 	var previous_left_distance := left_distance
 	var previous_right_distance := right_distance
 	var previous_left_normal := left_normal
@@ -112,9 +122,9 @@ func sample(body: CharacterBody3D, distance: float = 1.45, band: float = 0.5) ->
 	left_rear_normal = average_normal
 	right_front_normal = average_normal
 	right_rear_normal = average_normal
-	for local_offset: Vector3 in PROBE_OFFSETS:
+	for local_offset: Vector3 in active_probe_offsets:
 		var planar_offset := body.global_basis * Vector3(local_offset.x, 0.0, local_offset.z)
-		var origin := body.global_position + planar_offset - down * 0.35
+		var origin := body.global_position + planar_offset - down * safe_probe_origin_height
 		var target := origin + down * distance
 		var query := PhysicsRayQueryParameters3D.create(origin, target, TERRAIN_MASK)
 		query.exclude = [body.get_rid()]
@@ -190,7 +200,7 @@ func sample(body: CharacterBody3D, distance: float = 1.45, band: float = 0.5) ->
 		right_normal = right_normal_sum.normalized()
 		right_hit_position = right_position_sum / float(right_hits)
 		right_grounded = right_distance <= grounded_band
-	confidence = float(hit_points.size()) / float(PROBE_OFFSETS.size())
+	confidence = float(hit_points.size()) / maxf(float(active_probe_offsets.size()), 1.0)
 	grounded = confidence >= 0.5 and average_distance <= grounded_band
 	left_contact_confidence = _side_contact_confidence(
 		left_front_valid, left_rear_valid,

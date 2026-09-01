@@ -165,7 +165,13 @@ func _physics_process(delta: float) -> void:
 	last_collision_diagnostics.clear()
 	last_collision_colliders.clear()
 	last_speed_discontinuity = {}
-	contact.sample(self, 1.45, profile.ground_probe_reach)
+	contact.sample(
+		self,
+		profile.ground_probe_distance,
+		profile.ground_probe_reach,
+		profile.contact_probe_offsets(),
+		profile.ground_probe_origin_height
+	)
 	contact.merge_capsule_floor(is_on_floor(), get_floor_normal())
 	_sample_trick_input(delta)
 	match state:
@@ -221,12 +227,12 @@ func _update_ground(delta: float) -> void:
 	# forward-up component that rides the step instead of dead-stopping on it.
 	# One-sided only; the capsule enforces the hard floor and
 	# _suppress_into_slope_bounce damps the approach so this cannot pogo.
-	# Probe rays start 0.35 m above the body origin (see SkiContactSolver).
+	# Probe rays start at the profile-defined height above the body origin.
 	if contact.grounded and contact.hit_points.size() > 0:
-		var seat_distance := 0.35 + profile.ground_attach_height
+		var seat_distance := profile.ground_probe_origin_height + profile.ground_attach_height
 		var attach_gap := contact.average_distance - seat_distance
 		if attach_gap > 0.0:
-			var probe_origin := global_position + normal * 0.35
+			var probe_origin := global_position + normal * profile.ground_probe_origin_height
 			var seat_direction := (contact.average_hit_position - probe_origin).normalized()
 			velocity += seat_direction * minf(attach_gap * profile.ground_attach_stiffness, profile.ground_attach_max_accel) * delta
 	var fall_line := contact.downhill()

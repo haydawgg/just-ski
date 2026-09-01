@@ -35,11 +35,25 @@ extends Resource
 @export var maximum_speed: float = 38.0
 
 @export_category("Ground Contact")
+@export var ground_probe_distance: float = 1.45
 @export var ground_probe_reach: float = 1.15
+@export var ground_probe_origin_height: float = 0.35
+@export var left_front_probe_offset: Vector3 = Vector3(-0.34, 0.0, -0.72)
+@export var left_rear_probe_offset: Vector3 = Vector3(-0.34, 0.0, 0.72)
+@export var right_front_probe_offset: Vector3 = Vector3(0.34, 0.0, -0.72)
+@export var right_rear_probe_offset: Vector3 = Vector3(0.34, 0.0, 0.72)
 @export var ground_attach_height: float = 0.19
 @export var ground_attach_stiffness: float = 55.0
 @export var ground_attach_max_accel: float = 24.0
 @export var seat_approach_speed: float = 2.0
+
+func contact_probe_offsets() -> Array[Vector3]:
+	return [
+		left_front_probe_offset,
+		left_rear_probe_offset,
+		right_front_probe_offset,
+		right_rear_probe_offset,
+	]
 
 @export_category("Surface Response")
 @export var powder_drag_multiplier: float = 1.32
