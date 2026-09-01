@@ -14,7 +14,11 @@ permissions:
 jobs:
   quality:
     runs-on: windows-2025
-    timeout-minutes: 45
+    # The complete scene list is intentionally sequential. The physics
+    # benchmark simulates several dozen seconds of gameplay in real time;
+    # leave room for the full clean-checkout suite without weakening any
+    # per-scene timeout or acceptance assertion.
+    timeout-minutes: 120
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -65,7 +69,7 @@ jobs:
           & .\tests\quality_gate.ps1 -RepoRoot $PWD -GodotPath $env:GODOT_PATH -UserDataRoot $userData -LogDirectory $logs -CaptureDirectory $captures
 
       - name: Upload runtime logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: runtime-quality-logs
