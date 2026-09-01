@@ -40,6 +40,40 @@ Known plan gaps:
 - The initial CPU/GPU/query profiling pass has not been documented.
 - Animation, camera, and skier decomposition started before the baseline was established.
 
+## Current implementation status — 2026-09-01
+
+The following slices have since landed on `master` and passed the local full
+Quality Gate from isolated temporary Godot user directories:
+
+- M1.1 CI/runtime stabilization: explicit `GODOT_PATH` resolution, pinned
+  Godot 4.7.2 download/checksum, cache, timeout-safe process-tree cleanup,
+  stdout/stderr preservation, and failure captures are implemented in
+  `tests/runtime_quality_gate.ps1` and `.github/workflows/quality.yml`.
+- M1.2 GI settings, profile/preset/user gating, staged UI, persistence error
+  reporting, and acceptance coverage are implemented.
+- M1.4 repository hygiene, M1.5's post-initial-decomposition baseline, and
+  M1.6's initial CPU/GPU/query/audio/world/rail/memory profiling are recorded
+  in the repository.
+- M2 initial animation, camera, and skier `RefCounted` layer/solver seams are
+  present, with direct interface tests and coordinator integration coverage.
+- M3.1 contact-probe geometry and M3.2 landing evaluation weights are
+  profile-driven. M3.3 has a deterministic editor preview baker documented in
+  `docs/WORLD_AUTHORING.md`.
+- M4.2 clip capture now preserves elapsed 30 Hz slots through deterministic
+  duplicate-frame compensation and streams MP4 samples to disk. Sustained
+  drops and streaming output are acceptance-tested; the measured diagnostic
+  is in `docs/CLIP_CAPTURE.md`.
+- M4.3 has a maintained Windows export preset and documented build/smoke-test
+  procedure. A project-level distribution license remains intentionally
+  undecided.
+
+Remaining external or gate-dependent work is explicit: the pushed commit
+`2a71dcb` still needs its hosted Quality Gate result recorded and the `master`
+branch check configured as required; physical Xbox/PlayStation/multi-device
+validation remains pending as documented in `docs/CONTROLLER_VALIDATION.md`;
+and the project license requires the owner's distribution decision. These are
+not inferred from headless tests.
+
 ---
 
 # Milestone 1 — Finish stabilization before more refactors
