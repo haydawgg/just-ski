@@ -30,6 +30,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	for step: float in [1.0 / 30.0, 1.0 / 60.0, 1.0 / 120.0]:
 		_run_airborne_composition_reproduction(step)
+		_run_soft_inner_convergence_reproduction(step)
 		_run_high_speed_chase_reproduction(step)
 		_run_screen_space_continuity_reproduction(step)
 		_run_ground_to_air_transition_reproduction(step)
@@ -120,15 +121,80 @@ func _run_airborne_composition_reproduction(step: float) -> void:
 
 	if landing_frames > 0:
 		var ratio := float(landing_visible_frames) / float(landing_frames)
-		if ratio < 0.95:
-			# Downgraded to quality target: warn below 95%, fail only below hard floor 75% sustained.
-			if ratio < 0.75:
-				failures.append("Predicted landing was inside its descent visibility window for only %d/%d (%.1f%%) below hard floor 75%%" % [landing_visible_frames, landing_frames, ratio*100.0])
+		var target := camera_rig.landing_visibility_target
+		var hard_floor := camera_rig.landing_visibility_hard_floor
+		if ratio < target:
+			if ratio < hard_floor:
+				failures.append("Predicted landing was inside its descent visibility window for only %d/%d (%.1f%%) below hard floor %.0f%%" % [landing_visible_frames, landing_frames, ratio*100.0, hard_floor*100.0])
 			else:
-				print("CAMERA_VIEWPORT_WARN: landing visibility %.1f%% (%d/%d) below 95%% target but above 75%% floor at %.0f Hz" % [ratio*100.0, landing_visible_frames, landing_frames, 1.0/step])
+				print("CAMERA_VIEWPORT_WARN: landing visibility %.1f%% (%d/%d) below %.0f%% target but above %.0f%% floor at %.0f Hz" % [ratio*100.0, landing_visible_frames, landing_frames, target*100.0, hard_floor*100.0, 1.0/step])
 	if not recovery_seen:
 		failures.append("Airborne composition never exposed edge-recovery telemetry")
 
+	_remove_target_and_camera(skier, camera_rig)
+
+func _run_soft_inner_convergence_reproduction(step: float) -> void:
+	# Static lateral offset outside inner rect — tests that 8 m/s soft recovery actually converges (windowed, not monotonic).
+	var skier := SkierController.new()
+	skier.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(skier)
+	skier.state = SkierController.State.AIR
+	skier.global_position = Vector3(0.0, 1.2, 0.0)
+	skier.velocity = Vector3(0.0, 0.0, -12.0)
+	var camera_rig := SkiCameraController.new()
+	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(camera_rig)
+	camera_rig.set_target(skier)
+	# Let grace expire
+	for i: int in ceili(0.25 / step):
+		camera_rig._physics_process(step)
+	# Offset skier laterally to place bounds just outside inner rect (hard still valid)
+	var base_skier_pos := Vector3(2.2, 1.2, -3.0)
+	skier.global_position = base_skier_pos
+	skier.velocity = Vector3(0.0, 0.0, -12.0)
+	skier.predicted_landing_valid = false
+	var initial_bounds := _projected_landmark_bounds(camera_rig, skier)
+	var initial_violation := _rect_violation(initial_bounds, INNER_SAFE_RECT)
+	if initial_violation < 0.01:
+		# Nudge further if still inside due to framing — ensure we start outside inner but inside hard
+		skier.global_position = Vector3(2.8, 1.2, -3.0)
+		initial_bounds = _projected_landmark_bounds(camera_rig, skier)
+		initial_violation = _rect_violation(initial_bounds, INNER_SAFE_RECT)
+	if initial_violation < 0.005:
+		skier.global_position = Vector3(3.4, 1.2, -3.0)
+		initial_bounds = _projected_landmark_bounds(camera_rig, skier)
+		initial_violation = _rect_violation(initial_bounds, INNER_SAFE_RECT)
+	if initial_violation < 0.005:
+		failures.append("Soft convergence setup did not place skier outside inner rect at %.0f Hz (violation %.4f) bounds %s" % [1.0/step, initial_violation, str(initial_bounds)])
+		_remove_target_and_camera(skier, camera_rig)
+		return
+	# Warmup one frame to capture initial
+	camera_rig._physics_process(step)
+	initial_bounds = _projected_landmark_bounds(camera_rig, skier)
+	initial_violation = _rect_violation(initial_bounds, INNER_SAFE_RECT)
+	var max_relative_per_frame := camera_rig.composition_comfortable_correction_speed * step + 0.05
+	var prev_cam := camera_rig.global_position
+	var prev_skier := skier.global_position
+	var converged := false
+	for frame: int in ceili(0.75 / step):
+		# Keep skier static — only camera should move
+		camera_rig._physics_process(step)
+		var cam_pos := camera_rig.global_position
+		var rel := (cam_pos - prev_cam - (skier.global_position - prev_skier)).length()
+		if rel > max_relative_per_frame + 0.03:
+			failures.append("Soft convergence %.0f Hz frame %d relative %.3f exceeded 8 m/s cap %.3f" % [1.0/step, frame, rel, max_relative_per_frame])
+			break
+		prev_cam = cam_pos
+		prev_skier = skier.global_position
+		var bounds := _projected_landmark_bounds(camera_rig, skier)
+		var v := _rect_violation(bounds, INNER_SAFE_RECT)
+		if v < 0.02 or v <= initial_violation * 0.5:
+			converged = true
+			break
+	if not converged:
+		var final_bounds := _projected_landmark_bounds(camera_rig, skier)
+		var final_v := _rect_violation(final_bounds, INNER_SAFE_RECT)
+		failures.append("Soft inner-rect recovery did not converge at %.0f Hz: initial %.4f -> final %.4f (need <0.02 or 50%% reduction within 0.75s)" % [1.0/step, initial_violation, final_v])
 	_remove_target_and_camera(skier, camera_rig)
 
 func _run_high_speed_chase_reproduction(step: float) -> void:
@@ -307,8 +373,19 @@ func _validate_camera_exports(camera_rig: SkiCameraController, step: float) -> b
 	if absf(camera_rig.composition_comfortable_correction_speed - 8.0) > 0.01:
 		failures.append("Camera %.0f Hz composition_comfortable_correction_speed %.2f != expected 8.0" % [1.0 / step, camera_rig.composition_comfortable_correction_speed])
 		valid = false
-	if camera_rig.composition_debug_allow_legacy_300 != false:
-		failures.append("Camera %.0f Hz composition_debug_allow_legacy_300 must default to false in production" % [1.0 / step])
+	if absf(camera_rig.hockey_divergence_threshold_degrees - 18.0) > 0.01:
+		failures.append("Camera %.0f Hz hockey_divergence_threshold_degrees %.2f != expected 18.0" % [1.0 / step, camera_rig.hockey_divergence_threshold_degrees])
+		valid = false
+	if absf(camera_rig.landing_visibility_target - 0.95) > 0.001 or absf(camera_rig.landing_visibility_hard_floor - 0.75) > 0.001:
+		failures.append("Camera %.0f Hz landing visibility exports %.3f/%.3f != 0.95/0.75" % [1.0 / step, camera_rig.landing_visibility_target, camera_rig.landing_visibility_hard_floor])
+		valid = false
+	var has_legacy := false
+	for p: Dictionary in camera_rig.get_property_list():
+		if p.name == "composition_debug_allow_legacy_300" or p.name == "composition_recovery_speed":
+			has_legacy = true
+			break
+	if has_legacy:
+		failures.append("Camera %.0f Hz still exports legacy 300 m/s authority" % [1.0 / step])
 		valid = false
 	return valid
 
@@ -462,6 +539,14 @@ func _rect_contains_rect(container: Rect2, value: Rect2) -> bool:
 		and value.position.y >= container.position.y \
 		and value_end.x <= container_end.x \
 		and value_end.y <= container_end.y
+
+func _rect_violation(value: Rect2, container: Rect2) -> float:
+	var value_end := value.position + value.size
+	var container_end := container.position + container.size
+	return maxf(0.0, maxf(
+		maxf(container.position.x - value.position.x, value_end.x - container_end.x),
+		maxf(container.position.y - value.position.y, value_end.y - container_end.y)
+	))
 
 func _remove_target_and_camera(skier: SkierController, camera_rig: SkiCameraController) -> void:
 	remove_child(camera_rig)

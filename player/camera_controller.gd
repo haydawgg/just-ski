@@ -49,6 +49,7 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export var trajectory_heading_speed_threshold := 1.0
 @export var trajectory_heading_full_speed := 4.0
 @export var ground_heading_response := 2.8
+@export var hockey_divergence_threshold_degrees := 18.0
 
 @export_group("Collision Safety")
 @export var collision_clearance := 0.35
@@ -73,14 +74,12 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export var composition_screen_padding := Vector2(0.015, 0.02)
 @export var composition_recovery_response := 12.0
 @export var composition_hard_recovery_response := 24.0
-@export var composition_recovery_speed := 300.0
 @export var composition_shoulder_offset := 2.6
 @export var maximum_fov_change_rate := 24.0
 @export var maximum_body_occlusion_fraction := 0.25
 @export var maximum_landing_occlusion_fraction := 0.40
 @export var maximum_relative_correction_speed := 12.0
 @export var composition_comfortable_correction_speed := 8.0
-@export var composition_debug_allow_legacy_300 := false
 @export_range(0.0, 1.0) var landing_visibility_hard_floor := 0.75
 @export var landing_visibility_target := 0.95
 
@@ -164,6 +163,7 @@ var _landing_timer := 0.0
 var _previous_target_position := Vector3.ZERO
 var _air_entry_time := -100.0
 var _ground_heading_hold_timer := 0.0
+var _previous_planar_speed := 0.0
 var _profile_distance := 0.0
 var _profile_height := 0.0
 var _profile_fov := 0.0
@@ -426,6 +426,7 @@ func reset_immediate() -> void:
 	_previous_target_position = target.global_position
 	_air_entry_time = 0.0 if camera_state == CameraState.AIR else -100.0
 	_ground_heading_hold_timer = 0.0
+	_previous_planar_speed = target.velocity.slide(_filtered_surface_up).length()
 	_composition_initialized = true
 
 func _physics_process(delta: float) -> void:
@@ -493,8 +494,18 @@ func _physics_process(delta: float) -> void:
 			maxf(trajectory_heading_full_speed, trajectory_heading_speed_threshold + 0.01),
 			planar_speed
 		)
-		# Hockey-stop hold: during hard braking preserve previous travel heading.
-		var is_hard_braking := skier != null and skier.braking and skier.brake_amount > 0.25 and planar_speed < 8.0
+		# Hockey-stop hold: trigger on strong brake + decel or divergence, not just low absolute speed.
+		var deceleration_rate := maxf((_previous_planar_speed - planar_speed) / maxf(delta, 0.0001), 0.0)
+		var is_hard_braking := (
+			skier != null
+			and skier.braking
+			and skier.brake_amount > 0.45
+			and (
+				deceleration_rate > 6.0
+				or absf(skier.heading_travel_angle_degrees) > hockey_divergence_threshold_degrees
+				or planar_speed < 12.0
+			)
+		)
 		if is_hard_braking:
 			_ground_heading_hold_timer = 0.4
 			velocity_weight *= 0.15
@@ -666,10 +677,7 @@ func _physics_process(delta: float) -> void:
 		if not is_hard_at_start:
 			desired_cap = composition_comfortable_correction_speed
 	var final_relative_limit := desired_cap * delta
-	if composition_debug_allow_legacy_300 and fast_composition_state and _composition_recovery_active:
-		# Dev-only A/B toggle for the old 300 m/s teleport path — delete after regressions pass.
-		final_relative_limit = composition_recovery_speed * delta
-	elif final_relative_limit > 0.0 and final_relative.length() > final_relative_limit:
+	if final_relative_limit > 0.0 and final_relative.length() > final_relative_limit:
 		final_position = frame_start_position + target_displacement + final_relative.normalized() * final_relative_limit
 	# Composition recovery is allowed to move quickly, but it must not use that
 	# freedom to defeat the independent camera-distance rate limit. Apply the
@@ -685,12 +693,26 @@ func _physics_process(delta: float) -> void:
 		var post_radial := final_position - target.global_position
 		if post_radial.length_squared() > 0.001:
 			final_position = target.global_position + post_radial.normalized() * bounded_post_distance
+	# Feed-forward hold: respect relative cap even when safety must override.
+	# Use frame_start + target_displacement (not raw old world pose) to avoid 1.27 m / 38 m/s jump.
+	var feed_forward_hold := frame_start_position + target_displacement
+	feed_forward_hold = _stabilize_camera_position(feed_forward_hold, up, travel, false)
+	var feed_forward_hold_is_clear := feed_forward_hold.is_finite() and _camera_destination_is_clear(feed_forward_hold)
+	var feed_forward_hold_trace := _trace_camera_candidate(frame_start_position, feed_forward_hold)
+	var feed_forward_hold_blocked := not feed_forward_hold_is_clear or bool(feed_forward_hold_trace.get("hit", false))
+	var feed_forward_hold_distance := feed_forward_hold.distance_to(target.global_position) if feed_forward_hold.is_finite() else INF
+	var feed_forward_hold_up := (feed_forward_hold - target.global_position).dot(up) if feed_forward_hold.is_finite() else -INF
+	var feed_forward_hold_valid := feed_forward_hold.is_finite() and feed_forward_hold_distance >= minimum_camera_distance - 0.001 and feed_forward_hold_distance <= maximum_camera_distance + 0.001 and feed_forward_hold_up >= minimum_camera_up_offset - 0.001 and not feed_forward_hold_blocked
 	var final_offset := final_position - target.global_position
 	if final_offset.length_squared() > 0.001 and final_offset.length() < minimum_camera_distance:
 		# A straight interpolation between two valid radial poses can cross the
 		# minimum-distance sphere when the heading pivots. Hold the prior valid
 		# pose instead of projecting onto the sphere and snapping its direction.
-		final_position = frame_start_position
+		# Prefer feed-forward hold to respect relative motion; fall back to old pose only if hold is unsafe.
+		if feed_forward_hold_valid:
+			final_position = feed_forward_hold
+		else:
+			final_position = frame_start_position
 		final_offset = final_position - target.global_position
 	var final_up_offset := final_offset.dot(up)
 	if final_up_offset < minimum_camera_up_offset and final_offset.length_squared() > 0.001:
@@ -705,9 +727,15 @@ func _physics_process(delta: float) -> void:
 				var bounded_planar_length := sqrt(maxf(final_offset.length_squared() - minimum_camera_up_offset * minimum_camera_up_offset, 0.0))
 				final_position = target.global_position + final_planar.normalized() * bounded_planar_length + up * minimum_camera_up_offset
 			else:
-				final_position = frame_start_position
+				if feed_forward_hold_valid:
+					final_position = feed_forward_hold
+				else:
+					final_position = frame_start_position
 		else:
-			final_position = frame_start_position
+			if feed_forward_hold_valid:
+				final_position = feed_forward_hold
+			else:
+				final_position = frame_start_position
 		final_offset = final_position - target.global_position
 	# Absolute maximum distance must be enforced after all rate limits and
 	# translation clamps. This is the final guard before committing the pose.
@@ -720,7 +748,10 @@ func _physics_process(delta: float) -> void:
 		# Re-check up_offset after max clamp; if violated, fall back.
 		var clamped_up := (final_position - target.global_position).dot(up)
 		if clamped_up < minimum_camera_up_offset - 0.001:
-			final_position = frame_start_position
+			if feed_forward_hold_valid:
+				final_position = feed_forward_hold
+			else:
+				final_position = frame_start_position
 	# Ensure the final translation-capped pose is still above the snow surface.
 	if get_world_3d() != null:
 		_camera_surface_query.from = final_position + up * 8.0
@@ -731,7 +762,10 @@ func _physics_process(delta: float) -> void:
 			var surface_height := (surface_hit.position as Vector3).dot(up)
 			var cand_height := final_position.dot(up)
 			if cand_height < surface_height + surface_clearance:
-				final_position = frame_start_position
+				if feed_forward_hold_valid:
+					final_position = feed_forward_hold
+				else:
+					final_position = frame_start_position
 	# All radial/translation/surface clamps above can change the swept segment.
 	# Revalidate the final segment and destination before committing the pose.
 	var final_trace := _trace_camera_candidate(frame_start_position, final_position)
@@ -744,6 +778,8 @@ func _physics_process(delta: float) -> void:
 			var trace_position := final_trace.get("position", frame_start_position) as Vector3
 			if trace_position.is_finite() and _camera_destination_is_clear(trace_position):
 				final_position = trace_position
+			elif feed_forward_hold_valid:
+				final_position = feed_forward_hold
 			else:
 				final_position = frame_start_position
 	global_position = final_position
@@ -760,6 +796,7 @@ func _physics_process(delta: float) -> void:
 	_last_distance_rate = absf(global_position.distance_to(target.global_position) - frame_distance) / maxf(delta, 0.0001)
 	_previous_target_distance = global_position.distance_to(target.global_position)
 	_previous_target_position = target.global_position
+	_previous_planar_speed = planar_speed
 	_update_composition_telemetry(up, delta)
 	_record_performance_profile_frame(profile_frame_start_usec)
 
@@ -835,13 +872,21 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		# soft preference; recovery is bounded to comfortable speed (8 m/s).
 		# Landing visibility is now a quality metric, not validity — never forces recovery.
 		var grace_active := _air_entry_time >= 0.0 and _air_entry_time < 0.18
-		if grace_active:
+		var inner_violation := float(base_evaluation.get("inner_violation", 0.0))
+		var needs_soft := soft_composition_state and inner_violation > 0.0001
+		if grace_active and needs_soft:
 			# Continuity guarantee: inherit grounded pose for first airborne frames.
 			_composition_recovery_active = false
-		else:
-			_composition_recovery_active = soft_composition_state and float(base_evaluation.get("inner_violation", 0.0)) > 0.0001
+			_composition_valid = true
+			return
+		if not needs_soft:
+			_composition_recovery_active = false
+			_composition_valid = true
+			return
+		# Soft recovery needed and not in grace: generate inner correction below at 8 m/s.
+		_composition_recovery_active = true
 		_composition_valid = true
-		return
+		# Fall through to candidate generation for inner correction.
 	if not soft_composition_state and _composition_hard_valid(base_evaluation):
 		# Preserve the existing ground-camera solution when it already frames the
 		# skier. Re-solving every ground frame can turn a heading pivot into a
