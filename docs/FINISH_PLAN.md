@@ -69,12 +69,15 @@ Quality Gate from isolated temporary Godot user directories:
   procedure. A project-level distribution license remains intentionally
   undecided.
 
-Remaining external or gate-dependent work is explicit: the sharded hosted
-Quality Gate still needs its first green PR result recorded before merging;
-physical Xbox/PlayStation/multi-device validation remains pending as
-documented in `docs/CONTROLLER_VALIDATION.md`; and the project license
-requires the owner's distribution decision. These are not inferred from
-headless tests.
+The sharded hosted Quality Gate passed in PR [#2](https://github.com/haydawgg/just-ski/pull/2)
+and the post-merge `master` run [33564513153](https://github.com/haydawgg/just-ski/actions/runs/33564513153).
+The `quality` check is configured as required on `master` with strict status
+checks and administrator enforcement.
+
+Remaining external work is explicit: physical Xbox/PlayStation/multi-device
+validation remains pending as documented in `docs/CONTROLLER_VALIDATION.md`,
+and the project license requires the owner's distribution decision. These are
+not inferred from headless tests.
 
 ---
 
