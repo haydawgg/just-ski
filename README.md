@@ -105,7 +105,9 @@ Use the runtime quality gate for the full headless acceptance pass:
 .\tests\runtime_quality_gate.ps1
 ```
 
-`tests/runtime_quality_gate.ps1` is the source of truth for the runtime scene list. It launches the maintained acceptance, diagnostic, benchmark, environment, camera, character, animation, gameplay, and capture suites and fails on non-zero exits or emitted engine / shader / script / acceptance errors.
+`tests/runtime_quality_gate.ps1` is the source of truth for the runtime scene list. It launches the maintained acceptance, diagnostic, benchmark, environment, camera, character, animation, gameplay, and capture suites and fails on non-zero exits or emitted engine / shader / script / acceptance errors. It accepts a shard name for CI and prints each scene's elapsed time.
+
+The hosted Quality Gate keeps static checks separate from five parallel runtime shards (`environment-camera`, `physics`, `animation`, `tricks-gameplay`, and `systems-media`). The final `quality` job remains the protected branch status and succeeds only when the static gate, project import preparation, and every runtime shard pass. Each runtime shard uses an isolated temporary Godot user directory and restores a project import cache keyed by the Godot version and source/assets.
 
 Run the complete local gate (static physics, static shaders, and every headless runtime scene) with one command:
 

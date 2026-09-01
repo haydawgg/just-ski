@@ -5,20 +5,36 @@ on:
   pull_request:
 
 concurrency:
-  group: quality-${{ github.workflow }}-${{ github.ref }}
+  # Push and pull_request events for the same branch share a group, so an
+  # equivalent duplicate run cannot consume another full Windows matrix.
+  group: quality-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_ARCHIVE_SHA256: "731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953"
+
 jobs:
-  quality:
+  static:
+    name: static
     runs-on: windows-2025
-    # The complete scene list is intentionally sequential. The physics
-    # benchmark simulates several dozen seconds of gameplay in real time;
-    # leave room for the full clean-checkout suite without weakening any
-    # per-scene timeout or acceptance assertion.
-    timeout-minutes: 120
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run static quality gate
+        shell: pwsh
+        run: |
+          & .\tests\static_quality_gate.ps1 -RepoRoot $PWD
+
+  prepare_runtime:
+    name: prepare-runtime
+    runs-on: windows-2025
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -27,26 +43,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/summit-sessions-godot-cache
-          key: windows-godot-4.7.2-console-731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953
+          key: windows-godot-${{ env.GODOT_VERSION }}-console-${{ env.GODOT_ARCHIVE_SHA256 }}
 
       - name: Download pinned Godot console binary
         shell: pwsh
         run: |
-          $version = '4.7.2'
           $cacheRoot = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-cache'
-          $archive = Join-Path $cacheRoot "Godot_v$version-stable_win64.exe.zip"
-          $url = "https://github.com/godotengine/godot/releases/download/${version}-stable/Godot_v${version}-stable_win64.exe.zip"
+          $archive = Join-Path $cacheRoot "Godot_v$($env:GODOT_VERSION)-stable_win64.exe.zip"
+          $url = "https://github.com/godotengine/godot/releases/download/$($env:GODOT_VERSION)-stable/Godot_v$($env:GODOT_VERSION)-stable_win64.exe.zip"
           New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
           if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
             Invoke-WebRequest -Uri $url -OutFile $archive
           }
-          # The release artifact is pinned by version and the checksum is
-          # verified before it is executed. Update this value only alongside
-          # an intentional Godot version change.
-          $expectedSha256 = '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953'
-          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash
-          if ($actualSha256 -ne $expectedSha256) {
-            throw "Godot archive checksum is not pinned or does not match. Actual: $actualSha256"
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $env:GODOT_ARCHIVE_SHA256) {
+            throw "Godot archive checksum mismatch. Actual: $actualSha256"
           }
           $godotRoot = Join-Path $cacheRoot 'extracted'
           New-Item -ItemType Directory -Path $godotRoot -Force | Out-Null
@@ -60,18 +71,128 @@ jobs:
           }
           "GODOT_PATH=$($godotExecutable.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Run static and runtime quality gate
+      - name: Cache project import state
+        uses: actions/cache@v4
+        with:
+          path: .godot/imported
+          key: windows-godot-${{ env.GODOT_VERSION }}-imported-${{ hashFiles('project.godot', '**/*.gd', '**/*.tscn', '**/*.tres', '**/*.res', '**/*.svg', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.webp', '**/*.glb', '**/*.gltf', '**/*.obj', '**/*.mtl', '**/*.ogg', '**/*.wav') }}
+          restore-keys: |
+            windows-godot-${{ env.GODOT_VERSION }}-imported-
+
+      - name: Import project assets
         shell: pwsh
         run: |
-          $userData = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-user'
-          $logs = Join-Path $env:RUNNER_TEMP 'summit-sessions-runtime-logs'
+          $userData = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-user-prepare'
+          $roaming = Join-Path $userData 'roaming'
+          $local = Join-Path $userData 'local'
+          New-Item -ItemType Directory -Path $roaming -Force | Out-Null
+          New-Item -ItemType Directory -Path $local -Force | Out-Null
+          $env:APPDATA = (Resolve-Path $roaming).Path
+          $env:LOCALAPPDATA = (Resolve-Path $local).Path
+          & $env:GODOT_PATH --headless --audio-driver Dummy --editor --quit --path $PWD
+          if ($LASTEXITCODE -ne 0) {
+            throw "Godot project import failed with exit code $LASTEXITCODE"
+          }
+
+  runtime:
+    name: runtime-${{ matrix.shard }}
+    needs: prepare_runtime
+    if: ${{ needs.prepare_runtime.result == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - environment-camera
+          - physics
+          - animation
+          - tricks-gameplay
+          - systems-media
+    env:
+      RUNTIME_SHARD: ${{ matrix.shard }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Cache pinned Godot binary
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/summit-sessions-godot-cache
+          key: windows-godot-${{ env.GODOT_VERSION }}-console-${{ env.GODOT_ARCHIVE_SHA256 }}
+
+      - name: Download pinned Godot console binary
+        shell: pwsh
+        run: |
+          $cacheRoot = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-cache'
+          $archive = Join-Path $cacheRoot "Godot_v$($env:GODOT_VERSION)-stable_win64.exe.zip"
+          $url = "https://github.com/godotengine/godot/releases/download/$($env:GODOT_VERSION)-stable/Godot_v$($env:GODOT_VERSION)-stable_win64.exe.zip"
+          New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            Invoke-WebRequest -Uri $url -OutFile $archive
+          }
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $env:GODOT_ARCHIVE_SHA256) {
+            throw "Godot archive checksum mismatch. Actual: $actualSha256"
+          }
+          $godotRoot = Join-Path $cacheRoot 'extracted'
+          New-Item -ItemType Directory -Path $godotRoot -Force | Out-Null
+          $godotExecutable = Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse -File | Select-Object -First 1
+          if ($null -eq $godotExecutable) {
+            Expand-Archive -LiteralPath $archive -DestinationPath $godotRoot -Force
+            $godotExecutable = Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse -File | Select-Object -First 1
+          }
+          if ($null -eq $godotExecutable) {
+            throw 'Pinned Godot archive did not contain a console executable.'
+          }
+          "GODOT_PATH=$($godotExecutable.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Restore project import state
+        uses: actions/cache@v4
+        with:
+          path: .godot/imported
+          key: windows-godot-${{ env.GODOT_VERSION }}-imported-${{ hashFiles('project.godot', '**/*.gd', '**/*.tscn', '**/*.tres', '**/*.res', '**/*.svg', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.webp', '**/*.glb', '**/*.gltf', '**/*.obj', '**/*.mtl', '**/*.ogg', '**/*.wav') }}
+          restore-keys: |
+            windows-godot-${{ env.GODOT_VERSION }}-imported-
+
+      - name: Run runtime shard
+        shell: pwsh
+        run: |
+          $userData = Join-Path $env:RUNNER_TEMP ("summit-sessions-godot-user-" + $env:RUNTIME_SHARD)
+          $logs = Join-Path $env:RUNNER_TEMP ("summit-sessions-runtime-logs-" + $env:RUNTIME_SHARD)
           $captures = Join-Path $logs 'captures'
-          & .\tests\quality_gate.ps1 -RepoRoot $PWD -GodotPath $env:GODOT_PATH -UserDataRoot $userData -LogDirectory $logs -CaptureDirectory $captures
+          & .\tests\runtime_quality_gate.ps1 -RepoRoot $PWD -GodotPath $env:GODOT_PATH -UserDataRoot $userData -LogDirectory $logs -CaptureDirectory $captures -Shard $env:RUNTIME_SHARD -TimeoutMilliseconds 120000
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Upload runtime logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runtime-quality-logs
-          path: ${{ runner.temp }}/summit-sessions-runtime-logs
+          name: runtime-quality-logs-${{ matrix.shard }}
+          path: ${{ runner.temp }}/summit-sessions-runtime-logs-${{ matrix.shard }}
           if-no-files-found: warn
+
+  quality:
+    name: quality
+    needs:
+      - static
+      - prepare_runtime
+      - runtime
+    if: ${{ always() }}
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - name: Verify all quality jobs passed
+        shell: pwsh
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          PREPARE_RESULT: ${{ needs.prepare_runtime.result }}
+          RUNTIME_RESULT: ${{ needs.runtime.result }}
+        run: |
+          Write-Output "static=$env:STATIC_RESULT prepare-runtime=$env:PREPARE_RESULT runtime=$env:RUNTIME_RESULT"
+          if ($env:STATIC_RESULT -ne 'success' -or $env:PREPARE_RESULT -ne 'success' -or $env:RUNTIME_RESULT -ne 'success') {
+            throw 'One or more required static/runtime quality jobs did not pass.'
+          }
+          Write-Output 'QUALITY_GATE_PASS: static checks and all five runtime shards passed.'

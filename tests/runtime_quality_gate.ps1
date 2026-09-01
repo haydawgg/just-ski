@@ -4,6 +4,7 @@ param(
 	[string]$UserDataRoot = "",
 	[string]$LogDirectory = "",
 	[string]$CaptureDirectory = "",
+	[string]$Shard = "",
 	[int]$TimeoutMilliseconds = 120000
 )
 
@@ -162,55 +163,90 @@ function Invoke-GodotScene {
 	}
 }
 
-$scenes = @(
-	"res://tests/runtime_smoke.tscn",
-	"res://tests/environment_visual_acceptance.tscn",
-	"res://tests/environment_asset_contract_acceptance.tscn",
-	"res://tests/environment_asset_production_acceptance.tscn",
-	"res://tests/summit_environment_acceptance.tscn",
-	"res://tests/sunset_environment_acceptance.tscn",
-	"res://tests/camera_low_speed_acceptance.tscn",
-	"res://tests/camera_runtime_stability_acceptance.tscn",
-	"res://tests/camera_airborne_viewport_diagnostic.tscn",
-	"res://tests/camera_performance_acceptance.tscn",
-	"res://tests/camera_phase_performance_acceptance.tscn",
-	"res://tests/profiling_acceptance.tscn",
-	"res://tests/clip_recorder_worker_acceptance.tscn",
-	"res://tests/gameplay_acceptance.tscn",
-	"res://tests/physics_benchmark.tscn",
-	"res://tests/physics_collision_acceptance.tscn",
-	"res://tests/settings_acceptance.tscn",
-	"res://tests/input_manager_acceptance.tscn",
-	"res://tests/solver_layer_interface_acceptance.tscn",
-	"res://tests/animation_acceptance.tscn",
-	"res://tests/character_equipment_scale_acceptance.tscn",
-	"res://tests/character_presentation_acceptance.tscn",
-	"res://tests/skeleton_rig_acceptance.tscn",
-	"res://tests/jump_animation_acceptance.tscn",
-	"res://tests/landing_animation_acceptance.tscn",
-	"res://tests/landing_orientation_acceptance.tscn",
-	"res://tests/rail_animation_acceptance.tscn",
-	"res://tests/trick_animation_acceptance.tscn",
-	"res://tests/grab_animation_acceptance.tscn",
-	"res://tests/animation_silhouette_acceptance.tscn",
-	"res://tests/animation_polish_acceptance.tscn",
-	"res://tests/crash_recovery_acceptance.tscn",
-	"res://tests/ski_feel_acceptance.tscn",
-	"res://tests/flick_trick_acceptance.tscn",
-	"res://tests/rotation_intent_acceptance.tscn",
-	"res://tests/trick_residual_acceptance.tscn",
-	"res://tests/trick_rotation_state_acceptance.tscn",
-	"res://tests/air_rotation_integrator_acceptance.tscn",
-	"res://tests/flick_takeoff_release_acceptance.tscn",
-	"res://tests/trick_rotation_benchmark.tscn",
-	"res://tests/flick_gameplay_acceptance.tscn",
-	"res://tests/flick_flip_gameplay_acceptance.tscn",
-	"res://tests/trick_ui_acceptance.tscn",
-	"res://tests/session_flow_acceptance.tscn",
-	"res://tests/ground_hover_probe.tscn",
-	"res://tests/terrain_suspension_course.tscn",
-	"res://tests/mp4_encoder_acceptance.tscn"
-)
+$sceneShards = [ordered]@{
+	"environment-camera" = @(
+		"res://tests/environment_visual_acceptance.tscn",
+		"res://tests/environment_asset_contract_acceptance.tscn",
+		"res://tests/environment_asset_production_acceptance.tscn",
+		"res://tests/summit_environment_acceptance.tscn",
+		"res://tests/sunset_environment_acceptance.tscn",
+		"res://tests/camera_low_speed_acceptance.tscn",
+		"res://tests/camera_runtime_stability_acceptance.tscn",
+		"res://tests/camera_airborne_viewport_diagnostic.tscn",
+		"res://tests/camera_performance_acceptance.tscn",
+		"res://tests/camera_phase_performance_acceptance.tscn"
+	)
+	"physics" = @(
+		"res://tests/physics_benchmark.tscn",
+		"res://tests/physics_collision_acceptance.tscn",
+		"res://tests/ski_feel_acceptance.tscn",
+		"res://tests/ground_hover_probe.tscn",
+		"res://tests/terrain_suspension_course.tscn"
+	)
+	"animation" = @(
+		"res://tests/animation_acceptance.tscn",
+		"res://tests/character_equipment_scale_acceptance.tscn",
+		"res://tests/character_presentation_acceptance.tscn",
+		"res://tests/skeleton_rig_acceptance.tscn",
+		"res://tests/jump_animation_acceptance.tscn",
+		"res://tests/landing_animation_acceptance.tscn",
+		"res://tests/landing_orientation_acceptance.tscn",
+		"res://tests/rail_animation_acceptance.tscn",
+		"res://tests/trick_animation_acceptance.tscn",
+		"res://tests/grab_animation_acceptance.tscn",
+		"res://tests/animation_silhouette_acceptance.tscn",
+		"res://tests/animation_polish_acceptance.tscn",
+		"res://tests/crash_recovery_acceptance.tscn"
+	)
+	"tricks-gameplay" = @(
+		"res://tests/gameplay_acceptance.tscn",
+		"res://tests/flick_trick_acceptance.tscn",
+		"res://tests/rotation_intent_acceptance.tscn",
+		"res://tests/trick_residual_acceptance.tscn",
+		"res://tests/trick_rotation_state_acceptance.tscn",
+		"res://tests/air_rotation_integrator_acceptance.tscn",
+		"res://tests/flick_takeoff_release_acceptance.tscn",
+		"res://tests/trick_rotation_benchmark.tscn",
+		"res://tests/flick_gameplay_acceptance.tscn",
+		"res://tests/flick_flip_gameplay_acceptance.tscn",
+		"res://tests/trick_ui_acceptance.tscn",
+		"res://tests/session_flow_acceptance.tscn"
+	)
+	"systems-media" = @(
+		"res://tests/runtime_smoke.tscn",
+		"res://tests/profiling_acceptance.tscn",
+		"res://tests/clip_recorder_worker_acceptance.tscn",
+		"res://tests/settings_acceptance.tscn",
+		"res://tests/input_manager_acceptance.tscn",
+		"res://tests/solver_layer_interface_acceptance.tscn",
+		"res://tests/mp4_encoder_acceptance.tscn"
+	)
+}
+
+$allScenes = [System.Collections.Generic.List[string]]::new()
+foreach ($shardScenes in $sceneShards.Values) {
+	foreach ($scene in $shardScenes) {
+		[void]$allScenes.Add($scene)
+	}
+}
+$duplicateScenes = @($allScenes | Group-Object | Where-Object { $_.Count -gt 1 })
+if ($duplicateScenes.Count -gt 0) {
+	$duplicateNames = ($duplicateScenes | ForEach-Object { $_.Name }) -join ", "
+	Write-Output "FAIL: runtime scene shard list contains duplicates: $duplicateNames"
+	exit 1
+}
+if (-not [string]::IsNullOrWhiteSpace($Shard)) {
+	if (-not $sceneShards.Contains($Shard)) {
+		Write-Output "FAIL: unknown runtime shard '$Shard'. Expected: $($sceneShards.Keys -join ', ')"
+		exit 1
+	}
+	$scenes = @($sceneShards[$Shard])
+}
+else {
+	$scenes = @($allScenes)
+}
+$shardLabel = if ([string]::IsNullOrWhiteSpace($Shard)) { "all" } else { $Shard }
+Write-Output "RUNTIME_SHARD name=$shardLabel scenes=$($scenes.Count)"
 
 $failures = [System.Collections.Generic.List[string]]::new()
 foreach ($scene in $scenes) {
@@ -218,15 +254,25 @@ foreach ($scene in $scenes) {
 	$safeName = ($scene -replace '^res://', '') -replace '[^A-Za-z0-9_-]', '_'
 	$stdoutPath = Join-Path $LogDirectory ($safeName + ".stdout.log")
 	$stderrPath = Join-Path $LogDirectory ($safeName + ".stderr.log")
+	$sceneTimer = [System.Diagnostics.Stopwatch]::StartNew()
 	$result = Invoke-GodotScene -Executable $godot -WorkingDirectory $RepoRoot -Scene $scene -TimeoutMs $TimeoutMilliseconds -StdoutPath $stdoutPath -StderrPath $stderrPath
+	$sceneTimer.Stop()
 	$exitCode = [int]$result.ExitCode
 	$output = [string]$result.Output
 	Write-Output $output.TrimEnd()
+	$sceneDuration = $sceneTimer.Elapsed.TotalSeconds.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture)
+	$sceneHasError = $output -match '(?m)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:'
 	if ($exitCode -ne 0) {
 		$failures.Add("$scene exited with code $exitCode; logs: $stdoutPath, $stderrPath")
 	}
-	if ($output -match '(?m)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:') {
+	if ($sceneHasError) {
 		$failures.Add("$scene emitted an engine or acceptance error")
+	}
+	if ($exitCode -eq 0 -and -not $sceneHasError) {
+		Write-Output ("PASS {0} — {1}s" -f $scene, $sceneDuration)
+	}
+	else {
+		Write-Output ("FAIL {0} — {1}s (exit {2})" -f $scene, $sceneDuration, $exitCode)
 	}
 	Copy-CaptureArtifacts -SceneName $scene
 }
