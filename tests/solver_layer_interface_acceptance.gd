@@ -117,6 +117,32 @@ func _test_animation_interfaces() -> void:
 	var secondary := SecondaryMotionLayer.new()
 	if secondary.target(0.5, 0.5, 0.5, false) <= 0.0:
 		failures.append("Secondary motion layer did not resolve activity")
+	secondary.reset(Vector3.ZERO, Vector3.ZERO)
+	var secondary_result := secondary.step(
+		frame,
+		1.0 / 60.0,
+		ANIMATION_PROFILE,
+		false,
+		0.1,
+		0.0,
+		0.2,
+		0.4,
+		0.1,
+		0.25,
+		0.2,
+		true,
+		false,
+		0.2,
+		0.1,
+		0.05,
+		0.0,
+		0.0,
+		0.0,
+		Vector3.ZERO,
+		Vector3.ZERO
+	)
+	if secondary_result == null or not secondary_result.torso_follow_through.is_finite() or not secondary_result.left_arm_inertia.is_finite():
+		failures.append("Secondary motion layer did not return a finite typed result")
 
 func _test_camera_interfaces() -> void:
 	var projection := CompositionEvaluator.project_point(Vector3(0.0, 2.0, 5.0), Basis.IDENTITY, 68.0, Vector2(1920.0, 1080.0), Vector3.ZERO)

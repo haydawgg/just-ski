@@ -94,7 +94,6 @@ var _reaction_strength := 0.0
 var _reaction_side := 0.0
 var _current_state := STATE_AIR
 var _previous_state := STATE_AIR
-var _state_transition_weight := 1.0
 var _current_pose_name := "Air Neutral"
 var _current_blend := 0.0
 var _layer_weight := 1.0
@@ -238,34 +237,12 @@ var _rail_exit_anticipation := 0.0
 var _rail_pole_lag := 0.0
 var _rail_balance_last := 0.0
 var _rail_phase_name := "Idle"
-var _secondary_signals_initialized := false
-var _previous_vertical_velocity := 0.0
-var _previous_yaw_rate := 0.0
-var _previous_landing_compression := 0.0
-var _filtered_lateral_accel := 0.0
-var _filtered_vertical_accel := 0.0
-var _filtered_yaw_accel := 0.0
-var _filtered_heading_delta := 0.0
-var _landing_compression_velocity := 0.0
-var _torso_follow_through := Vector3.ZERO
-var _head_stabilization := Vector3.ZERO
-var _left_arm_inertia := Vector3.ZERO
-var _right_arm_inertia := Vector3.ZERO
-var _left_pole_inertia := Vector3.ZERO
-var _right_pole_inertia := Vector3.ZERO
-var _leg_rebound := 0.0
-var _secondary_motion_weight := 0.0
 var _crash_stage_name := "None"
 var _crash_layer_weight := 0.0
 var _crash_handoff_rotations: Dictionary = {}
 var _pre_bail_weight := 0.0
 var _pre_bail_side := 0.0
-var _previous_left_hand_position := Vector3.ZERO
-var _previous_right_hand_position := Vector3.ZERO
-var _previous_left_hand_velocity := Vector3.ZERO
-var _previous_right_hand_velocity := Vector3.ZERO
-var _filtered_left_hand_accel := Vector3.ZERO
-var _filtered_right_hand_accel := Vector3.ZERO
+var _secondary_motion_result = _secondary_motion_layer.result
 
 func _ready() -> void:
 	_build_articulated_rig()
@@ -480,25 +457,25 @@ func debug_snapshot() -> Dictionary:
 		"rail_exit_anticipation": _rail_exit_anticipation,
 		"rail_balance": _rail_balance_last,
 		"rail_phase": _rail_phase_name,
-		"lateral_accel_filtered": _filtered_lateral_accel,
-		"vertical_accel_filtered": _filtered_vertical_accel,
-		"yaw_accel_filtered": _filtered_yaw_accel,
-		"heading_delta_filtered": _filtered_heading_delta,
-		"torso_follow_through": _torso_follow_through,
-		"head_stabilization": _head_stabilization,
-		"left_arm_inertia": _left_arm_inertia,
-		"right_arm_inertia": _right_arm_inertia,
-		"left_pole_inertia": _left_pole_inertia,
-		"right_pole_inertia": _right_pole_inertia,
+		"lateral_accel_filtered": _secondary_motion_result.filtered_lateral_accel,
+		"vertical_accel_filtered": _secondary_motion_result.filtered_vertical_accel,
+		"yaw_accel_filtered": _secondary_motion_result.filtered_yaw_accel,
+		"heading_delta_filtered": _secondary_motion_result.filtered_heading_delta,
+		"torso_follow_through": _secondary_motion_result.torso_follow_through,
+		"head_stabilization": _secondary_motion_result.head_stabilization,
+		"left_arm_inertia": _secondary_motion_result.left_arm_inertia,
+		"right_arm_inertia": _secondary_motion_result.right_arm_inertia,
+		"left_pole_inertia": _secondary_motion_result.left_pole_inertia,
+		"right_pole_inertia": _secondary_motion_result.right_pole_inertia,
 		"canonical_landmarks": pose_driver.canonical_landmarks() if pose_driver != null else {},
 		"silhouette_landmarks": _silhouette_landmarks(),
-		"leg_rebound": _leg_rebound,
-		"secondary_motion_weight": _secondary_motion_weight,
+		"leg_rebound": _secondary_motion_result.leg_rebound,
+		"secondary_motion_weight": _secondary_motion_result.secondary_motion_weight,
 		"crash_stage": _crash_stage_name,
 		"crash_layer_weight": _crash_layer_weight,
 		"pre_bail_weight": _pre_bail_weight,
 		"pre_bail_side": _pre_bail_side,
-		"state_transition_weight": _state_transition_weight,
+		"state_transition_weight": _secondary_motion_result.state_transition_weight,
 	}
 
 func equipment_attachment_snapshot() -> Dictionary:
@@ -547,10 +524,7 @@ func _update_skiing_dynamics(frame: SkierAnimationFrame, delta: float) -> void:
 	_pole_carve = _damp(_pole_carve, _arm_carve, profile.secondary_response, delta)
 
 func _initialize_secondary_motion_state() -> void:
-	_previous_left_hand_position = to_local(left_hand.global_position)
-	_previous_right_hand_position = to_local(right_hand.global_position)
-	_previous_left_hand_velocity = Vector3.ZERO
-	_previous_right_hand_velocity = Vector3.ZERO
+	_secondary_motion_layer.reset(to_local(left_hand.global_position), to_local(right_hand.global_position))
 
 func _cache_air_style_side(frame: SkierAnimationFrame) -> void:
 	if frame.locomotion_state != STATE_AIR or _previous_state == STATE_AIR:
@@ -563,140 +537,31 @@ func _cache_air_style_side(frame: SkierAnimationFrame) -> void:
 		_air_style_side = -1.0 if frame.switch_stance else 1.0
 
 func _update_secondary_motion_signals(frame: SkierAnimationFrame, delta: float) -> void:
-	var safe_delta := maxf(delta, 0.0001)
-	if frame.locomotion_state != _previous_state:
-		_previous_state = frame.locomotion_state
-		_state_transition_weight = 0.0
-	_state_transition_weight = _damp(_state_transition_weight, 1.0, profile.secondary_release_response, delta)
-
-	var bounded_lateral := clampf(
-		frame.lateral_acceleration,
-		-profile.secondary_max_lateral_accel,
-		profile.secondary_max_lateral_accel
-	)
-	var bounded_yaw_rate := clampf(
-		frame.angular_velocity.y,
-		-profile.trick_max_animation_rate,
-		profile.trick_max_animation_rate
-	)
-	var raw_vertical_accel := 0.0
-	var raw_yaw_accel := 0.0
-	if _secondary_signals_initialized:
-		raw_vertical_accel = (frame.vertical_velocity - _previous_vertical_velocity) / safe_delta
-		raw_yaw_accel = (bounded_yaw_rate - _previous_yaw_rate) / safe_delta
-	_landing_compression_velocity = (
-		(_landing_compression - _previous_landing_compression) / safe_delta
-		if _secondary_signals_initialized
-		else 0.0
-	)
-	raw_vertical_accel = clampf(raw_vertical_accel, -profile.secondary_max_vertical_accel, profile.secondary_max_vertical_accel)
-	raw_yaw_accel = clampf(raw_yaw_accel, -profile.secondary_max_yaw_accel, profile.secondary_max_yaw_accel)
-	_filtered_lateral_accel = _damp(_filtered_lateral_accel, bounded_lateral, profile.secondary_signal_response, delta)
-	_filtered_vertical_accel = _damp(_filtered_vertical_accel, raw_vertical_accel, profile.secondary_signal_response, delta)
-	_filtered_yaw_accel = _damp(_filtered_yaw_accel, raw_yaw_accel, profile.secondary_signal_response, delta)
-	_filtered_heading_delta = _damp(
-		_filtered_heading_delta,
-		clampf(frame.heading_velocity_delta, -0.9, 0.9),
-		profile.head_stabilization_response,
-		delta
-	)
-
-	var left_hand_position := to_local(left_hand.global_position)
-	var right_hand_position := to_local(right_hand.global_position)
-	if _secondary_signals_initialized:
-		var left_velocity := (left_hand_position - _previous_left_hand_position) / safe_delta
-		var right_velocity := (right_hand_position - _previous_right_hand_position) / safe_delta
-		var left_accel := (left_velocity - _previous_left_hand_velocity) / safe_delta
-		var right_accel := (right_velocity - _previous_right_hand_velocity) / safe_delta
-		left_accel = _limit_vector(left_accel, profile.secondary_max_vertical_accel)
-		right_accel = _limit_vector(right_accel, profile.secondary_max_vertical_accel)
-		_filtered_left_hand_accel = _damp_vector(_filtered_left_hand_accel, left_accel, profile.secondary_signal_response, delta)
-		_filtered_right_hand_accel = _damp_vector(_filtered_right_hand_accel, right_accel, profile.secondary_signal_response, delta)
-		_previous_left_hand_velocity = left_velocity
-		_previous_right_hand_velocity = right_velocity
-	_previous_left_hand_position = left_hand_position
-	_previous_right_hand_position = right_hand_position
-	_previous_vertical_velocity = frame.vertical_velocity
-	_previous_yaw_rate = bounded_yaw_rate
-	_previous_landing_compression = _landing_compression
-	_secondary_signals_initialized = true
-
-	var acceleration_activity := _secondary_motion_layer.acceleration_activity(
-		_filtered_lateral_accel,
-		_filtered_vertical_accel,
-		_filtered_yaw_accel,
-		profile
-	)
-	var state_activity := _secondary_motion_layer.state_activity(
+	var state_changed := frame.locomotion_state != _previous_state
+	_secondary_motion_layer.step(
+		frame,
+		delta,
+		profile,
+		state_changed,
 		_landing_compression,
 		_rail_entry_compression,
 		_trick_pose_weight,
 		_grab_pose_weight,
-		_crossover_release()
+		_grab_contact_weight,
+		_crossover_release(),
+		_spin_compactness,
+		_grab_compactness,
+		_grab_definition != null and (_grab_definition.hand == GrabDefinition.Hand.LEFT or _grab_definition.hand == GrabDefinition.Hand.BOTH),
+		_grab_definition != null and (_grab_definition.hand == GrabDefinition.Hand.RIGHT or _grab_definition.hand == GrabDefinition.Hand.BOTH),
+		_pelvis_carve,
+		_torso_carve,
+		_arm_carve,
+		_compression_velocity,
+		_spotting_weight,
+		to_local(left_hand.global_position),
+		to_local(right_hand.global_position)
 	)
-	var secondary_target := _secondary_motion_layer.target(
-		acceleration_activity,
-		state_activity,
-		frame.speed_ratio,
-		frame.locomotion_state == STATE_BAIL
-	)
-	_secondary_motion_weight = _damp(_secondary_motion_weight, secondary_target, profile.secondary_signal_response, delta)
-
-	var torso_target := Vector3(
-		-_filtered_vertical_accel * profile.torso_vertical_accel_gain,
-		-_filtered_yaw_accel * profile.torso_yaw_accel_gain,
-		(_pelvis_carve - _torso_carve) * profile.torso_carve_lag_gain
-			- _filtered_lateral_accel * profile.torso_lateral_accel_gain
-	)
-	torso_target *= lerpf(1.0, 0.62, _trick_pose_weight) * _secondary_motion_weight
-	torso_target = _limit_vector_components(torso_target, profile.torso_follow_limit)
-	_torso_follow_through = _damp_vector(_torso_follow_through, torso_target, profile.torso_follow_response, delta)
-	var head_target := -_torso_follow_through * profile.head_stabilization_gain * (1.0 - _spotting_weight * 0.78)
-	_head_stabilization = _damp_vector(_head_stabilization, head_target, profile.head_stabilization_response, delta)
-
-	var compact_arm_scale := lerpf(1.0, 0.48, maxf(_spin_compactness, _grab_compactness * 0.65))
-	var common_arm_target := Vector3(
-		-_filtered_vertical_accel * profile.arm_vertical_accel_gain,
-		-_filtered_yaw_accel * profile.arm_yaw_accel_gain,
-		-_filtered_lateral_accel * profile.arm_lateral_accel_gain
-	) * compact_arm_scale * _secondary_motion_weight
-	var left_arm_target := common_arm_target + Vector3(0.0, 0.0, (_pelvis_carve - _arm_carve) * profile.torso_carve_lag_gain * 0.32)
-	var right_arm_target := common_arm_target + Vector3(0.0, 0.0, (_pelvis_carve - _arm_carve) * profile.torso_carve_lag_gain * 0.24)
-	if _grab_definition != null:
-		var grab_constraint := maxf(_grab_pose_weight * 0.9, _grab_contact_weight)
-		if _grab_definition.hand == GrabDefinition.Hand.LEFT or _grab_definition.hand == GrabDefinition.Hand.BOTH:
-			left_arm_target *= 1.0 - grab_constraint * 0.95
-		if _grab_definition.hand == GrabDefinition.Hand.RIGHT or _grab_definition.hand == GrabDefinition.Hand.BOTH:
-			right_arm_target *= 1.0 - grab_constraint * 0.95
-	left_arm_target = _limit_vector_components(left_arm_target, profile.arm_inertia_limit)
-	right_arm_target = _limit_vector_components(right_arm_target, profile.arm_inertia_limit)
-	_left_arm_inertia = _damp_vector(_left_arm_inertia, left_arm_target, profile.arm_inertia_response, delta)
-	_right_arm_inertia = _damp_vector(_right_arm_inertia, right_arm_target, profile.arm_inertia_response, delta)
-
-	var pole_tightness := lerpf(1.0, 0.58, _spin_compactness)
-	var left_pole_target := Vector3(
-		-_filtered_left_hand_accel.z * profile.pole_hand_accel_gain,
-		-_filtered_yaw_accel * profile.pole_yaw_accel_gain,
-		_filtered_left_hand_accel.x * profile.pole_hand_accel_gain
-	) * pole_tightness * _secondary_motion_weight - _left_arm_inertia * 0.28
-	var right_pole_target := Vector3(
-		-_filtered_right_hand_accel.z * profile.pole_hand_accel_gain,
-		-_filtered_yaw_accel * profile.pole_yaw_accel_gain,
-		_filtered_right_hand_accel.x * profile.pole_hand_accel_gain
-	) * pole_tightness * _secondary_motion_weight - _right_arm_inertia * 0.28
-	left_pole_target = _limit_vector_components(left_pole_target, profile.pole_inertia_limit)
-	right_pole_target = _limit_vector_components(right_pole_target, profile.pole_inertia_limit)
-	var pole_response := profile.pole_inertia_response if left_pole_target.length_squared() + right_pole_target.length_squared() > 0.0002 else profile.pole_release_response
-	_left_pole_inertia = _damp_vector(_left_pole_inertia, left_pole_target, pole_response, delta)
-	_right_pole_inertia = _damp_vector(_right_pole_inertia, right_pole_target, pole_response, delta)
-
-	var rebound_target := clampf(
-		(-_compression_velocity * profile.leg_rebound_gain
-			- _landing_compression_velocity * profile.landing_rebound_gain) * _secondary_motion_weight,
-		-profile.leg_rebound_limit,
-		profile.leg_rebound_limit
-	)
-	_leg_rebound = _damp(_leg_rebound, rebound_target, profile.leg_rebound_response, delta)
+	_previous_state = frame.locomotion_state
 
 func _update_jump_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var grounded := frame.locomotion_state == STATE_GROUND and frame.grounded
@@ -1497,12 +1362,12 @@ func _apply_ground_pose(frame: SkierAnimationFrame) -> void:
 	))
 	_add_rotation(chest, Vector3(
 		-frame.tuck * 0.18,
-		-_torso_carve * profile.chest_counter_yaw - _filtered_heading_delta * profile.chest_travel_alignment,
+		-_torso_carve * profile.chest_counter_yaw - _secondary_motion_result.filtered_heading_delta * profile.chest_travel_alignment,
 		_torso_carve * profile.carve_chest_roll - _terrain_pelvis_roll_amount * 0.22
 	))
 	_add_rotation(head, Vector3(
 		profile.neutral_torso_pitch * 0.62 + _crouch_amount * profile.speed_torso_pitch * 0.72 + frame.tuck * 0.24,
-		_torso_carve * profile.chest_counter_yaw * 0.45 + _filtered_heading_delta * profile.chest_travel_alignment * 0.72,
+		_torso_carve * profile.chest_counter_yaw * 0.45 + _secondary_motion_result.filtered_heading_delta * profile.chest_travel_alignment * 0.72,
 		_torso_carve * profile.carve_head_level - _terrain_pelvis_roll_amount * 0.16
 	))
 	_apply_leg_flex(flex, _leg_carve, leg_load, _left_terrain_flex, _right_terrain_flex)
@@ -2433,9 +2298,9 @@ func _apply_reaction(frame: SkierAnimationFrame, delta: float) -> void:
 
 func _apply_secondary_motion(frame: SkierAnimationFrame) -> void:
 	if frame.locomotion_state != STATE_BAIL:
-		_add_rotation(spine, _torso_follow_through * 0.38)
-		_add_rotation(chest, _torso_follow_through)
-		_add_rotation(head, _head_stabilization)
+		_add_rotation(spine, _secondary_motion_result.torso_follow_through * 0.38)
+		_add_rotation(chest, _secondary_motion_result.torso_follow_through)
+		_add_rotation(head, _secondary_motion_result.head_stabilization)
 		var left_constraint := 1.0
 		var right_constraint := 1.0
 		if _grab_definition != null:
@@ -2444,20 +2309,20 @@ func _apply_secondary_motion(frame: SkierAnimationFrame) -> void:
 				left_constraint = 1.0 - grab_constraint * 0.98
 			if _grab_definition.hand == GrabDefinition.Hand.RIGHT or _grab_definition.hand == GrabDefinition.Hand.BOTH:
 				right_constraint = 1.0 - grab_constraint * 0.98
-		var left_arm_follow := _left_arm_inertia * left_constraint
-		var right_arm_follow := _right_arm_inertia * right_constraint
+		var left_arm_follow: Vector3 = _secondary_motion_result.left_arm_inertia * left_constraint
+		var right_arm_follow: Vector3 = _secondary_motion_result.right_arm_inertia * right_constraint
 		_add_rotation(left_shoulder, left_arm_follow)
 		_add_rotation(right_shoulder, right_arm_follow)
 		_add_rotation(left_elbow, left_arm_follow * 0.34)
 		_add_rotation(right_elbow, right_arm_follow * 0.34)
 		_add_rotation(left_hand, left_arm_follow * profile.hand_inertia_gain)
 		_add_rotation(right_hand, right_arm_follow * profile.hand_inertia_gain)
-		_add_rotation(left_hip, Vector3(-_leg_rebound * 0.22, 0.0, 0.0))
-		_add_rotation(right_hip, Vector3(-_leg_rebound * 0.22, 0.0, 0.0))
-		_add_rotation(left_knee, Vector3(_leg_rebound, 0.0, 0.0))
-		_add_rotation(right_knee, Vector3(_leg_rebound, 0.0, 0.0))
-		_add_rotation(left_boot, Vector3(-_leg_rebound * 0.24, 0.0, 0.0))
-		_add_rotation(right_boot, Vector3(-_leg_rebound * 0.24, 0.0, 0.0))
+		_add_rotation(left_hip, Vector3(-_secondary_motion_result.leg_rebound * 0.22, 0.0, 0.0))
+		_add_rotation(right_hip, Vector3(-_secondary_motion_result.leg_rebound * 0.22, 0.0, 0.0))
+		_add_rotation(left_knee, Vector3(_secondary_motion_result.leg_rebound, 0.0, 0.0))
+		_add_rotation(right_knee, Vector3(_secondary_motion_result.leg_rebound, 0.0, 0.0))
+		_add_rotation(left_boot, Vector3(-_secondary_motion_result.leg_rebound * 0.24, 0.0, 0.0))
+		_add_rotation(right_boot, Vector3(-_secondary_motion_result.leg_rebound * 0.24, 0.0, 0.0))
 	if frame.locomotion_state == STATE_GROUND:
 		var speed_trail := 0.14 + clampf(frame.speed_ratio, 0.0, 1.0) * profile.pole_speed_trail
 		var asymmetry := profile.stance_asymmetry
@@ -2497,8 +2362,8 @@ func _apply_secondary_motion(frame: SkierAnimationFrame) -> void:
 		var asymmetry := profile.stance_asymmetry
 		_add_rotation(left_pole, Vector3(-0.3 - speed_trail - _rail_pole_lag + asymmetry, slide_amount * 0.15, 0.05))
 		_add_rotation(right_pole, Vector3(-0.3 - speed_trail - _rail_pole_lag - asymmetry, slide_amount * 0.15, -0.05))
-	_add_rotation(left_pole, _left_pole_inertia)
-	_add_rotation(right_pole, _right_pole_inertia)
+	_add_rotation(left_pole, _secondary_motion_result.left_pole_inertia)
+	_add_rotation(right_pole, _secondary_motion_result.right_pole_inertia)
 
 func _silhouette_landmarks() -> Dictionary:
 	if rig_adapter != null:
@@ -2751,32 +2616,10 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_rail_balance_last = 0.0
 	_rail_phase_name = "Idle"
 	_previous_state = _current_state
-	_state_transition_weight = 1.0
-	_secondary_signals_initialized = false
-	_previous_vertical_velocity = 0.0
-	_previous_yaw_rate = 0.0
-	_previous_landing_compression = 0.0
-	_filtered_lateral_accel = 0.0
-	_filtered_vertical_accel = 0.0
-	_filtered_yaw_accel = 0.0
-	_filtered_heading_delta = 0.0
-	_landing_compression_velocity = 0.0
-	_torso_follow_through = Vector3.ZERO
-	_head_stabilization = Vector3.ZERO
-	_left_arm_inertia = Vector3.ZERO
-	_right_arm_inertia = Vector3.ZERO
-	_left_pole_inertia = Vector3.ZERO
-	_right_pole_inertia = Vector3.ZERO
-	_leg_rebound = 0.0
-	_secondary_motion_weight = 0.0
 	_crash_stage_name = "None"
 	_crash_layer_weight = 0.0
 	_pre_bail_weight = 0.0
 	_pre_bail_side = 0.0
-	_previous_left_hand_velocity = Vector3.ZERO
-	_previous_right_hand_velocity = Vector3.ZERO
-	_filtered_left_hand_accel = Vector3.ZERO
-	_filtered_right_hand_accel = Vector3.ZERO
 	_reset_targets()
 	if snap_joints:
 		for key: Variant in _rotation_targets:
