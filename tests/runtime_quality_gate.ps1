@@ -103,7 +103,10 @@ function Invoke-GodotScene {
 	$startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 	$startInfo.FileName = $Executable
 	$escapedRoot = $WorkingDirectory.Replace('"', '\"')
-	$startInfo.Arguments = '--headless --path "' + $escapedRoot + '" ' + $Scene
+	# Headless CI must not wait on a runner-provided audio device. The runtime
+	# scenes assert gameplay/rendering behavior; audio timing is profiled in a
+	# separate non-headless diagnostic.
+	$startInfo.Arguments = '--headless --audio-driver Dummy --path "' + $escapedRoot + '" ' + $Scene
 	$startInfo.WorkingDirectory = $WorkingDirectory
 	$startInfo.UseShellExecute = $false
 	$startInfo.CreateNoWindow = $true
