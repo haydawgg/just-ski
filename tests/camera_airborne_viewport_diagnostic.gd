@@ -37,6 +37,7 @@ func _ready() -> void:
 		_run_carve_lookahead_reproduction(step)
 		_run_foreground_occlusion_reproduction(step)
 		_run_respawn_initialization_reproduction(step)
+		_run_hockey_stop_reproduction(step)
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
 		print("CAMERA_VIEWPORT_PASS: airborne composition, landing framing, recovery, rates, and respawn initialization passed")
@@ -134,50 +135,72 @@ func _run_airborne_composition_reproduction(step: float) -> void:
 	_remove_target_and_camera(skier, camera_rig)
 
 func _run_soft_inner_convergence_reproduction(step: float) -> void:
-	# Static lateral offset outside inner rect — tests that 8 m/s soft recovery actually converges (windowed, not monotonic).
+	# Keep skier stationary and deliberately perturb the camera position instead.
+	# This ensures feed-forward (target displacement) does not mask the soft solver.
 	var skier := SkierController.new()
 	skier.process_mode = Node.PROCESS_MODE_DISABLED
 	add_child(skier)
 	skier.state = SkierController.State.AIR
 	skier.global_position = Vector3(0.0, 1.2, 0.0)
 	skier.velocity = Vector3(0.0, 0.0, -12.0)
+	skier.predicted_landing_valid = false
 	var camera_rig := SkiCameraController.new()
 	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
 	add_child(camera_rig)
 	camera_rig.set_target(skier)
-	# Let grace expire
+	# Let grace expire so AIR composition is active
 	for i: int in ceili(0.25 / step):
 		camera_rig._physics_process(step)
-	# Offset skier laterally to place bounds just outside inner rect (hard still valid)
-	var base_skier_pos := Vector3(2.2, 1.2, -3.0)
-	skier.global_position = base_skier_pos
-	skier.velocity = Vector3(0.0, 0.0, -12.0)
-	skier.predicted_landing_valid = false
-	var initial_bounds := _projected_landmark_bounds(camera_rig, skier)
-	var initial_violation := _rect_violation(initial_bounds, INNER_SAFE_RECT)
-	if initial_violation < 0.01:
-		# Nudge further if still inside due to framing — ensure we start outside inner but inside hard
-		skier.global_position = Vector3(2.8, 1.2, -3.0)
-		initial_bounds = _projected_landmark_bounds(camera_rig, skier)
-		initial_violation = _rect_violation(initial_bounds, INNER_SAFE_RECT)
-	if initial_violation < 0.005:
-		skier.global_position = Vector3(3.4, 1.2, -3.0)
-		initial_bounds = _projected_landmark_bounds(camera_rig, skier)
-		initial_violation = _rect_violation(initial_bounds, INNER_SAFE_RECT)
-	if initial_violation < 0.005:
-		failures.append("Soft convergence setup did not place skier outside inner rect at %.0f Hz (violation %.4f) bounds %s" % [1.0/step, initial_violation, str(initial_bounds)])
+	var base_position := camera_rig.global_position
+	var base_basis := camera_rig.global_basis
+	var base_fov := camera_rig.camera.fov
+	var up := Vector3.UP
+	var right := base_basis.x.normalized()
+	var cam_up := base_basis.y.normalized()
+	if right.length_squared() < 0.001:
+		right = Vector3.RIGHT
+	if cam_up.length_squared() < 0.001:
+		cam_up = Vector3.UP
+	var candidates: Array[Vector3] = []
+	for dx: float in [1.0, 1.4, 1.8, 2.2, 2.6]:
+		candidates.append(base_position + right * dx)
+		candidates.append(base_position - right * dx)
+		candidates.append(base_position + cam_up * dx * 0.6)
+		candidates.append(base_position - cam_up * dx * 0.6)
+		candidates.append(base_position + right * dx + cam_up * dx * 0.3)
+		candidates.append(base_position - right * dx + cam_up * dx * 0.3)
+		candidates.append(base_position + right * dx * 0.7 - cam_up * dx * 0.4)
+	var perturbed_position := Vector3.ZERO
+	var initial_violation := 0.0
+	var found := false
+	for cand: Vector3 in candidates:
+		if not cand.is_finite():
+			continue
+		if not camera_rig._camera_destination_is_clear(cand):
+			continue
+		var evaluation := camera_rig._evaluate_composition(cand, base_basis, base_fov, up)
+		var hard_valid: bool = camera_rig._composition_hard_valid(evaluation)
+		var inner_violation := float(evaluation.get("inner_violation", 0.0))
+		if hard_valid and inner_violation > 0.01:
+			perturbed_position = cand
+			initial_violation = inner_violation
+			found = true
+			break
+	if not found:
+		failures.append("Soft convergence setup did not find a camera pose with hard_valid == true and inner_violation > 0.01 at %.0f Hz" % [1.0/step])
 		_remove_target_and_camera(skier, camera_rig)
 		return
-	# Warmup one frame to capture initial
-	camera_rig._physics_process(step)
-	initial_bounds = _projected_landmark_bounds(camera_rig, skier)
-	initial_violation = _rect_violation(initial_bounds, INNER_SAFE_RECT)
+	# Warmup check that perturbed pose indeed starts outside inner but inside hard
+	var perturbed_evaluation := camera_rig._evaluate_composition(perturbed_position, base_basis, base_fov, up)
+	initial_violation = float(perturbed_evaluation.get("inner_violation", 0.0))
+	# Deliberately perturb the camera (keep skier stationary)
+	camera_rig.global_position = perturbed_position
 	var max_relative_per_frame := camera_rig.composition_comfortable_correction_speed * step + 0.05
 	var prev_cam := camera_rig.global_position
 	var prev_skier := skier.global_position
 	var converged := false
+	var recovery_seen := false
 	for frame: int in ceili(0.75 / step):
-		# Keep skier static — only camera should move
 		camera_rig._physics_process(step)
 		var cam_pos := camera_rig.global_position
 		var rel := (cam_pos - prev_cam - (skier.global_position - prev_skier)).length()
@@ -186,14 +209,19 @@ func _run_soft_inner_convergence_reproduction(step: float) -> void:
 			break
 		prev_cam = cam_pos
 		prev_skier = skier.global_position
-		var bounds := _projected_landmark_bounds(camera_rig, skier)
-		var v := _rect_violation(bounds, INNER_SAFE_RECT)
-		if v < 0.02 or v <= initial_violation * 0.5:
+		var snapshot := camera_rig.debug_snapshot()
+		if bool(snapshot.get("composition_recovery_active", false)):
+			recovery_seen = true
+		var cur_evaluation := camera_rig._evaluate_composition(camera_rig.global_position, camera_rig.global_basis, camera_rig.camera.fov, up)
+		var cur_inner := float(cur_evaluation.get("inner_violation", 0.0))
+		if cur_inner < 0.02 or cur_inner <= initial_violation * 0.50:
 			converged = true
 			break
-	if not converged:
-		var final_bounds := _projected_landmark_bounds(camera_rig, skier)
-		var final_v := _rect_violation(final_bounds, INNER_SAFE_RECT)
+	if not recovery_seen:
+		failures.append("Soft convergence %.0f Hz never activated composition_recovery_active at inner_violation %.4f" % [1.0/step, initial_violation])
+	elif not converged:
+		var final_evaluation := camera_rig._evaluate_composition(camera_rig.global_position, camera_rig.global_basis, camera_rig.camera.fov, up)
+		var final_v := float(final_evaluation.get("inner_violation", 0.0))
 		failures.append("Soft inner-rect recovery did not converge at %.0f Hz: initial %.4f -> final %.4f (need <0.02 or 50%% reduction within 0.75s)" % [1.0/step, initial_violation, final_v])
 	_remove_target_and_camera(skier, camera_rig)
 
@@ -504,6 +532,94 @@ func _run_respawn_initialization_reproduction(step: float) -> void:
 		failures.append("Respawn first frame placed skier bounds %s outside hard safe rect" % bounds)
 
 	_remove_target_and_camera(skier, camera_rig)
+
+func _run_hockey_stop_reproduction(step: float) -> void:
+	var floor := StaticBody3D.new()
+	floor.collision_layer = 1
+	floor.collision_mask = 0
+	var floor_shape := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(80.0, 0.5, 80.0)
+	floor_shape.shape = floor_box
+	floor.add_child(floor_shape)
+	floor.position.y = -0.25
+	add_child(floor)
+	var skier := SkierController.new()
+	skier.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(skier)
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_position = Vector3.ZERO
+	skier.velocity = Vector3(0.0, 0.0, -25.0)
+	skier.braking = false
+	skier.brake_amount = 0.0
+	skier.heading_travel_angle_degrees = 0.0
+	var camera_rig := SkiCameraController.new()
+	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(camera_rig)
+	camera_rig.set_target(skier)
+	# Settle at 25 m/s
+	for i: int in ceili(0.5 / step):
+		skier.global_position += Vector3(0.0, 0.0, -25.0 * step)
+		camera_rig._physics_process(step)
+	var prev_cam := camera_rig.global_position
+	var prev_skier := skier.global_position
+	var prev_yaw := float(camera_rig.debug_snapshot().get("actual_yaw_degrees", 0.0))
+	var prev_center := _projected_landmark_bounds(camera_rig, skier).get_center()
+	var hockey_hold_seen := false
+	var max_yaw_step := 0.0
+	var max_rel := 0.0
+	var frames := ceili(1.2 / step)
+	for frame_index: int in frames:
+		var t := float(frame_index) * step
+		var brake_prog := clampf(t / 0.30, 0.0, 1.0)
+		var speed := 25.0 - clampf(t / 0.60, 0.0, 1.0) * 20.0
+		if t > 0.60:
+			speed = 5.0
+		var divergence := clampf(t / 0.60, 0.0, 1.0) * 35.0
+		skier.brake_amount = brake_prog
+		skier.braking = brake_prog > 0.01
+		skier.heading_travel_angle_degrees = divergence
+		var downhill := Vector3(0.0, 0.0, -1.0)
+		skier.velocity = downhill * speed
+		skier.global_basis = Basis(Vector3.UP, deg_to_rad(divergence))
+		skier.global_position += skier.velocity * step
+		var prev_pos := camera_rig.global_position
+		var prev_sk := prev_skier
+		camera_rig._physics_process(step)
+		var pos := camera_rig.global_position
+		var yaw := float(camera_rig.debug_snapshot().get("actual_yaw_degrees", 0.0))
+		var yaw_step := absf(rad_to_deg(angle_difference(deg_to_rad(prev_yaw), deg_to_rad(yaw))))
+		max_yaw_step = maxf(max_yaw_step, yaw_step)
+		var yaw_limit := camera_rig.maximum_camera_yaw_rate_degrees * step + 0.06
+		if yaw_step > yaw_limit + 0.01:
+			failures.append("Hockey-stop %.0f Hz frame %d yaw step %.3f exceeded 90 deg/s limit %.3f" % [1.0/step, frame_index, yaw_step, yaw_limit])
+			break
+		var rel := (pos - prev_pos - (skier.global_position - prev_sk)).length()
+		max_rel = maxf(max_rel, rel)
+		var rel_limit := camera_rig.maximum_relative_correction_speed * step + 0.045
+		if rel > rel_limit + 0.001:
+			failures.append("Hockey-stop %.0f Hz frame %d relative correction %.3f exceeded 12 m/s limit %.3f" % [1.0/step, frame_index, rel, rel_limit])
+			break
+		var center := _projected_landmark_bounds(camera_rig, skier).get_center()
+		var screen_delta := (center - prev_center).length()
+		if screen_delta > 0.09:
+			failures.append("Hockey-stop %.0f Hz frame %d screen center jump %.3f exceeded 0.09" % [1.0/step, frame_index, screen_delta])
+			break
+		if camera_rig._ground_heading_hold_timer > 0.0 or (skier.braking and skier.brake_amount > 0.45 and divergence > 18.0):
+			hockey_hold_seen = true
+		prev_yaw = yaw
+		prev_skier = skier.global_position
+		prev_center = center
+	if not hockey_hold_seen:
+		failures.append("Hockey-stop %.0f Hz hold never activated" % [1.0/step])
+	remove_child(camera_rig)
+	camera_rig.free()
+	remove_child(skier)
+	skier.free()
+	remove_child(floor)
+	floor.free()
 
 func _projected_landmark_bounds(camera_rig: SkiCameraController, skier: SkierController) -> Rect2:
 	var bounds := Rect2()

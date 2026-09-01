@@ -50,6 +50,7 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export var trajectory_heading_full_speed := 4.0
 @export var ground_heading_response := 2.8
 @export var hockey_divergence_threshold_degrees := 18.0
+@export var maximum_camera_yaw_rate_degrees := 90.0
 
 @export_group("Collision Safety")
 @export var collision_clearance := 0.35
@@ -171,7 +172,7 @@ var _profile_yaw_scale := 1.0
 var _profile_look_ahead := 0.0
 var _smoothed_heading_weight := 0.0
 var _smoothed_bank := 0.0
-var _last_stable_camera_position := Vector3.ZERO
+var _last_stable_camera_offset := Vector3.ZERO
 var _desired_camera_position := Vector3.ZERO
 var _desired_camera_forward := Vector3.FORWARD
 var _debug_horizontal_velocity := Vector3.ZERO
@@ -358,7 +359,7 @@ func reset_immediate() -> void:
 	_yaw_dir = horizontal.normalized() if horizontal.length_squared() > 0.001 else Vector3.FORWARD
 	_pitch = atan2(-forward.dot(up), maxf(forward.dot(_yaw_dir), 0.0001))
 	global_position = target.global_position - _yaw_dir * follow_distance + up * follow_height
-	_last_stable_camera_position = global_position
+	_last_stable_camera_offset = global_position - target.global_position
 	_desired_camera_position = global_position
 	_debug_horizontal_velocity = target.velocity.slide(up)
 	_debug_facing_forward = _yaw_dir
@@ -624,11 +625,13 @@ func _physics_process(delta: float) -> void:
 	var desired_yaw := desired_forward - up * desired_forward.dot(up)
 	if desired_yaw.length_squared() > 0.001:
 		desired_yaw = desired_yaw.normalized()
-		if _yaw_dir.dot(desired_yaw) < -0.999:
-			_yaw_dir = desired_yaw
-		else:
-			var yaw_rate := lerpf(yaw_rate_slow, yaw_rate_fast, clampf(speed / yaw_speed_reference, 0.0, 1.0)) * _profile_yaw_scale
-			_yaw_dir = _slerp_direction(_yaw_dir, desired_yaw, 1.0 - exp(-yaw_rate * delta))
+		var yaw_rate := lerpf(yaw_rate_slow, yaw_rate_fast, clampf(speed / yaw_speed_reference, 0.0, 1.0)) * _profile_yaw_scale
+		var yaw_weight := 1.0 - exp(-yaw_rate * delta)
+		var desired_angle := _yaw_dir.signed_angle_to(desired_yaw, up)
+		var max_yaw_step := deg_to_rad(maximum_camera_yaw_rate_degrees) * delta
+		if absf(desired_angle) > max_yaw_step and max_yaw_step > 0.0:
+			yaw_weight = minf(yaw_weight, max_yaw_step / maxf(absf(desired_angle), 0.001))
+		_yaw_dir = _slerp_direction(_yaw_dir, desired_yaw, yaw_weight)
 	var desired_pitch := atan2(-desired_forward.dot(up), maxf(desired_forward.dot(_yaw_dir), 0.0001))
 	_pitch = lerpf(_pitch, desired_pitch, 1.0 - exp(-pitch_rate * delta))
 	var bank_target := 0.0
@@ -770,19 +773,31 @@ func _physics_process(delta: float) -> void:
 	# Revalidate the final segment and destination before committing the pose.
 	var final_trace := _trace_camera_candidate(frame_start_position, final_position)
 	if bool(final_trace.get("hit", false)) or not _camera_destination_is_clear(final_position):
-		var held_position := _last_stable_camera_position
-		var held_trace := _trace_camera_candidate(frame_start_position, held_position)
-		if not bool(held_trace.get("hit", false)) and _camera_destination_is_clear(held_position):
-			final_position = held_position
+		var stable_relative_pose := target.global_position + _last_stable_camera_offset
+		stable_relative_pose = _stabilize_camera_position(stable_relative_pose, up, travel, false)
+		var stable_is_clear := stable_relative_pose.is_finite() and _camera_destination_is_clear(stable_relative_pose)
+		var stable_trace := _trace_camera_candidate(frame_start_position, stable_relative_pose)
+		var stable_blocked := not stable_is_clear or bool(stable_trace.get("hit", false))
+		var stable_distance := stable_relative_pose.distance_to(target.global_position) if stable_relative_pose.is_finite() else INF
+		var stable_up := (stable_relative_pose - target.global_position).dot(up) if stable_relative_pose.is_finite() else -INF
+		var stable_relative := stable_relative_pose - (frame_start_position + target_displacement)
+		var stable_relative_limit := maximum_relative_correction_speed * delta + 0.02
+		var stable_valid := stable_is_clear and not stable_blocked and stable_distance >= minimum_camera_distance - 0.001 and stable_distance <= maximum_camera_distance + 0.001 and stable_up >= minimum_camera_up_offset - 0.001 and stable_relative.length() <= stable_relative_limit
+		var trace_position := final_trace.get("position", frame_start_position) as Vector3
+		var trace_is_clear := trace_position.is_finite() and _camera_destination_is_clear(trace_position)
+		var trace_relative := trace_position - (frame_start_position + target_displacement)
+		var trace_valid := trace_is_clear and trace_relative.length() <= stable_relative_limit
+		if feed_forward_hold_valid:
+			final_position = feed_forward_hold
+		elif stable_valid:
+			final_position = stable_relative_pose
+		elif trace_valid:
+			final_position = trace_position
 		else:
-			var trace_position := final_trace.get("position", frame_start_position) as Vector3
-			if trace_position.is_finite() and _camera_destination_is_clear(trace_position):
-				final_position = trace_position
-			elif feed_forward_hold_valid:
-				final_position = feed_forward_hold
-			else:
-				final_position = frame_start_position
+			final_position = frame_start_position
 	global_position = final_position
+	# Authoritative stable state: only the committed final pose updates the offset.
+	_last_stable_camera_offset = global_position - target.global_position
 	# A composition candidate can carry a basis that is correct for its proposed
 	# position but wrong for the final committed position after the clamps above.
 	# Preserve the already-smoothed orientation in that case; otherwise the next
@@ -1469,10 +1484,12 @@ func _avoid_collision(from: Vector3, desired: Vector3, up: Vector3, travel: Vect
 		var candidate_distance := candidate_position.distance_to(target.global_position)
 		if not bool(result.hit) and candidate_distance >= minimum_camera_distance:
 			return candidate_position
-	# Every candidate is occluded. Hold the last valid pose instead of moving
-	# the camera through a feature or snapping into its near side.
+	# Every candidate is occluded. Hold the last valid offset-relative pose instead
+	# of moving the camera through a feature or snapping into its near side.
 	_camera_fallback_count += 1
-	return _last_stable_camera_position
+	if target != null and _last_stable_camera_offset.is_finite():
+		return target.global_position + _last_stable_camera_offset
+	return direct.position
 
 func _measure_camera_clearance(position: Vector3) -> float:
 	if get_world_3d() == null or not position.is_finite():
@@ -1522,11 +1539,13 @@ func _trace_camera_candidate(from: Vector3, desired: Vector3) -> Dictionary:
 	var safe_position := from.lerp(desired, safe_fraction)
 	return {"hit": true, "position": safe_position}
 
-func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3 = Vector3.FORWARD, remember_stable: bool = true) -> Vector3:
+func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3 = Vector3.FORWARD, _remember_stable: bool = false) -> Vector3:
 	if target == null:
 		return candidate
 	if not candidate.is_finite() or not up.is_finite() or up.length_squared() < 0.001:
-		return _last_stable_camera_position
+		if target != null and _last_stable_camera_offset.is_finite():
+			return target.global_position + _last_stable_camera_offset
+		return candidate
 	up = up.normalized()
 	var target_position := target.global_position
 	var offset := candidate - target_position
@@ -1563,7 +1582,7 @@ func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3
 		candidate = target_position + candidate_offset.normalized() * maximum_camera_distance
 	candidate_offset = candidate - target_position
 	if not candidate.is_finite() or candidate_offset.length() < minimum_camera_distance - 0.001 or candidate_offset.dot(up) < minimum_camera_up_offset - 0.001:
-		return _last_stable_camera_position
-	if remember_stable:
-		_last_stable_camera_position = candidate
+		if _last_stable_camera_offset.is_finite():
+			return target_position + _last_stable_camera_offset
+		return candidate
 	return candidate
