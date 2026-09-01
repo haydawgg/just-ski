@@ -211,6 +211,22 @@ foreach ($telemetryKey in @(
 }
 
 Require-Match $profile 'landing_control_penalty_max' "Landing steering softness must remain profile-owned."
+foreach ($landingWeight in @(
+	"landing_alignment_weight",
+	"landing_upright_weight",
+	"landing_impact_weight",
+	"landing_angular_weight",
+	"landing_impact_severity_scale",
+	"landing_impact_body_roll_weight",
+	"landing_flat_surface_bias_weight",
+	"landing_balance_alignment_weight",
+	"landing_balance_upright_weight",
+	"landing_balance_angular_weight",
+	"landing_balance_lateral_weight",
+	"landing_balance_lateral_speed_reference"
+)) {
+	Require-Match $profile $landingWeight "Landing evaluation tuning must remain profile-owned: $landingWeight."
+}
 Require-Match $controller '_begin_landing_control_recovery' "Successful landings must seed severity-scaled control recovery."
 Require-Match $camera 'turn_bank_share' "Camera must retain restrained turn banking."
 Require-Match $camera 'speed_fov_gain\s*:=\s*7\.0' "Camera speed FOV must stay within the approved restrained range."

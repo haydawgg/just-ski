@@ -8,6 +8,7 @@ var maximum_pelvis_delta := 0.0
 var maximum_ski_delta := 0.0
 
 func _ready() -> void:
+	_test_landing_weights_are_profile_data()
 	_test_landing_solver_slope_awareness()
 	_test_landing_solver_failure_reasons()
 	_test_anticipation_before_contact()
@@ -40,6 +41,34 @@ func _ready() -> void:
 	for failure: String in failures:
 		push_error("LANDING_ANIMATION_FAIL: " + failure)
 	get_tree().quit(1)
+
+func _test_landing_weights_are_profile_data() -> void:
+	var default_profile := preload("res://resources/physics/default_ski_profile.tres") as SkiPhysicsProfile
+	var custom_profile := SkiPhysicsProfile.new()
+	var baseline := LandingSolver.evaluate(
+		Vector3.UP,
+		Vector3(0.707, 0.0, -0.707),
+		Vector3.UP,
+		Vector3(0.0, 0.0, -10.0),
+		Vector3.ZERO,
+		default_profile
+	)
+	custom_profile.landing_alignment_weight = 0.0
+	var custom := LandingSolver.evaluate(
+		Vector3.UP,
+		Vector3(0.707, 0.0, -0.707),
+		Vector3.UP,
+		Vector3(0.0, 0.0, -10.0),
+		Vector3.ZERO,
+		custom_profile
+	)
+	if is_equal_approx(float(baseline.score), float(custom.score)):
+		failures.append("Landing score did not consume the profile alignment weight")
+	var severity_baseline := LandingSolver.evaluate(Vector3.UP, Vector3.FORWARD, Vector3.UP, Vector3(0.0, -8.0, 10.0), Vector3.ZERO, default_profile)
+	custom_profile.landing_impact_severity_scale = 0.5
+	var lower_severity := LandingSolver.evaluate(Vector3.UP, Vector3.FORWARD, Vector3.UP, Vector3(0.0, -8.0, 10.0), Vector3.ZERO, custom_profile)
+	if float(lower_severity.impact_severity) >= float(severity_baseline.impact_severity):
+		failures.append("Landing impact severity did not consume the profile severity scale")
 
 func _test_landing_solver_slope_awareness() -> void:
 	var profile := preload("res://resources/physics/default_ski_profile.tres") as SkiPhysicsProfile

@@ -20,7 +20,12 @@ static func evaluate(up: Vector3, forward: Vector3, normal: Vector3, velocity: V
 	var impact_score := 1.0 - clampf(impact / profile.bail_impact_speed, 0.0, 1.0)
 	var angular_ratio := angular_velocity.length() / maxf(profile.maximum_angular_speed, 0.01)
 	var spin_score := 1.0 - clampf(angular_ratio, 0.0, 1.0)
-	var score := aligned_forward * 0.32 + upright * 0.36 + impact_score * 0.22 + spin_score * 0.1
+	var score := (
+		aligned_forward * profile.landing_alignment_weight
+		+ upright * profile.landing_upright_weight
+		+ impact_score * profile.landing_impact_weight
+		+ spin_score * profile.landing_angular_weight
+	)
 	var outcome := Outcome.BAIL
 	var failure_reason := FailureReason.NONE
 	if upright_dot < profile.recoverable_upright_dot:
@@ -46,19 +51,19 @@ static func evaluate(up: Vector3, forward: Vector3, normal: Vector3, velocity: V
 	var body_roll_error := 1.0 - upright
 	var body_pitch_error := clampf(1.0 - absf(safe_forward.dot(projected_forward.normalized() if projected_forward.length_squared() > 0.0001 else travel)), 0.0, 1.0)
 	var flatness := clampf(safe_normal.dot(Vector3.UP), 0.0, 1.0)
-	var flat_bias := smoothstep(0.82, 0.98, flatness) * 0.18
+	var flat_bias := smoothstep(profile.landing_flat_surface_bias_start, profile.landing_flat_surface_bias_end, flatness) * profile.landing_flat_surface_bias_weight
 	var impact_severity := clampf(
-		impact / maxf(profile.bail_impact_speed, 0.01) * 1.25
-		+ body_roll_error * 0.2
+		impact / maxf(profile.bail_impact_speed, 0.01) * profile.landing_impact_severity_scale
+		+ body_roll_error * profile.landing_impact_body_roll_weight
 		+ flat_bias,
 		0.0,
 		1.0
 	)
 	var balance_error := clampf(
-		ski_alignment_error * 0.45
-		+ body_roll_error * 0.3
-		+ clampf(angular_ratio, 0.0, 1.0) * 0.25
-		+ clampf(absf(lateral_velocity) / 8.0, 0.0, 1.0) * 0.2,
+		ski_alignment_error * profile.landing_balance_alignment_weight
+		+ body_roll_error * profile.landing_balance_upright_weight
+		+ clampf(angular_ratio, 0.0, 1.0) * profile.landing_balance_angular_weight
+		+ clampf(absf(lateral_velocity) / maxf(profile.landing_balance_lateral_speed_reference, 0.01), 0.0, 1.0) * profile.landing_balance_lateral_weight,
 		0.0,
 		1.0
 	)
