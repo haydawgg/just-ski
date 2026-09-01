@@ -111,6 +111,8 @@ func _test_tree_block() -> void:
 	var hit := skier.get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		failures.append("Tree trunk was not solid")
+	elif not (hit.get("collider") is CollisionObject3D) or (int((hit.get("collider") as CollisionObject3D).collision_layer) & 4) == 0:
+		failures.append("Tree trunk collision was not authored on the Features layer")
 
 func _test_small_table_geometry() -> void:
 	if jump == null:
@@ -135,8 +137,13 @@ func _test_small_table_geometry() -> void:
 	var concave := shape_node.shape as ConcavePolygonShape3D
 	var collision_aabb := _points_aabb(concave.data)
 	var mesh_aabb := mesh_instance.mesh.get_aabb()
-	if collision_aabb.size.distance_to(mesh_aabb.size) > 0.05 or collision_aabb.position.distance_to(mesh_aabb.position) > 0.05:
-		failures.append("SmallTable Table collision bounds do not match the visible mesh")
+	var render_arrays := (mesh_instance.mesh as ArrayMesh).surface_get_arrays(0)
+	var render_vertices := render_arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+	var missing_render_vertices := _count_vertices_missing_from_shape(render_vertices, concave.data)
+	if missing_render_vertices > 0:
+		failures.append("SmallTable Table collision does not contain %d visible-surface vertices" % missing_render_vertices)
+	if collision_aabb.position.y > mesh_aabb.position.y + 0.05 or collision_aabb.end.y < mesh_aabb.end.y - 0.05:
+		failures.append("SmallTable Table collision no longer covers the visible surface height")
 	if int(table.get_meta("profile_rows", 0)) < 8 or int(table.get_meta("profile_columns", 0)) < 7:
 		failures.append("SmallTable Table does not have enough profile samples for a rounded knuckle and shoulders")
 	if mesh_instance.mesh.get_faces().size() < 120:
@@ -176,6 +183,18 @@ func _points_aabb(points: PackedVector3Array) -> AABB:
 	for point: Vector3 in points:
 		result = result.expand(point)
 	return result
+
+func _count_vertices_missing_from_shape(vertices: PackedVector3Array, shape_data: PackedVector3Array) -> int:
+	var missing := 0
+	for vertex: Vector3 in vertices:
+		var found := false
+		for shape_vertex: Vector3 in shape_data:
+			if vertex.distance_squared_to(shape_vertex) <= 0.000001:
+				found = true
+				break
+		if not found:
+			missing += 1
+	return missing
 
 func _finish() -> void:
 	print(

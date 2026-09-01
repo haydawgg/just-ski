@@ -22,10 +22,24 @@ var impact_envelope := 0.0
 var noise := RandomNumberGenerator.new()
 var last_skid_rumble_ms := 0
 var last_rail_rumble_ms := 0
+var _shutdown_requested := false
+var _headless_audio := false
 
 func _ready() -> void:
+	# Headless acceptance runs do not have a listener or an audio device. Avoid
+	# creating an AudioStreamGeneratorPlayback in that mode: the engine keeps a
+	# short-lived playback reference in the audio server until the process exits,
+	# which otherwise reports a false ObjectDB leak for fast tests.
+	_headless_audio = OS.has_feature("headless") or DisplayServer.get_name().to_lower() == "headless"
+	if _headless_audio:
+		return
 	_ensure_bus("Music")
 	_ensure_bus("SFX")
+	if _shutdown_requested:
+		# A fast headless acceptance scene can request shutdown before this
+		# autoload reaches _ready(). Do not create a generator that will outlive
+		# the scene and trigger an ObjectDB playback leak at process exit.
+		return
 	var generator := AudioStreamGenerator.new()
 	generator.mix_rate = 22050.0
 	generator.buffer_length = 0.22
@@ -100,12 +114,18 @@ func pop_feedback(strength: float) -> void:
 	InputManager.rumble(0.08 * pop_envelope, 0.16 * pop_envelope, 0.07)
 
 func shutdown_audio() -> void:
+	_shutdown_requested = true
 	stop_feedback()
 	if feedback_player != null:
-		feedback_player.stop()
+		# Release our playback reference before tearing down the stream/player so
+		# the generator can drop its internal playback object cleanly.
 		playback = null
+		feedback_player.stop()
 		feedback_player.stream = null
-		feedback_player.queue_free()
+		# Tests and the quit path often shut audio down immediately before the
+		# tree exits. Free synchronously so the generator playback reference is
+		# released before ObjectDB performs its final leak audit.
+		feedback_player.free()
 	feedback_player = null
 
 func landing_feedback(quality: float, impact: float) -> void:

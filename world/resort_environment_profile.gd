@@ -21,8 +21,14 @@ extends Resource
 @export_range(0.1, 4.0, 0.05) var shadow_blur := 1.25
 @export_range(0.0, 5.0, 0.05) var sun_angular_distance := 0.8
 @export_range(0.5, 1.0, 0.01) var shadow_fade_start := 0.72
+@export var fill_light_enabled := false
+@export var fill_light_rotation_degrees := Vector3(-48.0, 132.0, 0.0)
+@export var fill_light_color := Color(0.58, 0.7, 0.92)
+@export_range(0.0, 2.0, 0.01) var fill_light_energy := 0.36
 
 @export_category("Ambient and Tonemapping")
+@export var use_sky_ambient := true
+@export var ambient_color := Color(0.78, 0.84, 0.92)
 @export_range(0.0, 1.0, 0.01) var ambient_sky_contribution := 0.9
 @export_range(0.0, 4.0, 0.01) var ambient_energy := 0.96
 @export_range(0.1, 4.0, 0.01) var exposure := 0.98
@@ -43,7 +49,18 @@ extends Resource
 @export_range(0.0, 1.0, 0.01) var ssao_horizon := 0.08
 @export_range(0.0, 1.0, 0.01) var ssao_light_affect := 0.08
 
+@export_category("Global Illumination")
+@export var gi_enabled := false
+@export_range(0.0, 4.0, 0.01) var gi_energy := 1.0
+@export_range(0.0, 0.5, 0.01) var gi_bounce_feedback := 0.3
+@export_range(1, 8, 1) var gi_cascades := 4
+@export_range(4.0, 64.0, 0.5) var gi_cascade0_distance := 12.8
+@export_range(32.0, 512.0, 1.0) var gi_max_distance := 204.8
+@export var gi_use_occlusion := false
+@export var gi_read_sky_light := true
+
 @export_category("Atmospheric Depth")
+@export var high_haze_enabled := true
 @export var fog_color := Color(0.82, 0.87, 0.91)
 @export_range(0.0, 1.0, 0.01) var fog_sun_scatter := 0.12
 @export_range(0.0, 0.02, 0.0001) var fog_density := 0.0019

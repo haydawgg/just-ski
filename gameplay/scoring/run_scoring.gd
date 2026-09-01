@@ -24,12 +24,13 @@ var landed_trick_count := 0
 var clean_trick_count := 0
 var bail_count := 0
 var finished := false
+var last_combo_break_reason := ""
 
 func step(delta: float, speed: float) -> void:
 	if combo_count > 0:
 		combo_remaining = maxf(0.0, combo_remaining - delta)
 		if combo_remaining <= 0.0:
-			reset_combo()
+			break_combo("timeout")
 	if not last_feature_kind.is_empty():
 		link_remaining = maxf(0.0, link_remaining - delta)
 		if link_remaining <= 0.0 or speed < 2.5:
@@ -76,8 +77,8 @@ func accept_trick(text: String, base_points: int, quality: float) -> void:
 
 func bail() -> void:
 	bail_count += 1
-	reset_combo()
 	reset_link()
+	break_combo("bail")
 
 func finish_run() -> void:
 	if finished:
@@ -99,6 +100,10 @@ func reset_combo() -> void:
 	combo_remaining = 0.0
 	score_changed.emit(snapshot())
 
+func break_combo(reason: String = "manual") -> void:
+	last_combo_break_reason = reason
+	reset_combo()
+
 func reset_run() -> void:
 	total_score = 0
 	best_trick_name = ""
@@ -107,6 +112,7 @@ func reset_run() -> void:
 	clean_trick_count = 0
 	bail_count = 0
 	finished = false
+	last_combo_break_reason = "run_reset"
 	reset_link()
 	reset_combo()
 
@@ -125,5 +131,6 @@ func snapshot() -> Dictionary:
 		"landed_trick_count": landed_trick_count,
 		"clean_trick_count": clean_trick_count,
 		"bail_count": bail_count,
+		"last_combo_break_reason": last_combo_break_reason,
 		"finished": finished,
 	}

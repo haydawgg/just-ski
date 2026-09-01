@@ -4,8 +4,8 @@ signal settings_applied
 
 const CONFIG_PATH := "user://settings.cfg"
 const DEFAULTS := {
-	"display_mode": 0,
-	"resolution": Vector2i(1280, 720),
+	"display_mode": 1,
+	"resolution": Vector2i(1920, 1080),
 	"vsync_mode": 1,
 	"fps_cap": 120,
 	"graphics_preset": 2,

@@ -8,6 +8,7 @@ func _ready() -> void:
 	await _test_failed_landing_emits_crash_only()
 	await _test_feature_collision_thresholds()
 	await _test_bounded_rest_and_recovery()
+	await _test_course_recovery_lifecycle_and_scoring()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
 		print("CRASH_RECOVERY_PASS: guarded entry, momentum, scoring, telemetry, rest, recovery, and respawn cleanup passed")
@@ -41,6 +42,7 @@ func _test_guarded_crash_entry_and_respawn_cleanup() -> void:
 		skier.angular_velocity.length(),
 		0.92
 	)
+	context.attach_collision_diagnostic({"collider": "TestWall", "asset_id": "test_wall", "collider_layer": 4, "normal": Vector3.LEFT, "position": Vector3.ZERO})
 	var first_entry := skier.enter_crash(context)
 	var second_entry := skier.enter_crash(context)
 	var crash_telemetry := skier.telemetry().crash as Dictionary
@@ -58,12 +60,22 @@ func _test_guarded_crash_entry_and_respawn_cleanup() -> void:
 	if str(crash_telemetry.reason) != "LANDING_ANGULAR" or str(crash_telemetry.stage) != "RELEASE":
 		failures.append("Crash telemetry did not expose authoritative reason and stage")
 
+	var emitted_score_snapshot: Dictionary = {}
+	skier.scoring.score_changed.connect(func(snapshot: Dictionary) -> void: emitted_score_snapshot = snapshot)
 	skier.respawn_at(Transform3D(Basis.IDENTITY, Vector3(0.0, 3.0, 0.0)))
 	var respawn_telemetry := skier.telemetry()
 	if bool((respawn_telemetry.crash as Dictionary).active):
 		failures.append("Respawn retained active crash context")
+	var cleared_crash := respawn_telemetry.crash as Dictionary
+	if not str(cleared_crash.get("collision_collider", "")).is_empty() or int(cleared_crash.get("collision_layer", 0)) != 0:
+		failures.append("Respawn retained stale crash collision diagnostics")
+	if float(emitted_score_snapshot.get("link_remaining", 0.0)) > 0.001 or not str(emitted_score_snapshot.get("last_feature_kind", "")).is_empty():
+		failures.append("Respawn score_changed signal exposed stale line-link state")
 	if skier.state != SkierController.State.AIR or skier.velocity.length() > 0.001 or skier.angular_velocity.length() > 0.001:
 		failures.append("Respawn did not restore a clean airborne reset state")
+	var reset_score := skier.scoring.snapshot()
+	if int(reset_score.total_score) != int(score_before.total_score) or int(reset_score.combo_count) != 0 or float(reset_score.link_remaining) > 0.001 or str(reset_score.last_combo_break_reason) != "respawn":
+		failures.append("Respawn did not preserve total score while clearing combo/link state")
 	remove_child(skier)
 	skier.queue_free()
 
@@ -138,15 +150,27 @@ func _test_bounded_rest_and_recovery() -> void:
 	)
 	skier.enter_crash(context)
 	var frames := 0
+	var stages_seen: Dictionary = {}
+	var equipment_failure_reported := false
 	while skier.state == SkierController.State.BAIL and frames < 420:
 		await get_tree().physics_frame
 		frames += 1
+		var crash := skier.telemetry().crash as Dictionary
+		var stage := str(crash.get("stage", "NONE"))
+		stages_seen[stage] = true
+		var equipment := skier.telemetry().crash_equipment as Dictionary
+		if not equipment_failure_reported and (not bool(equipment.get("valid", false)) or not bool(equipment.get("ski_separation_in_range", false)) or not bool(equipment.get("poles_attached", false))):
+			failures.append("Crash equipment lost calibrated attachment during %s stage" % stage)
+			equipment_failure_reported = true
 	if skier.state != SkierController.State.GROUND:
 		failures.append("Low-speed crash did not reach bounded rest and recover")
 	if frames < 20:
 		failures.append("Crash recovered before a readable minimum crash duration")
 	if bool((skier.telemetry().crash as Dictionary).active):
 		failures.append("In-place recovery retained active crash state")
+	for expected_stage: String in ["RELEASE", "IMPACT", "FALL", "REST"]:
+		if not stages_seen.has(expected_stage):
+			failures.append("Crash lifecycle never exposed %s equipment stage" % expected_stage)
 	remove_child(skier)
 	skier.queue_free()
 	remove_child(floor_body)
@@ -212,6 +236,36 @@ func _test_feature_collision_thresholds() -> void:
 	slow_skier.queue_free()
 	remove_child(wall)
 	wall.queue_free()
+
+func _test_course_recovery_lifecycle_and_scoring() -> void:
+	var skier := SkierController.new()
+	skier.set_physics_process(false)
+	add_child(skier)
+	SessionManager.set_default_spawn(Transform3D(Basis.IDENTITY, Vector3(0.0, 6.0, 0.0)))
+	SessionManager.clear_marker()
+	var recovery := CourseRecovery.new()
+	recovery.recovery_delay = 0.0
+	recovery.fade_out_duration = 0.0
+	recovery.fade_in_duration = 0.0
+	add_child(recovery)
+	recovery.set_target(skier)
+	var started := [0]
+	var completed := [0]
+	recovery.recovery_started.connect(func(_reason: String) -> void: started[0] += 1)
+	recovery.recovery_completed.connect(func(_reason: String, _transform: Transform3D) -> void: completed[0] += 1)
+	skier.global_position = Vector3(100.0, 4.0, 0.0)
+	for _frame: int in 8:
+		await get_tree().physics_frame
+	if started[0] != 1 or completed[0] != 1 or recovery.recovery_count != 1:
+		failures.append("Course recovery did not emit exactly one start/completion lifecycle")
+	if recovery.recovery_in_progress or skier.recovery_frozen:
+		failures.append("Course recovery remained frozen after completion")
+	if skier.global_position.distance_to(SessionManager.default_spawn.origin + Vector3.UP * 0.35) > 0.05:
+		failures.append("Course recovery did not return the skier to the authoritative spawn")
+	remove_child(recovery)
+	recovery.queue_free()
+	remove_child(skier)
+	skier.queue_free()
 
 func _make_box_body(body_name: String, layer: int, size: Vector3, body_position: Vector3) -> StaticBody3D:
 	var body := StaticBody3D.new()

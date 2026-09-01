@@ -8,6 +8,13 @@ const ROI_Y_MIN := 0.42
 const ROI_Y_MAX := 0.88
 const MIN_SNOW_VALUE_SPREAD := 0.10
 const MAX_BLUE_SHADOW_COVERAGE := 0.35
+const TRAJECTORY_CAPTURE_FILENAMES := [
+	"gameplay_carve.png",
+	"gameplay_transition.png",
+	"gameplay_speed.png",
+	"gameplay_skid.png",
+	"gameplay_landing.png",
+]
 
 
 func _ready() -> void:
@@ -20,15 +27,13 @@ func _ready() -> void:
 		push_error("SNOW_DEPTH_VISUAL_FAIL: capture directory is unavailable: %s" % capture_directory)
 		call_deferred("_finish", 1)
 		return
-	var filenames: PackedStringArray = []
-	for filename: String in directory.get_files():
-		if filename.get_extension().to_lower() == "png":
-			filenames.append(filename)
-	filenames.sort()
-	if filenames.is_empty():
-		push_error("SNOW_DEPTH_VISUAL_FAIL: no PNG captures found in %s" % capture_directory)
-		call_deferred("_finish", 1)
-		return
+	var filenames: Array[String] = []
+	for filename: String in TRAJECTORY_CAPTURE_FILENAMES:
+		if not directory.file_exists(filename):
+			push_error("SNOW_DEPTH_VISUAL_FAIL: required trajectory capture is missing: %s" % capture_directory.path_join(filename))
+			call_deferred("_finish", 1)
+			return
+		filenames.append(filename)
 	var spread_sum := 0.0
 	var maximum_blue_shadow_coverage := 0.0
 	for filename: String in filenames:

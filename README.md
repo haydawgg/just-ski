@@ -14,6 +14,14 @@ Open `project.godot` in Godot 4.7.2 stable and run the project, or use the bundl
 
 The main scene is `res://world/resort.tscn` and the renderer targets Forward+.
 
+To run the warm-lighting variant, launch the sunset scene directly:
+
+```powershell
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64.exe --path . res://world/sunset_resort.tscn
+```
+
+The sunset profile enables Forward+ SDFGI for the static procedural resort geometry, with lower graphics presets disabling it automatically.
+
 ## Controls
 
 | Action | Controller | Keyboard |
@@ -74,6 +82,14 @@ Use the runtime quality gate for the full headless acceptance pass:
 ```
 
 `tests/runtime_quality_gate.ps1` is the source of truth for the runtime scene list. It launches the maintained acceptance, diagnostic, benchmark, environment, camera, character, animation, gameplay, and capture suites and fails on non-zero exits or emitted engine / shader / script / acceptance errors.
+
+Run the complete local gate (static physics, static shaders, and every headless runtime scene) with one command:
+
+```powershell
+.\tests\quality_gate.ps1
+```
+
+Individual gameplay suites can also be launched during a controlled play/test session:
 
 For a single scene, set the repository-local Godot user folders and launch the desired `.tscn` directly. Example:
 

@@ -56,10 +56,43 @@ func _physics_process(_delta: float) -> void:
 		var marker_material := marker.material_override as StandardMaterial3D
 		if marker_material == null or marker_material.shading_mode != BaseMaterial3D.SHADING_MODE_PER_PIXEL:
 			failures.append("Snow jump guide is not integrated into scene lighting")
-		elif marker_material.albedo_color.a > 0.7 or marker_material.emission_enabled:
-			failures.append("Snow jump guide returned to an opaque or emissive UI-like treatment")
+		elif marker_material.albedo_color.a < 0.98 or marker_material.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED or marker_material.emission_enabled:
+			failures.append("Snow jump guide is still translucent or emissive instead of an opaque surface stamp")
 		if not marker.find_children("*", "CollisionShape3D", true, false).is_empty():
 			failures.append("A presentation-only snow jump marker created collision")
+	var profiled_feature_meshes := 0
+	var profiled_feature_colliders := 0
+	var minimum_feature_texture_weight := INF
+	for body_node: Node in resort.find_children("*", "StaticBody3D", true, false):
+		if not body_node.has_meta("profile_rows"):
+			continue
+		if not bool(body_node.get_meta("render_collision_separated", false)):
+			failures.append("Profiled feature %s does not declare separate render/collision geometry" % body_node.get_path())
+		var profiled_body := body_node as StaticBody3D
+		if profiled_body != null and profiled_body.collision_layer & 1 != 0:
+			if profiled_body.find_children("*", "CollisionShape3D", true, false).is_empty():
+				failures.append("Playable profiled feature %s lost its collision shape" % body_node.get_path())
+			else:
+				profiled_feature_colliders += 1
+		for mesh_node: Node in body_node.find_children("*", "MeshInstance3D", true, false):
+			var mesh_instance := mesh_node as MeshInstance3D
+			if mesh_instance == null:
+				continue
+			profiled_feature_meshes += 1
+			if not bool(mesh_instance.get_meta("render_surface_only", false)):
+				failures.append("Profiled feature %s is missing the render-surface marker" % mesh_instance.get_path())
+			var snow_material := mesh_instance.material_override as ShaderMaterial
+			if snow_material == null or snow_material.shader == null:
+				failures.append("Profiled feature %s has no snow shader material" % mesh_instance.get_path())
+				continue
+			var texture_weight := float(snow_material.get_shader_parameter("albedo_texture_strength"))
+			minimum_feature_texture_weight = minf(minimum_feature_texture_weight, texture_weight)
+	if profiled_feature_meshes == 0:
+		failures.append("No profiled feature meshes were available for texture coverage validation")
+	elif minimum_feature_texture_weight < 0.25:
+		failures.append("Profiled feature albedo texture blend is only %.3f; jump surfaces remain mostly flat" % minimum_feature_texture_weight)
+	if profiled_feature_colliders == 0:
+		failures.append("No playable profiled feature retained a collision shape")
 	var world_signs := resort.find_children("*", "Label3D", true, false)
 	if not world_signs.is_empty():
 		failures.append("Normal play still contains %d world labels that can cover the skier" % world_signs.size())
@@ -97,6 +130,19 @@ func _physics_process(_delta: float) -> void:
 			tree_scales[snappedf(tree.scale.x, 0.05)] = true
 	if tree_scales.size() < 5:
 		failures.append("Tree scale variation is too uniform")
+	for asset_id: String in ["park_tree", "course_boundary", "lift_tower", "snowmaker", "trail_board"]:
+		var asset_instances := resort.find_children("*", "Node3D", true, false).filter(func(node: Node) -> bool: return str(node.get_meta("asset_id", "")) == asset_id)
+		var near_shadow_mesh_found := false
+		for asset_node: Node in asset_instances:
+			for mesh_node: Node in asset_node.find_children("*", "MeshInstance3D", true, false):
+				var mesh_instance := mesh_node as MeshInstance3D
+				if mesh_instance != null and mesh_instance.visibility_range_begin <= 0.01 and mesh_instance.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
+					near_shadow_mesh_found = true
+					break
+			if near_shadow_mesh_found:
+				break
+		if not near_shadow_mesh_found:
+			failures.append("Production %s has no near-field shadow-casting mesh" % asset_id)
 	var mountain_meshes := resort.find_children("*", "MeshInstance3D", true, false).filter(func(node: Node) -> bool: return node.get_parent() != null and (node.get_parent().name.begins_with("FarPeak") or node.get_parent().name.begins_with("HazePeak")))
 	if mountain_meshes.size() < 8:
 		failures.append("Layered mountain composition was not built")

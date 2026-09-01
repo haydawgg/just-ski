@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://assets/environment/production/low_poly_environment_collision.gd" id="1"]
+
+[node name="CourseBoundaryCollision" type="StaticBody3D"]
+script = ExtResource("1")
+asset_kind = 1

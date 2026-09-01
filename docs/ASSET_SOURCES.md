@@ -14,6 +14,10 @@ The project commits the 2K diffuse texture and a derived packed detail texture. 
 
 Full record: [`assets/materials/snow_02/SOURCE.md`](../assets/materials/snow_02/SOURCE.md)
 
+## Environment asset catalog
+
+Environment prop integration is defined in `docs/ENVIRONMENT_ASSET_CATALOG.md` and `resources/environment/default_environment_asset_catalog.tres`. The active low-poly production scenes are project-authored from Godot primitives under `assets/environment/production/`; their provenance and parametric-feature policy are recorded in that directory's `SOURCE.md`. Reviewed GLB/GLTF replacements can be assigned per catalog ID later.
+
 ## Skier body
 
 **Source:** Mesh: 3D Male Base (Rigged) 1.0.2  

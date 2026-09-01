@@ -109,6 +109,14 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export_group("Stabilization")
 @export var surface_up_rate := 3.5
 
+@export_group("Performance")
+## Clearance is safety telemetry only; collision-safe placement still runs every
+## frame. Sampling it less often avoids six extra rays per camera tick.
+@export_range(0.0, 1.0, 0.01) var clearance_telemetry_interval := 1.0 / 30.0
+## Five bisection steps keep the landing look correction within about 1/32 of
+## its requested weight while avoiding three redundant full composition passes.
+@export_range(1, 8, 1) var landing_look_search_iterations := 5
+
 @export_group("State Profiles")
 @export var profile_rate := 3.0
 @export var landing_hold_time := 0.35
@@ -176,8 +184,49 @@ var _foreground_occlusion_fraction := 0.0
 var _last_distance_rate := 0.0
 var _last_fov_rate := 0.0
 var _previous_target_distance := 0.0
+var _camera_sphere: SphereShape3D
+var _camera_sweep_query: PhysicsShapeQueryParameters3D
+var _camera_destination_query: PhysicsShapeQueryParameters3D
+var _camera_foreground_query: PhysicsRayQueryParameters3D
+var _camera_clearance_query: PhysicsRayQueryParameters3D
+var _camera_surface_query: PhysicsRayQueryParameters3D
+var _camera_query_exclude: Array[RID] = []
+var _clearance_telemetry_timer := 0.0
+var _composition_frame_id := 0
+var _composition_landmark_frame_id := -1
+var _composition_landmark_cache: Array[Vector3] = []
+var _composition_evaluation_frame_id := -1
+var _composition_evaluation_position := Vector3.ZERO
+var _composition_evaluation_basis := Basis.IDENTITY
+var _composition_evaluation_fov := 0.0
+var _composition_evaluation_up := Vector3.UP
+var _composition_evaluation_body_occlusion := true
+var _composition_evaluation_landing_occlusion := true
+var _composition_evaluation_result := {}
+var _composition_start_clear_frame_id := -1
+var _composition_start_clear_position := Vector3.ZERO
+var _composition_start_clear := true
+
+var _performance_profile_active := false
+var _performance_profile_frame_count := 0
+var _performance_profile_update_usec := 0
+var _performance_profile_max_update_usec := 0
+var _performance_profile_state_frames: Array[int] = [0, 0, 0, 0, 0]
+var _performance_profile_state_usec: Array[int] = [0, 0, 0, 0, 0]
+var _performance_profile_state_max_usec: Array[int] = [0, 0, 0, 0, 0]
+var _performance_profile_shape_queries := 0
+var _performance_profile_ray_queries := 0
+var _performance_profile_composition_evaluations := 0
+var _performance_profile_landmark_samples := 0
 
 func _ready() -> void:
+	_camera_sphere = SphereShape3D.new()
+	_camera_sweep_query = PhysicsShapeQueryParameters3D.new()
+	_camera_destination_query = PhysicsShapeQueryParameters3D.new()
+	_camera_foreground_query = PhysicsRayQueryParameters3D.new()
+	_camera_clearance_query = PhysicsRayQueryParameters3D.new()
+	_camera_surface_query = PhysicsRayQueryParameters3D.new()
+	_configure_camera_queries()
 	camera = Camera3D.new()
 	camera.current = true
 	camera.fov = base_fov
@@ -186,11 +235,110 @@ func _ready() -> void:
 
 func set_target(value: CharacterBody3D) -> void:
 	target = value
+	_refresh_camera_query_exclude()
 	reset_immediate()
+
+func _configure_camera_queries() -> void:
+	_camera_sphere.radius = maxf(camera_collision_radius, 0.05)
+	_camera_sweep_query.shape = _camera_sphere
+	_camera_sweep_query.collision_mask = 1 | 4
+	_camera_sweep_query.margin = collision_clearance
+	_camera_destination_query.shape = _camera_sphere
+	_camera_destination_query.collision_mask = 1 | 4
+	_camera_destination_query.margin = collision_clearance
+	_camera_foreground_query.collision_mask = 1 | 4
+	_camera_clearance_query.collision_mask = 1 | 4
+	_camera_surface_query.collision_mask = 1
+	_refresh_camera_query_exclude()
+
+func _refresh_camera_query_exclude() -> void:
+	_camera_query_exclude.clear()
+	if target != null:
+		_camera_query_exclude.append(target.get_rid())
+	if _camera_sweep_query != null:
+		_camera_sweep_query.exclude = _camera_query_exclude
+	if _camera_destination_query != null:
+		_camera_destination_query.exclude = _camera_query_exclude
+	if _camera_foreground_query != null:
+		_camera_foreground_query.exclude = _camera_query_exclude
+	if _camera_clearance_query != null:
+		_camera_clearance_query.exclude = _camera_query_exclude
+	if _camera_surface_query != null:
+		_camera_surface_query.exclude = _camera_query_exclude
+
+func begin_performance_profile() -> void:
+	_performance_profile_frame_count = 0
+	_performance_profile_update_usec = 0
+	_performance_profile_max_update_usec = 0
+	_performance_profile_state_frames = [0, 0, 0, 0, 0]
+	_performance_profile_state_usec = [0, 0, 0, 0, 0]
+	_performance_profile_state_max_usec = [0, 0, 0, 0, 0]
+	_performance_profile_shape_queries = 0
+	_performance_profile_ray_queries = 0
+	_performance_profile_composition_evaluations = 0
+	_performance_profile_landmark_samples = 0
+	_performance_profile_active = true
+
+func end_performance_profile() -> Dictionary:
+	_performance_profile_active = false
+	return performance_profile_snapshot()
+
+func performance_profile_snapshot() -> Dictionary:
+	var state_average_usec: Array[float] = []
+	for index: int in range(_performance_profile_state_frames.size()):
+		state_average_usec.append(
+			float(_performance_profile_state_usec[index]) / float(maxi(_performance_profile_state_frames[index], 1))
+		)
+	return {
+		"frames": _performance_profile_frame_count,
+		"average_usec": float(_performance_profile_update_usec) / float(maxi(_performance_profile_frame_count, 1)),
+		"max_usec": _performance_profile_max_update_usec,
+		"state_frames": _performance_profile_state_frames.duplicate(),
+		"state_average_usec": state_average_usec,
+		"state_max_usec": _performance_profile_state_max_usec.duplicate(),
+		"shape_queries": _performance_profile_shape_queries,
+		"ray_queries": _performance_profile_ray_queries,
+		"composition_evaluations": _performance_profile_composition_evaluations,
+		"landmark_samples": _performance_profile_landmark_samples,
+	}
+
+func _record_performance_profile_frame(frame_start_usec: int) -> void:
+	if not _performance_profile_active or frame_start_usec <= 0:
+		return
+	var elapsed_usec := maxi(Time.get_ticks_usec() - frame_start_usec, 0)
+	var state_index := clampi(camera_state, 0, _performance_profile_state_frames.size() - 1)
+	_performance_profile_frame_count += 1
+	_performance_profile_update_usec += elapsed_usec
+	_performance_profile_max_update_usec = maxi(_performance_profile_max_update_usec, elapsed_usec)
+	_performance_profile_state_frames[state_index] += 1
+	_performance_profile_state_usec[state_index] += elapsed_usec
+	_performance_profile_state_max_usec[state_index] = maxi(_performance_profile_state_max_usec[state_index], elapsed_usec)
+
+func _record_shape_queries(count: int = 1) -> void:
+	if _performance_profile_active:
+		_performance_profile_shape_queries += count
+
+func _record_ray_queries(count: int = 1) -> void:
+	if _performance_profile_active:
+		_performance_profile_ray_queries += count
+
+func _record_composition_evaluation() -> void:
+	if _performance_profile_active:
+		_performance_profile_composition_evaluations += 1
+
+func _record_landmark_samples(count: int) -> void:
+	if _performance_profile_active:
+		_performance_profile_landmark_samples += count
 
 func reset_immediate() -> void:
 	if target == null:
 		return
+	_composition_frame_id += 1
+	_composition_landmark_frame_id = -1
+	_composition_landmark_cache.clear()
+	_composition_evaluation_frame_id = -1
+	_composition_start_clear_frame_id = -1
+	_clearance_telemetry_timer = 0.0
 	var skier := target as SkierController
 	var up := Vector3.UP
 	if skier != null and skier.state in [SkierController.State.GROUND, SkierController.State.GRIND] and skier.contact.average_normal.length_squared() > 0.01:
@@ -272,6 +420,9 @@ func reset_immediate() -> void:
 func _physics_process(delta: float) -> void:
 	if target == null:
 		return
+	_composition_frame_id += 1
+	_composition_start_clear_frame_id = -1
+	var profile_frame_start_usec := Time.get_ticks_usec() if _performance_profile_active else 0
 	var frame_start_position := global_position
 	var skier := target as SkierController
 	var speed := target.velocity.length()
@@ -510,9 +661,10 @@ func _physics_process(delta: float) -> void:
 			final_position = frame_start_position
 	# Ensure the final translation-capped pose is still above the snow surface.
 	if get_world_3d() != null:
-		var surface_query := PhysicsRayQueryParameters3D.create(final_position + up * 8.0, final_position - up * 8.0, 1)
-		surface_query.exclude = [target.get_rid()]
-		var surface_hit := get_world_3d().direct_space_state.intersect_ray(surface_query)
+		_camera_surface_query.from = final_position + up * 8.0
+		_camera_surface_query.to = final_position - up * 8.0
+		_record_ray_queries()
+		var surface_hit := get_world_3d().direct_space_state.intersect_ray(_camera_surface_query)
 		if not surface_hit.is_empty() and surface_hit.position is Vector3:
 			var surface_height := (surface_hit.position as Vector3).dot(up)
 			var cand_height := final_position.dot(up)
@@ -545,7 +697,8 @@ func _physics_process(delta: float) -> void:
 		global_basis = composition_basis
 	_last_distance_rate = absf(global_position.distance_to(target.global_position) - frame_distance) / maxf(delta, 0.0001)
 	_previous_target_distance = global_position.distance_to(target.global_position)
-	_update_composition_telemetry(up)
+	_update_composition_telemetry(up, delta)
+	_record_performance_profile_frame(profile_frame_start_usec)
 
 func _update_camera_state(skier: SkierController, delta: float) -> void:
 	if skier == null:
@@ -608,6 +761,14 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 		# bound; that recovery can turn a small framing error into lateral drift.
 		_composition_recovery_active = not _composition_hard_valid(base_evaluation)
 		_composition_valid = _composition_candidate_is_valid(base_evaluation)
+		return
+	if _composition_candidate_is_valid(base_evaluation):
+		# AIR and CRASH use the same candidate solver when recovery is needed, but
+		# a valid base pose already satisfies the complete contract. In particular,
+		# this check includes predicted landing visibility while descending, so the
+		# fast path cannot bypass the landing guarantee.
+		_composition_recovery_active = soft_composition_state and float(base_evaluation.get("inner_violation", 0.0)) > 0.0001
+		_composition_valid = true
 		return
 	if not soft_composition_state and _composition_hard_valid(base_evaluation):
 		# Preserve the existing ground-camera solution when it already frames the
@@ -730,7 +891,7 @@ func _composition_candidate_is_valid(evaluation: Dictionary) -> bool:
 func _safe_composition_candidate(from: Vector3, raw_candidate: Vector3, up: Vector3, travel: Vector3) -> Dictionary:
 	if not raw_candidate.is_finite():
 		return {"valid": false}
-	var start_clear := _camera_destination_is_clear(from)
+	var start_clear := _composition_start_is_clear(from)
 	var trace := _trace_camera_candidate(from, raw_candidate)
 	if start_clear and bool(trace.get("hit", false)):
 		return {"valid": false}
@@ -753,18 +914,21 @@ func _safe_composition_candidate(from: Vector3, raw_candidate: Vector3, up: Vect
 		return {"valid": false}
 	return {"valid": true, "position": stabilized}
 
+func _composition_start_is_clear(position: Vector3) -> bool:
+	if _composition_start_clear_frame_id == _composition_frame_id and _composition_start_clear_position.is_equal_approx(position):
+		return _composition_start_clear
+	_composition_start_clear_frame_id = _composition_frame_id
+	_composition_start_clear_position = position
+	_composition_start_clear = _camera_destination_is_clear(position)
+	return _composition_start_clear
+
 func _camera_destination_is_clear(position: Vector3) -> bool:
 	if get_world_3d() == null:
 		return true
-	var sphere := SphereShape3D.new()
-	sphere.radius = maxf(camera_collision_radius, 0.05)
-	var query := PhysicsShapeQueryParameters3D.new()
-	query.shape = sphere
-	query.transform = Transform3D(Basis.IDENTITY, position)
-	query.collision_mask = 1 | 4
-	query.exclude = [target.get_rid()] if target != null else []
-	query.margin = collision_clearance
-	return get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
+	_camera_sphere.radius = maxf(camera_collision_radius, 0.05)
+	_camera_destination_query.transform = Transform3D(Basis.IDENTITY, position)
+	_record_shape_queries()
+	return get_world_3d().direct_space_state.intersect_shape(_camera_destination_query, 1).is_empty()
 
 func _keep_composition_camera_behind(candidate: Vector3, up: Vector3, travel: Vector3) -> Vector3:
 	if target == null or camera_state not in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]:
@@ -782,7 +946,25 @@ func _keep_composition_camera_behind(candidate: Vector3, up: Vector3, travel: Ve
 		candidate = target_position + planar + up.normalized() * up_offset
 	return candidate
 
-func _evaluate_composition(camera_position: Vector3, camera_basis: Basis, fov: float, up: Vector3) -> Dictionary:
+func _evaluate_composition(
+	camera_position: Vector3,
+	camera_basis: Basis,
+	fov: float,
+	up: Vector3,
+	include_body_occlusion: bool = true,
+	include_landing_occlusion: bool = true
+) -> Dictionary:
+	if (
+		_composition_evaluation_frame_id == _composition_frame_id
+		and _composition_evaluation_position.is_equal_approx(camera_position)
+		and _composition_evaluation_basis.is_equal_approx(camera_basis)
+		and is_equal_approx(_composition_evaluation_fov, fov)
+		and _composition_evaluation_up.is_equal_approx(up)
+		and _composition_evaluation_body_occlusion == include_body_occlusion
+		and _composition_evaluation_landing_occlusion == include_landing_occlusion
+	):
+		return _composition_evaluation_result
+	_record_composition_evaluation()
 	var landmarks := _composition_landmarks()
 	var viewport_size := _composition_viewport_size()
 	var bounds := Rect2()
@@ -810,7 +992,7 @@ func _evaluate_composition(camera_position: Vector3, camera_basis: Basis, fov: f
 			bounds = bounds.expand(screen)
 		average_depth += depth_val
 		depth_count += 1
-		if _is_foreground_occluded(camera_position, world_position):
+		if include_body_occlusion and _is_foreground_occluded(camera_position, world_position):
 			body_occluded += 1
 	if not bounds_initialized:
 		bounds = Rect2(-10.0, -10.0, 20.0, 20.0)
@@ -831,9 +1013,9 @@ func _evaluate_composition(camera_position: Vector3, camera_basis: Basis, fov: f
 		var landing_projection := _project_composition_point(camera_position, camera_basis, fov, viewport_size, skier.predicted_landing_point)
 		landing_screen = landing_projection.screen as Vector2
 		landing_violation = _rect_violation(Rect2(landing_screen, Vector2.ZERO), composition_landing_rect)
-		landing_occlusion = 1.0 if _is_foreground_occluded(camera_position, skier.predicted_landing_point) else 0.0
+		landing_occlusion = 1.0 if include_landing_occlusion and _is_foreground_occluded(camera_position, skier.predicted_landing_point) else 0.0
 		landing_valid = landing_violation <= 0.0001 and landing_occlusion <= maximum_landing_occlusion_fraction
-	return {
+	var evaluation := {
 		"skier_screen_rect": bounds,
 		"landing_screen_position": landing_screen,
 		"hard_violation": hard_violation,
@@ -845,6 +1027,15 @@ func _evaluate_composition(camera_position: Vector3, camera_basis: Basis, fov: f
 		"foreground_occlusion": maxf(body_occlusion, landing_occlusion),
 		"average_depth": depth,
 	}
+	_composition_evaluation_frame_id = _composition_frame_id
+	_composition_evaluation_position = camera_position
+	_composition_evaluation_basis = camera_basis
+	_composition_evaluation_fov = fov
+	_composition_evaluation_up = up
+	_composition_evaluation_body_occlusion = include_body_occlusion
+	_composition_evaluation_landing_occlusion = include_landing_occlusion
+	_composition_evaluation_result = evaluation
+	return evaluation
 
 func _composition_score(evaluation: Dictionary, movement: float) -> float:
 	var hard_violation := float(evaluation.get("hard_violation", INF))
@@ -887,6 +1078,8 @@ func _screen_correction_world_offset(evaluation: Dictionary, desired_rect: Rect2
 	return -camera_basis.x.normalized() * screen_delta.x * horizontal_extent + camera_basis.y.normalized() * screen_delta.y * vertical_extent
 
 func _composition_landmarks() -> Array[Vector3]:
+	if _composition_landmark_frame_id == _composition_frame_id:
+		return _composition_landmark_cache
 	var points: Array[Vector3] = []
 	if target != null and target.has_method("animation_debug_landmark"):
 		for landmark: StringName in COMPOSITION_LANDMARK_NAMES:
@@ -894,8 +1087,11 @@ func _composition_landmarks() -> Array[Vector3]:
 			if value.is_finite():
 				points.append(value)
 	if points.size() < 2 and target != null:
-			points = [target.global_position, target.global_position + Vector3.UP * 1.8]
-	return points
+		points = [target.global_position, target.global_position + Vector3.UP * 1.8]
+	_composition_landmark_cache = points
+	_composition_landmark_frame_id = _composition_frame_id
+	_record_landmark_samples(points.size())
+	return _composition_landmark_cache
 
 func _composition_viewport_size() -> Vector2:
 	var viewport_size := get_viewport().get_visible_rect().size if get_viewport() != null else Vector2.ZERO
@@ -928,9 +1124,10 @@ func _is_foreground_occluded(camera_position: Vector3, world_position: Vector3) 
 	var distance := camera_position.distance_to(world_position)
 	if distance <= 0.1:
 		return false
-	var query := PhysicsRayQueryParameters3D.create(camera_position, world_position, 1 | 4)
-	query.exclude = [target.get_rid()]
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	_camera_foreground_query.from = camera_position
+	_camera_foreground_query.to = world_position
+	_record_ray_queries()
+	var hit := get_world_3d().direct_space_state.intersect_ray(_camera_foreground_query)
 	if hit.is_empty() or not (hit.position is Vector3):
 		return false
 	return (hit.position as Vector3).distance_to(camera_position) < distance - maxf(surface_clearance, 0.1)
@@ -967,14 +1164,17 @@ func _constrain_landing_look_weight(base_target: Vector3, landing_target: Vector
 		var safe_result := _safe_composition_candidate(global_position, global_position + offset, up, _trajectory_dir)
 		if bool(safe_result.get("valid", false)):
 			candidate_positions.append(safe_result.position as Vector3)
-	for _index: int in 8:
+	for _index: int in landing_look_search_iterations:
 		var weight := (low + high) * 0.5
 		var blended_target := base_target.lerp(landing_target, weight)
 		var all_candidates_valid := true
 		for candidate_position: Vector3 in candidate_positions:
 			var basis := _look_basis_for_pose(candidate_position, blended_target, up)
-			var evaluation := _evaluate_composition(candidate_position, basis, camera.fov, up)
-			var body_valid := _composition_hard_valid(evaluation)
+			# Body occlusion is checked by the authoritative composition pass after
+			# this look weight is selected. The bisection only needs projected body
+			# bounds plus the landing ray, avoiding 12 redundant rays per candidate.
+			var evaluation := _evaluate_composition(candidate_position, basis, camera.fov, up, false, true)
+			var body_valid := float(evaluation.get("hard_violation", INF)) <= 0.0001
 			var landing_valid := weight <= 0.001 or bool(evaluation.get("landing_valid", false))
 			if not body_valid or not landing_valid:
 				all_candidates_valid = false
@@ -1007,12 +1207,15 @@ func _blend_camera_basis(from: Basis, to: Basis, weight: float) -> Basis:
 	var banked_up := Vector3.UP.rotated(blended_forward, _smoothed_bank)
 	return Basis.looking_at(blended_forward, banked_up)
 
-func _update_composition_telemetry(up: Vector3) -> void:
+func _update_composition_telemetry(up: Vector3, delta: float) -> void:
 	var evaluation := _evaluate_composition(global_position, global_basis, camera.fov, up)
 	_skier_screen_rect = evaluation.get("skier_screen_rect", Rect2()) as Rect2
 	_landing_screen_position = evaluation.get("landing_screen_position", Vector2.ZERO) as Vector2
 	_foreground_occlusion_fraction = float(evaluation.get("foreground_occlusion", 0.0))
-	_camera_clearance = _measure_camera_clearance(global_position)
+	_clearance_telemetry_timer -= delta
+	if clearance_telemetry_interval <= 0.0 or _clearance_telemetry_timer <= 0.0:
+		_camera_clearance = _measure_camera_clearance(global_position)
+		_clearance_telemetry_timer = maxf(clearance_telemetry_interval, 0.0)
 	_composition_valid = _composition_candidate_is_valid(evaluation)
 	_target_screen_position = _skier_screen_rect.get_center()
 	if _composition_valid:
@@ -1157,13 +1360,10 @@ func _measure_camera_clearance(position: Vector3) -> float:
 		if axis.length_squared() < 0.001 or not axis.is_finite():
 			continue
 		var direction := axis.normalized()
-		var query := PhysicsRayQueryParameters3D.create(
-			position,
-			position + direction * (maximum_camera_distance + collision_clearance),
-			1 | 4
-		)
-		query.exclude = [target.get_rid()] if target != null else []
-		var hit := space.intersect_ray(query)
+		_camera_clearance_query.from = position
+		_camera_clearance_query.to = position + direction * (maximum_camera_distance + collision_clearance)
+		_record_ray_queries()
+		var hit := space.intersect_ray(_camera_clearance_query)
 		if not hit.is_empty() and hit.position is Vector3:
 			nearest = minf(nearest, position.distance_to(hit.position as Vector3))
 	return maxf(0.0, nearest - camera_collision_radius - collision_clearance)
@@ -1176,26 +1376,16 @@ func _trace_camera_candidate(from: Vector3, desired: Vector3) -> Dictionary:
 	var space := get_world_3d().direct_space_state
 	if space == null:
 		return {"hit": false, "position": desired}
-	var sphere := SphereShape3D.new()
-	sphere.radius = maxf(camera_collision_radius, 0.05)
-	var shape_query := PhysicsShapeQueryParameters3D.new()
-	shape_query.shape = sphere
-	shape_query.transform = Transform3D(Basis.IDENTITY, from)
-	shape_query.motion = desired - from
-	shape_query.collision_mask = 1 | 4
-	shape_query.exclude = [target.get_rid()] if target != null else []
-	shape_query.margin = collision_clearance
-	var cast := space.cast_motion(shape_query)
+	_camera_sphere.radius = maxf(camera_collision_radius, 0.05)
+	_camera_sweep_query.transform = Transform3D(Basis.IDENTITY, from)
+	_camera_sweep_query.motion = desired - from
+	_record_shape_queries(2)
+	var cast := space.cast_motion(_camera_sweep_query)
 	var safe_fraction := 1.0
 	if cast.size() >= 2:
 		safe_fraction = clampf(float(cast[0]), 0.0, 1.0)
-	var destination_query := PhysicsShapeQueryParameters3D.new()
-	destination_query.shape = sphere
-	destination_query.transform = Transform3D(Basis.IDENTITY, desired)
-	destination_query.collision_mask = 1 | 4
-	destination_query.exclude = [target.get_rid()] if target != null else []
-	destination_query.margin = collision_clearance
-	var destination_hits := space.intersect_shape(destination_query, 1)
+	_camera_destination_query.transform = Transform3D(Basis.IDENTITY, desired)
+	var destination_hits := space.intersect_shape(_camera_destination_query, 1)
 	var hit := safe_fraction < 0.999 or not destination_hits.is_empty()
 	if not hit:
 		return {"hit": false, "position": desired}
@@ -1229,9 +1419,10 @@ func _stabilize_camera_position(candidate: Vector3, up: Vector3, travel: Vector3
 	# A camera-volume sweep keeps features out of the lens; this final vertical
 	# probe also prevents a spring overshoot from placing the camera below the
 	# snow surface on a steep pitch or during crash recovery.
-	var surface_query := PhysicsRayQueryParameters3D.create(candidate + up * 8.0, candidate - up * 8.0, 1)
-	surface_query.exclude = [target.get_rid()]
-	var surface_hit := get_world_3d().direct_space_state.intersect_ray(surface_query)
+	_camera_surface_query.from = candidate + up * 8.0
+	_camera_surface_query.to = candidate - up * 8.0
+	_record_ray_queries()
+	var surface_hit := get_world_3d().direct_space_state.intersect_ray(_camera_surface_query)
 	if not surface_hit.is_empty() and surface_hit.position is Vector3:
 		var surface_height := (surface_hit.position as Vector3).dot(up)
 		var candidate_height := candidate.dot(up)

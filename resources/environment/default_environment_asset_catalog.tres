@@ -1,0 +1,142 @@
+[gd_resource type="Resource" script_class="EnvironmentAssetCatalog" load_steps=28 format=3]
+
+[ext_resource type="Script" path="res://resources/environment/environment_asset_definition.gd" id="1_def"]
+[ext_resource type="Script" path="res://resources/environment/environment_asset_catalog.gd" id="2_catalog"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/park_tree_visual.tscn" id="3_tree_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/park_tree_collision.tscn" id="4_tree_collision"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/route_gate_visual.tscn" id="5_gate_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/grind_rail_template.tscn" id="6_rail_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/snow_feature_template.tscn" id="7_feature_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/course_boundary_visual.tscn" id="8_boundary_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/course_boundary_collision.tscn" id="9_boundary_collision"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/lift_tower_visual.tscn" id="10_lift_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/lift_tower_collision.tscn" id="11_lift_collision"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/snowmaker_visual.tscn" id="12_snowmaker_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/snowmaker_collision.tscn" id="13_snowmaker_collision"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/trail_board_visual.tscn" id="14_board_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/trail_board_collision.tscn" id="15_board_collision"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/snow_boulder_visual.tscn" id="16_boulder_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/lift_line_visual.tscn" id="17_lift_line_visual"]
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_tree"]
+script = ExtResource("1_def")
+asset_id = "park_tree"
+visual_scene = ExtResource("3_tree_visual")
+collision_scene = ExtResource("4_tree_collision")
+nominal_size_m = Vector3(3, 6, 3)
+asset_class = 0
+readability_category = "landmark"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(35, 105, 230)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_gate"]
+script = ExtResource("1_def")
+asset_id = "route_gate"
+visual_scene = ExtResource("5_gate_visual")
+nominal_size_m = Vector3(13, 2, 0.2)
+asset_class = 2
+readability_category = "guide"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(30, 88, 190)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_rail"]
+script = ExtResource("1_def")
+asset_id = "grind_rail"
+visual_scene = ExtResource("6_rail_visual")
+parametric_feature = true
+nominal_size_m = Vector3(1.2, 0.3, 14)
+asset_class = 1
+readability_category = "jib"
+source_license = "Project-authored parametric course asset; no external source"
+lod_distances_m = Vector3(30, 90, 190)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_feature"]
+script = ExtResource("1_def")
+asset_id = "snow_feature"
+visual_scene = ExtResource("7_feature_visual")
+parametric_feature = true
+nominal_size_m = Vector3(10, 2, 18)
+asset_class = 0
+readability_category = "terrain_feature"
+source_license = "Project-authored parametric course asset; no external source"
+lod_distances_m = Vector3(45, 125, 230)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_boundary"]
+script = ExtResource("1_def")
+asset_id = "course_boundary"
+visual_scene = ExtResource("8_boundary_visual")
+collision_scene = ExtResource("9_boundary_collision")
+nominal_size_m = Vector3(0.2, 1.1, 20)
+asset_class = 3
+readability_category = "boundary"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(40, 125, 260)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_lift"]
+script = ExtResource("1_def")
+asset_id = "lift_tower"
+visual_scene = ExtResource("10_lift_visual")
+collision_scene = ExtResource("11_lift_collision")
+nominal_size_m = Vector3(3.2, 6.3, 0.5)
+asset_class = 0
+readability_category = "boundary_landmark"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(45, 150, 300)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_snowmaker"]
+script = ExtResource("1_def")
+asset_id = "snowmaker"
+visual_scene = ExtResource("12_snowmaker_visual")
+collision_scene = ExtResource("13_snowmaker_collision")
+nominal_size_m = Vector3(0.8, 2, 1.2)
+asset_class = 0
+readability_category = "boundary_landmark"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(35, 105, 210)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_board"]
+script = ExtResource("1_def")
+asset_id = "trail_board"
+visual_scene = ExtResource("14_board_visual")
+collision_scene = ExtResource("15_board_collision")
+nominal_size_m = Vector3(1.6, 2, 0.2)
+asset_class = 0
+readability_category = "boundary_landmark"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(35, 120, 230)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_boulder"]
+script = ExtResource("1_def")
+asset_id = "snow_boulder"
+visual_scene = ExtResource("16_boulder_visual")
+nominal_size_m = Vector3(2.15, 1.25, 2.15)
+asset_class = 4
+readability_category = "environment_rock"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(30, 90, 230)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_lift_line"]
+script = ExtResource("1_def")
+asset_id = "lift_line"
+visual_scene = ExtResource("17_lift_line_visual")
+nominal_size_m = Vector3(3.2, 9.2, 56)
+asset_class = 4
+readability_category = "resort_lift"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(55, 160, 340)
+
+[resource]
+script = ExtResource("2_catalog")
+mode = 0
+definitions = Array[ExtResource("1_def")]([
+SubResource("EnvironmentAssetDefinition_tree"),
+SubResource("EnvironmentAssetDefinition_gate"),
+SubResource("EnvironmentAssetDefinition_rail"),
+SubResource("EnvironmentAssetDefinition_feature"),
+SubResource("EnvironmentAssetDefinition_boundary"),
+SubResource("EnvironmentAssetDefinition_lift"),
+SubResource("EnvironmentAssetDefinition_snowmaker"),
+SubResource("EnvironmentAssetDefinition_board"),
+SubResource("EnvironmentAssetDefinition_boulder"),
+SubResource("EnvironmentAssetDefinition_lift_line")
+])

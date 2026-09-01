@@ -1,6 +1,8 @@
 class_name SkierController
 extends CharacterBody3D
 
+signal respawn_applied(transform: Transform3D)
+
 const SkierVisualScene := preload("res://player/animation/skier_visual.tscn")
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
 
@@ -87,6 +89,7 @@ var crash_context := CrashContext.new()
 var recent_rail_detach_time := 0.0
 var recent_rail_detach_balance := 0.0
 var respawn_count := 0
+var recovery_frozen := false
 var contact_shadow: MeshInstance3D
 var contact_shadow_material: ShaderMaterial
 
@@ -111,9 +114,20 @@ func _ready() -> void:
 	SessionManager.respawn_requested.connect(respawn_at)
 	state_changed.emit("Air")
 
+func _exit_tree() -> void:
+	# SessionManager is an autoload and outlives test/run skier instances. Remove
+	# the bound callback explicitly so deleted skiers cannot be retained by the
+	# singleton or receive a later respawn request.
+	if SessionManager.respawn_requested.is_connected(respawn_at):
+		SessionManager.respawn_requested.disconnect(respawn_at)
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("debug_toggle"):
 		debug_enabled = not debug_enabled
+		if recovery_frozen:
+			return
+	if recovery_frozen:
+		return
 	if event.is_action_pressed("respawn"):
 		SessionManager.request_respawn()
 	if event.is_action_pressed("set_marker") and state == State.GROUND and contact.grounded:
@@ -122,6 +136,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		SessionManager.set_marker(safe_transform)
 
 func _physics_process(delta: float) -> void:
+	if recovery_frozen:
+		# Recovery freezes gameplay motion, not the observers that drive HUD,
+		# combo expiry, and surface audio. Keep those channels ticking so the
+		# recovery overlay cannot leave stale telemetry or a held sound loop.
+		if scoring != null:
+			scoring.step(delta, velocity.length())
+		AudioManager.update_surface_audio(velocity.length(), skid_amount, state == State.GRIND, contact.surface_kind, state == State.AIR)
+		telemetry_updated.emit(telemetry())
+		return
 	var velocity_before_motion := velocity
 	last_collision_diagnostics.clear()
 	last_collision_colliders.clear()
@@ -870,6 +893,7 @@ func _evaluate_feature_crash_after_motion() -> void:
 			0.0,
 			clampf(-normal.dot(global_basis.x), -1.0, 1.0)
 		)
+		context.attach_collision_diagnostic(diagnostic)
 		enter_crash(context)
 		return
 
@@ -923,18 +947,32 @@ func respawn_at(value: Transform3D) -> void:
 	predicted_landing_valid = false
 	predicted_landing_normal = Vector3.UP
 	predicted_landing_point = Vector3.ZERO
+	contact = SkiContactSolver.new()
 	last_collision_diagnostics.clear()
 	last_collision_colliders.clear()
 	last_speed_discontinuity = {}
 	animation_frame.reset()
 	_clear_crash_state()
+	# Any authoritative respawn ends the active line. Preserve total score for
+	# marker/course recovery, but never carry a combo multiplier into a new
+	# physical attempt.
 	scoring.reset_link()
+	scoring.break_combo("respawn")
 	AudioManager.stop_feedback()
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
 	state_changed.emit("Air")
+	respawn_applied.emit(global_transform)
+
+func set_recovery_frozen(value: bool) -> void:
+	"""Freeze simulation/input while CourseRecovery performs its fade/respawn lifecycle."""
+	recovery_frozen = value
+	if value:
+		velocity = Vector3.ZERO
+		angular_velocity = Vector3.ZERO
 
 func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3.ZERO) -> void:
 	"""Reset every motion subsystem to a reproducible benchmark baseline."""
+	recovery_frozen = false
 	active_rail = null
 	velocity = initial_velocity
 	angular_velocity = Vector3.ZERO
@@ -1022,6 +1060,9 @@ func _record_motion_diagnostics(velocity_before_motion: Vector3) -> void:
 		var collider := collision.get_collider()
 		var collider_layer: int = collider.collision_layer if collider is CollisionObject3D else 0
 		var normal := collision.get_normal()
+		var collider_asset_id := str(collider.get_meta("asset_id", "")) if collider is Node else ""
+		var collider_asset_class := str(collider.get_meta("asset_class", "")) if collider is Node else ""
+		var collider_policy := str(collider.get_meta("collision_policy", "")) if collider is Node else ""
 		var incoming_normal_speed := maxf(0.0, -velocity_before_motion.dot(normal))
 		var resolved_velocity := velocity_before_motion.slide(normal)
 		var resolved_speed := resolved_velocity.length()
@@ -1031,6 +1072,9 @@ func _record_motion_diagnostics(velocity_before_motion: Vector3) -> void:
 			continue
 		last_collision_diagnostics.append({
 				"collider": collider.name if collider is Node else "<unnamed>",
+				"asset_id": collider_asset_id,
+				"asset_class": collider_asset_class,
+				"collision_policy": collider_policy,
 				"normal": normal,
 				"position": collision.get_position(),
 				"collider_layer": collider_layer,
@@ -1103,6 +1147,8 @@ func telemetry() -> Dictionary:
 			"active": bool(landing_context.get("active", false)),
 		},
 		"crash": crash_context.snapshot(),
+		"crash_equipment": animation_controller.equipment_attachment_snapshot() if animation_controller != null else {},
+		"recovery_frozen": recovery_frozen,
 		"respawn_count": respawn_count,
 		"collision_count": get_slide_collision_count(),
 		"collision_colliders": last_collision_colliders,

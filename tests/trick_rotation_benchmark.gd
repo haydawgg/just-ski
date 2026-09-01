@@ -38,21 +38,24 @@ func _rows_for_air_authority() -> void:
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
 	sample.right_stick = Vector2.LEFT
 	var continuation_one := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	var continuation_one_impulse := continuation_one.rotation_impulse.length()
 	sample.right_stick = Vector2.ZERO
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
 	sample.right_stick = Vector2.LEFT
 	var continuation_two := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	var continuation_two_impulse := continuation_two.rotation_impulse.length()
 	sample.right_stick = Vector2.ZERO
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
 	sample.right_stick = Vector2.LEFT
 	var continuation_three := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	var continuation_three_impulse := continuation_three.rotation_impulse.length()
 
 	rows.append({
 		"scenario": "air_authority",
 		"takeoff_total_impulse": total_takeoff.length(),
-		"continuation_1": continuation_one.rotation_impulse.length(),
-		"continuation_2": continuation_two.rotation_impulse.length(),
-		"continuation_3": continuation_three.rotation_impulse.length(),
+		"continuation_1": continuation_one_impulse,
+		"continuation_2": continuation_two_impulse,
+		"continuation_3": continuation_three_impulse,
 		"remaining_budget": float(interpreter.snapshot().get("air_authority_remaining", -1.0)),
 	})
 
@@ -78,6 +81,12 @@ func _measure_takeoff(label: String, setup_depth: float, setup_seconds: float, r
 		elapsed += dt
 	sample.right_stick = release
 	var command := interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, release_delta)
+	var setup_depth_value := command.setup_depth
+	var setup_duration_value := command.setup_duration
+	var release_speed_value := command.release_speed
+	var setup_quality_value := command.setup_quality
+	var command_strength_value := command.gesture_strength
+	var kind_value := command.kind
 	var total_impulse := command.rotation_impulse
 	sample.reset()
 	var guard := 0
@@ -86,13 +95,13 @@ func _measure_takeoff(label: String, setup_depth: float, setup_seconds: float, r
 		guard += 1
 	return {
 		"scenario": "preload_" + label,
-		"setup_depth": command.setup_depth,
-		"setup_duration": command.setup_duration,
-		"release_speed": command.release_speed,
-		"setup_quality": command.setup_quality,
-		"command_strength": command.gesture_strength,
+		"setup_depth": setup_depth_value,
+		"setup_duration": setup_duration_value,
+		"release_speed": release_speed_value,
+		"setup_quality": setup_quality_value,
+		"command_strength": command_strength_value,
 		"total_takeoff_impulse": total_impulse.length(),
-		"kind": TrickCommand.Kind.keys()[command.kind],
+		"kind": TrickCommand.Kind.keys()[kind_value],
 	}
 
 func _validate_relationships() -> void:

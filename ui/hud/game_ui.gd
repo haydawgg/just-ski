@@ -23,6 +23,9 @@ var trick_visualizer: FlickVisualizer
 var rail_balance_bar: ProgressBar
 var combo_timer_bar: ProgressBar
 var recording_label: Label
+var recovery_overlay: ColorRect
+var recovery_fade_out_duration := 0.12
+var recovery_fade_in_duration := 0.18
 var recording_pulse := 0.0
 var total_score := 0
 var combo_count := 0
@@ -44,6 +47,7 @@ func _ready() -> void:
 	_build_trick_guide()
 	_build_options_menu()
 	_build_notice_overlay()
+	_build_recovery_overlay()
 	InputManager.device_changed.connect(_on_device_changed)
 	SessionManager.marker_changed.connect(_on_marker_changed)
 	InputManager.controller_connection_changed.connect(_on_controller_connection)
@@ -200,6 +204,16 @@ func _build_notice_overlay() -> void:
 	notice_label.size = Vector2(600, 40)
 	notice_label.z_index = 20
 	add_child(notice_label)
+
+func _build_recovery_overlay() -> void:
+	recovery_overlay = ColorRect.new()
+	recovery_overlay.name = "RecoveryFade"
+	recovery_overlay.color = Color(0.015, 0.035, 0.055, 0.0)
+	recovery_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	recovery_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	recovery_overlay.z_index = 15
+	recovery_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(recovery_overlay)
 
 func _build_menu_backdrop() -> void:
 	menu_backdrop = ColorRect.new()
@@ -793,6 +807,9 @@ func _on_telemetry(data: Dictionary) -> void:
 		crash_data.get("balance_error", 0.0),
 		crash_data.get("rest_detected", false),
 		crash_data.get("elapsed", 0.0)]
+	debug_label.text += "\nCrash collider %s asset %s layer %s normal %s" % [
+		crash_data.get("collision_collider", "—"), crash_data.get("collision_asset_id", "—"),
+		crash_data.get("collision_layer", 0), crash_data.get("collision_normal", Vector3.UP)]
 	if camera_rig != null:
 		debug_label.text += "\n" + camera_rig.debug_summary()
 
@@ -870,8 +887,25 @@ func _on_marker_changed(_position: Vector3) -> void:
 func _on_controller_connection(connected: bool) -> void:
 	_show_notice("CONTROLLER CONNECTED" if connected else "CONTROLLER DISCONNECTED — KEYBOARD ACTIVE")
 
-func notify_course_recovery() -> void:
-	_show_notice("RETURNING TO THE SLOPE")
+func notify_course_recovery(reason: String = "") -> void:
+	_show_notice("RETURNING TO THE SLOPE" if reason.is_empty() else "RETURNING TO THE SLOPE — %s" % reason.replace("_", " "))
+	if recovery_overlay == null:
+		return
+	recovery_overlay.visible = true
+	recovery_overlay.color.a = 0.0
+	var tween := create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tween.tween_property(recovery_overlay, "color:a", 1.0, maxf(recovery_fade_out_duration, 0.0))
+
+func complete_course_recovery(_reason: String = "", _spawn_transform: Transform3D = Transform3D.IDENTITY) -> void:
+	if recovery_overlay == null:
+		return
+	var tween := create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tween.tween_property(recovery_overlay, "color:a", 0.0, maxf(recovery_fade_in_duration, 0.0))
+	tween.tween_callback(func() -> void:
+		recovery_overlay.visible = false
+	)
 
 func _on_recorder_armed(value: bool) -> void:
 	if recording_label != null:

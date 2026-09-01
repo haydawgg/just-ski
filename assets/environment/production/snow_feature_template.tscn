@@ -1,0 +1,5 @@
+[gd_scene format=3]
+
+[node name="SnowFeatureProductionTemplate" type="Node3D"]
+metadata/parametric_course_template = true
+metadata/parametric_kind = "snow_feature"

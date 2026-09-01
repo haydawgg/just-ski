@@ -19,7 +19,7 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 - **Snow presentation still needs representative GPU profiling.** Fast and Premium snow compile and run, but near/far detail blending, crystal response, subsurface strength, and production GPU cost need a dedicated profiling pass.
 - **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, and FPS cap. FSR2, HDR, GI-mode selection, reflection-quality controls, and risky-resolution confirmation are not implemented.
-- **The resort is not final production art.** The current environment is procedurally constructed and includes authored presentation dressing, but it still lacks a final handcrafted environment-art pass, a deliberate LOD strategy, and a profiler-driven 1080p High optimization pass.
+- **The resort is not final production art.** The summit-to-first-landing slice now has authored deterministic terrain shoulders, ridge backdrop, lift-line dressing, and cataloged boulder decorations. The lower run and hub remain graybox-oriented and still need a separate art/LOD pass plus a profiler-driven 1080p High optimization pass.
 
 ## Audio and capture
 
@@ -28,4 +28,4 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 ## Recovery presentation
 
-- **Out-of-bounds recovery is abrupt.** After a short grace period the game shows a notice and respawns through the normal session path. There is no production fade, wipe, rewind, or other transition presentation yet.
+- **Out-of-bounds recovery now has configurable fade-out, respawn, and fade-in timing.** The transition wraps the HUD notice and still needs a human visual pass for readability across display refresh rates; it is intentionally not treated as a physics pause.

@@ -26,6 +26,8 @@ $scenes = @(
 	"res://tests/camera_runtime_stability_acceptance.tscn",
 	"res://tests/camera_airborne_viewport_diagnostic.tscn",
 	"res://tests/camera_performance_acceptance.tscn",
+	"res://tests/camera_phase_performance_acceptance.tscn",
+	"res://tests/clip_recorder_worker_acceptance.tscn",
 	"res://tests/gameplay_acceptance.tscn",
 	"res://tests/physics_benchmark.tscn",
 	"res://tests/physics_collision_acceptance.tscn",

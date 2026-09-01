@@ -405,6 +405,11 @@ static func add_gate(parent: Node3D, label: String, x: float, z: float, width: f
 	var post_height := 2.45 if destination_gate else 2.0
 	var post_thickness := 0.14
 	var flag_size := Vector2(0.98 if destination_gate else 0.84, 0.56 if destination_gate else 0.48)
+	root.set_meta("asset_id", "route_gate")
+	root.set_meta("asset_class", "GUIDE")
+	root.set_meta("collision_policy", "GUIDE")
+	root.set_meta("readability_category", "guide")
+	root.set_meta("nominal_size_m", Vector3(visual_width, post_height, post_thickness))
 	var guide_color := color.lerp(Color("#d8eef2"), 0.28)
 	for side: float in [-1.0, 1.0]:
 		var anchor := center + Vector3.RIGHT * visual_width * 0.5 * side
@@ -421,7 +426,8 @@ static func _add_gate_post(parent: Node3D, position: Vector3, size: Vector3, col
 	instance.mesh = mesh
 	instance.position = position
 	var material := StandardMaterial3D.new()
-	material.albedo_color = color
+	material.albedo_color = Color(color, 0.64)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.roughness = 0.78
 	instance.material_override = material
 	_configure_guide_visibility(instance)
@@ -618,13 +624,20 @@ static func _add_jump_readability_markers(
 		return
 	var marker := MeshInstance3D.new()
 	marker.name = "ReadabilityMarkers"
+	marker.set_meta("asset_id", "course_landmark")
+	marker.set_meta("asset_class", "GUIDE")
+	marker.set_meta("collision_policy", "GUIDE")
+	marker.set_meta("readability_category", "takeoff_landing")
 	marker.mesh = mesh
 	marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	marker.visibility_range_end = 145.0
 	marker.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(marker_color.lerp(Color("#d9e9e7"), 0.24), 0.68)
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# This is a surface stamp, not a translucent billboard. Opaque blending keeps
+	# the takeoff/landing cue readable and prevents the jump from looking hollow
+	# when the camera views it at a shallow angle.
+	material.albedo_color = Color(marker_color.lerp(Color("#d9e9e7"), 0.12), 1.0)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 	material.roughness = 0.86
 	material.metallic = 0.0
@@ -765,6 +778,7 @@ static func _add_grid_snow_body(
 	body.set_meta("ski_surface_class", "snow")
 	body.set_meta("profile_rows", world_rows.size())
 	body.set_meta("profile_columns", world_rows[0].size() if not world_rows.is_empty() else 0)
+	body.set_meta("render_collision_separated", true)
 	if world_rows.size() < 2 or world_rows[0].size() < 2:
 		push_error("Snow grid requires at least two rows and columns: " + label)
 		parent.add_child(body)
@@ -777,23 +791,29 @@ static func _add_grid_snow_body(
 		for point: Vector3 in world_row:
 			local_row.append(point - origin)
 		local_rows.append(local_row)
-	var mesh := _profile_grid_mesh(local_rows, normal, bury)
+	# Keep the buried shell for collision fidelity, but do not send its underside
+	# and vertical skirt through the renderer. At a low sunset angle the camera
+	# can see that shell on a close feature; with SDFGI enabled it becomes an
+	# oversized near-black surface even though the playable top is valid.
+	var collision_mesh := _profile_grid_mesh(local_rows, normal, bury, true)
+	var render_mesh := _profile_grid_mesh(local_rows, normal, bury, false)
 	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.mesh = mesh
+	mesh_instance.mesh = render_mesh
+	mesh_instance.set_meta("render_surface_only", true)
 	var groom_direction := world_rows[-1][world_rows[-1].size() / 2] - world_rows[0][world_rows[0].size() / 2]
 	var material_kind := visual_kind if visual_kind >= 0 else kind
 	mesh_instance.material_override = SnowSurface.create(material_kind, Vector2(groom_direction.x, groom_direction.z), feature_emphasis)
 	body.add_child(mesh_instance)
 	if collision_enabled:
 		var shape_node := CollisionShape3D.new()
-		shape_node.shape = mesh.create_trimesh_shape()
+		shape_node.shape = collision_mesh.create_trimesh_shape()
 		if shape_node.shape is ConcavePolygonShape3D:
 			(shape_node.shape as ConcavePolygonShape3D).backface_collision = true
 		body.add_child(shape_node)
 	parent.add_child(body)
 	return body
 
-static func _profile_grid_mesh(rows: Array[PackedVector3Array], normal: Vector3, bury: float) -> ArrayMesh:
+static func _profile_grid_mesh(rows: Array[PackedVector3Array], normal: Vector3, bury: float, include_shell: bool = true) -> ArrayMesh:
 	var row_count := rows.size()
 	var column_count := rows[0].size()
 	var bottom_rows: Array[PackedVector3Array] = []
@@ -831,13 +851,15 @@ static func _profile_grid_mesh(rows: Array[PackedVector3Array], normal: Vector3,
 			var uv_d := Vector2(float(column_index + 1), float(row_index)) * 0.2
 			_add_smooth_tri(st, a, d, c, top_normals[row_index][column_index], top_normals[row_index][column_index + 1], top_normals[row_index + 1][column_index + 1], uv_a, uv_d, uv_c)
 			_add_smooth_tri(st, a, c, b, top_normals[row_index][column_index], top_normals[row_index + 1][column_index + 1], top_normals[row_index + 1][column_index], uv_a, uv_c, uv_b)
-			_add_flat_quad(st, bottom_rows[row_index][column_index], bottom_rows[row_index + 1][column_index], bottom_rows[row_index + 1][column_index + 1], bottom_rows[row_index][column_index + 1])
-	for row_index: int in range(row_count - 1):
-		_add_flat_quad(st, rows[row_index][0], rows[row_index + 1][0], bottom_rows[row_index + 1][0], bottom_rows[row_index][0])
-		_add_flat_quad(st, rows[row_index][-1], bottom_rows[row_index][-1], bottom_rows[row_index + 1][-1], rows[row_index + 1][-1])
-	for column_index: int in range(column_count - 1):
-		_add_flat_quad(st, rows[0][column_index], bottom_rows[0][column_index], bottom_rows[0][column_index + 1], rows[0][column_index + 1])
-		_add_flat_quad(st, rows[-1][column_index], rows[-1][column_index + 1], bottom_rows[-1][column_index + 1], bottom_rows[-1][column_index])
+			if include_shell:
+				_add_flat_quad(st, bottom_rows[row_index][column_index], bottom_rows[row_index + 1][column_index], bottom_rows[row_index + 1][column_index + 1], bottom_rows[row_index][column_index + 1])
+	if include_shell:
+		for row_index: int in range(row_count - 1):
+			_add_flat_quad(st, rows[row_index][0], rows[row_index + 1][0], bottom_rows[row_index + 1][0], bottom_rows[row_index][0])
+			_add_flat_quad(st, rows[row_index][-1], bottom_rows[row_index][-1], bottom_rows[row_index + 1][-1], rows[row_index + 1][-1])
+		for column_index: int in range(column_count - 1):
+			_add_flat_quad(st, rows[0][column_index], bottom_rows[0][column_index], bottom_rows[0][column_index + 1], rows[0][column_index + 1])
+			_add_flat_quad(st, rows[-1][column_index], rows[-1][column_index + 1], bottom_rows[-1][column_index + 1], bottom_rows[-1][column_index])
 	st.generate_tangents()
 	return st.commit()
 

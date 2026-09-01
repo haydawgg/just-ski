@@ -41,6 +41,11 @@ var lateral_bias := 0.0
 var elapsed := 0.0
 var rest_elapsed := 0.0
 var rest_detected := false
+var collision_collider := ""
+var collision_asset_id := ""
+var collision_layer := 0
+var collision_normal := Vector3.UP
+var collision_position := Vector3.ZERO
 
 func begin(
 	crash_reason: int,
@@ -72,6 +77,18 @@ func begin(
 	elapsed = 0.0
 	rest_elapsed = 0.0
 	rest_detected = false
+	collision_collider = ""
+	collision_asset_id = ""
+	collision_layer = 0
+	collision_normal = Vector3.UP
+	collision_position = Vector3.ZERO
+
+func attach_collision_diagnostic(diagnostic: Dictionary) -> void:
+	collision_collider = str(diagnostic.get("collider", ""))
+	collision_asset_id = str(diagnostic.get("asset_id", ""))
+	collision_layer = int(diagnostic.get("collider_layer", 0))
+	collision_normal = diagnostic.get("normal", Vector3.UP) as Vector3
+	collision_position = diagnostic.get("position", Vector3.ZERO) as Vector3
 
 func reset() -> void:
 	active = false
@@ -91,6 +108,11 @@ func reset() -> void:
 	elapsed = 0.0
 	rest_elapsed = 0.0
 	rest_detected = false
+	collision_collider = ""
+	collision_asset_id = ""
+	collision_layer = 0
+	collision_normal = Vector3.UP
+	collision_position = Vector3.ZERO
 
 func snapshot() -> Dictionary:
 	return {
@@ -111,4 +133,9 @@ func snapshot() -> Dictionary:
 		"elapsed": elapsed,
 		"rest_elapsed": rest_elapsed,
 		"rest_detected": rest_detected,
+		"collision_collider": collision_collider,
+		"collision_asset_id": collision_asset_id,
+		"collision_layer": collision_layer,
+		"collision_normal": collision_normal,
+		"collision_position": collision_position,
 	}

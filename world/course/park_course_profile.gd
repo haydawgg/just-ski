@@ -2,7 +2,11 @@ class_name ParkCourseProfile
 extends Resource
 
 @export_category("Feature Readability")
-@export var snow_feature_marker_color := Color("#2aa6bd")
+@export var snow_feature_marker_color := Color("#168fa8")
+@export var solid_feature_color := Color("#d9673f")
+@export var grind_feature_color := Color("#c76833")
+@export var guide_feature_color := Color("#35cbb6")
+@export var boundary_feature_color := Color("#e9a13b")
 @export_range(0.08, 0.5, 0.01) var takeoff_marker_depth := 0.44
 @export_range(1.0, 6.0, 0.1) var landing_marker_length := 4.5
 @export_range(0.04, 0.3, 0.01) var landing_marker_width := 0.22
@@ -11,6 +15,10 @@ extends Resource
 func feature_readability() -> Dictionary:
 	return {
 		"color": snow_feature_marker_color,
+		"solid_feature_color": solid_feature_color,
+		"grind_feature_color": grind_feature_color,
+		"guide_color": guide_feature_color,
+		"boundary_color": boundary_feature_color,
 		"takeoff_depth": takeoff_marker_depth,
 		"landing_length": landing_marker_length,
 		"landing_width": landing_marker_width,
@@ -18,7 +26,7 @@ func feature_readability() -> Dictionary:
 	}
 
 func feature_specs() -> Array[Dictionary]:
-	return [
+	var specs: Array[Dictionary] = [
 		# Summit teaching cluster.
 		{"kind": "gate", "name": "SummitStartGate", "x": 0.0, "z": 134.0, "width": 13.0, "color": Color("#55d6be")},
 		{"kind": "roller", "name": "SummitRollerA", "x": 0.0, "z": 128.0, "length": 5.0, "height": 0.42, "width": 10.0},
@@ -67,3 +75,33 @@ func feature_specs() -> Array[Dictionary]:
 		{"kind": "berm", "name": "FinalCatchBerm", "x": 0.0, "z": -128.0, "length": 18.0, "width": 14.0, "bank": 9.0, "yaw": 0.0},
 		{"kind": "gate", "name": "FinishGate", "x": 0.0, "z": -151.0, "width": 50.0, "color": Color("#ff9f1c")},
 	]
+	# Every feature carries an explicit asset/affordance contract. Individual
+	# course authors may override these keys in the table above; these defaults
+	# keep older profiles valid while still making the runtime decision visible.
+	for spec: Dictionary in specs:
+		var defaults := _asset_contract_defaults(str(spec.get("kind", "feature")))
+		if not spec.has("asset_id"):
+			spec["asset_id"] = defaults.asset_id
+		if not spec.has("asset_class"):
+			spec["asset_class"] = defaults.asset_class
+		if not spec.has("collision_policy"):
+			spec["collision_policy"] = defaults.collision_policy
+		if not spec.has("readability_category"):
+			spec["readability_category"] = defaults.readability_category
+		if not spec.has("scale_override"):
+			# The catalog route-gate scene is authored at the 13 m teaching-gate
+			# width; the finish gate intentionally scales that same asset to its
+			# wider course boundary.
+			spec["scale_override"] = clampf(float(spec.get("width", 13.0)) / 13.0, 0.5, 6.0) if str(spec.get("kind", "")) == "gate" else 1.0
+	return specs
+
+func _asset_contract_defaults(kind: String) -> Dictionary:
+	match kind:
+		"gate":
+			return {"asset_id": "route_gate", "asset_class": 2, "collision_policy": "GUIDE", "readability_category": "guide"}
+		"rail":
+			return {"asset_id": "grind_rail", "asset_class": 1, "collision_policy": "GRIND_ONLY", "readability_category": "jib"}
+		"roller", "tabletop", "hip", "berm", "moguls", "butter", "side_hit", "wallride", "bonk", "cannon":
+			return {"asset_id": "snow_feature", "asset_class": 0, "collision_policy": "SOLID", "readability_category": "terrain_feature"}
+		_:
+			return {"asset_id": "course_landmark", "asset_class": 2, "collision_policy": "GUIDE", "readability_category": "landmark"}

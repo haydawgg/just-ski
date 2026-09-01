@@ -5,6 +5,7 @@ enum Kind { POWDER, PACKED, GROOMED }
 
 const FAST_SHADER: Shader = preload("res://shaders/snow_fast.gdshader")
 const PREMIUM_SHADER: Shader = preload("res://shaders/snow_premium.gdshader")
+const SUMMIT_SHADER: Shader = preload("res://shaders/snow_summit.gdshader")
 const ALBEDO_TEXTURE: Texture2D = preload("res://assets/materials/snow_02/snow_02_diff_2k.jpg")
 const DETAIL_TEXTURE: Texture2D = preload("res://assets/materials/snow_02/snow_02_detail_2k.png")
 const PRESENTATION: SnowPresentationProfile = preload("res://resources/materials/default_snow_presentation_profile.tres")
@@ -13,23 +14,31 @@ class SnowMaterialInstance extends ShaderMaterial:
 	var surface_kind: int
 	var groom_direction_world_xz: Vector2
 	var feature_emphasis: float
+	var render_unshaded: bool
 
-	func _init(kind: int, groom_direction: Vector2, emphasis: float) -> void:
+	func _init(kind: int, groom_direction: Vector2, emphasis: float, unshaded: bool = false) -> void:
 		surface_kind = kind
 		groom_direction_world_xz = groom_direction.normalized() if groom_direction.length_squared() > 0.0001 else Vector2(0.0, -1.0)
 		feature_emphasis = clampf(emphasis, 0.0, 1.0)
+		render_unshaded = unshaded
 		GameSettings.settings_applied.connect(_apply_quality)
 		_apply_quality()
 
 	func _apply_quality() -> void:
 		var premium := int(GameSettings.active.get("snow_quality", 1)) == 1
-		shader = SnowMaterial.PREMIUM_SHADER if premium else SnowMaterial.FAST_SHADER
+		shader = SnowMaterial.SUMMIT_SHADER if render_unshaded else (SnowMaterial.PREMIUM_SHADER if premium else SnowMaterial.FAST_SHADER)
 		set_shader_parameter("snow_albedo_texture", SnowMaterial.ALBEDO_TEXTURE)
 		set_shader_parameter("snow_detail_texture", SnowMaterial.DETAIL_TEXTURE)
 		set_shader_parameter("texture_world_size", 1.35)
 		set_shader_parameter("triplanar_sharpness", 4.0)
 		set_shader_parameter("detail_near_distance", SnowMaterial.PRESENTATION.detail_near_distance)
-		set_shader_parameter("detail_far_distance", SnowMaterial.PRESENTATION.detail_far_distance)
+		# Keep the groomed run's restrained far-field response, but carry the
+		# authored snow texture farther across jumps and booters so their profiles
+		# do not flatten before the player reaches the takeoff.
+		var detail_far_distance := SnowMaterial.PRESENTATION.detail_far_distance
+		if feature_emphasis > 0.0:
+			detail_far_distance = maxf(detail_far_distance, 74.0 + feature_emphasis * 22.0)
+		set_shader_parameter("detail_far_distance", detail_far_distance)
 		set_shader_parameter("groom_direction_world_xz", groom_direction_world_xz)
 		set_shader_parameter("feature_emphasis", feature_emphasis)
 		set_shader_parameter("warm_snow_tint", SnowMaterial.PRESENTATION.warm_tint)
@@ -44,6 +53,12 @@ class SnowMaterialInstance extends ShaderMaterial:
 		set_shader_parameter("disturbed_roughness_offset", 0.075)
 		set_shader_parameter("disturbed_detail_boost", 0.15)
 		_apply_surface_parameters(premium)
+		if feature_emphasis > 0.0:
+			# Feature surfaces use the same triplanar source as the piste, with a
+			# deliberate 0.27..0.37 blend so terrain form remains visible without
+			# making the entire run look noisy.
+			var feature_texture_strength := clampf(0.25 + feature_emphasis * 0.18, 0.25, 0.4)
+			set_shader_parameter("albedo_texture_strength", feature_texture_strength)
 
 	func _apply_surface_parameters(premium: bool) -> void:
 		match surface_kind:
@@ -105,5 +120,5 @@ class SnowMaterialInstance extends ShaderMaterial:
 					set_shader_parameter("sparkle_density", 0.992)
 					set_shader_parameter("subsurface_strength", 0.14)
 
-static func create(kind: Kind = Kind.POWDER, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), feature_emphasis: float = 0.0) -> ShaderMaterial:
-	return SnowMaterialInstance.new(kind, groom_direction_world_xz, feature_emphasis)
+static func create(kind: Kind = Kind.POWDER, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), feature_emphasis: float = 0.0, unshaded: bool = false) -> ShaderMaterial:
+	return SnowMaterialInstance.new(kind, groom_direction_world_xz, feature_emphasis, unshaded)

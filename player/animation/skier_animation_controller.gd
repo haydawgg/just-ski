@@ -481,6 +481,23 @@ func debug_snapshot() -> Dictionary:
 		"state_transition_weight": _state_transition_weight,
 	}
 
+func equipment_attachment_snapshot() -> Dictionary:
+	"""Return release/impact equipment attachment telemetry for crash QA."""
+	if left_ski == null or right_ski == null or left_pole == null or right_pole == null or left_hand == null or right_hand == null:
+		return {"valid": false, "ski_separation_m": 0.0, "left_pole_hand_offset_m": 0.0, "right_pole_hand_offset_m": 0.0}
+	var ski_separation := left_ski.global_position.distance_to(right_ski.global_position)
+	var left_pole_offset := left_pole.global_position.distance_to(left_hand.global_position)
+	var right_pole_offset := right_pole.global_position.distance_to(right_hand.global_position)
+	var valid := is_finite(ski_separation) and is_finite(left_pole_offset) and is_finite(right_pole_offset)
+	return {
+		"valid": valid,
+		"ski_separation_m": ski_separation,
+		"left_pole_hand_offset_m": left_pole_offset,
+		"right_pole_hand_offset_m": right_pole_offset,
+		"ski_separation_in_range": ski_separation >= 0.18 and ski_separation <= 2.5,
+		"poles_attached": left_pole_offset <= 1.6 and right_pole_offset <= 1.6,
+	}
+
 func _update_skiing_dynamics(frame: SkierAnimationFrame, delta: float) -> void:
 	var grounded := frame.locomotion_state == STATE_GROUND
 	var desired_crouch := smoothstep(0.02, 1.0, frame.speed_ratio) if grounded else 0.0

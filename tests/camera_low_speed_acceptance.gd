@@ -1,7 +1,7 @@
 extends Node3D
 
 const STEP := 1.0 / 120.0
-const MAXIMUM_FRAME_TRAVEL := 0.45
+const MAXIMUM_FRAME_TRAVEL := 0.32
 
 var failures: Array[String] = []
 
@@ -46,15 +46,14 @@ func _run_low_speed_pivot_reproduction() -> void:
 	skier.velocity = Vector3(0.0, 0.0, -10.0)
 	_step_and_measure(camera_controller, skier, 120, "settle")
 
-	# Repeatedly cross the old 0.5 m/s heading threshold while pivoting the
-	# gameplay body. Tiny velocity changes deliberately point in very different
-	# directions, matching the 1-2 km/h clip reproduction.
+	# Cross the 1.0 m/s trajectory threshold while pivoting the gameplay body.
+	# Tiny velocity changes deliberately straddle the heading lock.
 	for frame_index: int in 240:
 		if not failures.is_empty():
 			break
 		var direction_index := int(frame_index / 3) % 4
 		var direction := [Vector3.FORWARD, Vector3.RIGHT, Vector3.BACK, Vector3.LEFT][direction_index] as Vector3
-		var low_speed := 0.48 if frame_index % 2 == 0 else 0.56
+		var low_speed := 0.90 if frame_index % 2 == 0 else 1.10
 		skier.velocity = direction * low_speed
 		skier.rotation.y += deg_to_rad(3.0)
 		_step_and_measure(camera_controller, skier, 1, "threshold pivot frame %d" % frame_index)
@@ -68,8 +67,11 @@ func _run_low_speed_pivot_reproduction() -> void:
 		_step_and_measure(camera_controller, skier, 1, "stationary pivot")
 
 	var telemetry := camera_controller.debug_snapshot()
-	for key: String in ["desired_yaw_degrees", "actual_yaw_degrees", "horizontal_speed", "target_distance"]:
-		if not telemetry.has(key) or not is_finite(float(telemetry.get(key, NAN))):
+	for key: String in ["desired_yaw_degrees", "actual_yaw_degrees", "horizontal_speed", "target_distance", "camera_occluded", "camera_clearance", "camera_fallback_count", "target_screen_position"]:
+		if key == "target_screen_position":
+			if not telemetry.has(key) or not (telemetry.get(key) as Vector2).is_finite():
+				failures.append("Camera telemetry %s was missing or non-finite" % key)
+		elif not telemetry.has(key) or not is_finite(float(telemetry.get(key, NAN))):
 			failures.append("Camera telemetry %s was missing or non-finite" % key)
 
 	remove_child(camera_controller)
@@ -80,6 +82,17 @@ func _run_low_speed_pivot_reproduction() -> void:
 	floor.queue_free()
 
 func _run_raised_feature_occlusion_reproduction() -> void:
+	var floor := StaticBody3D.new()
+	floor.collision_layer = 1
+	floor.collision_mask = 0
+	var floor_shape := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(80.0, 0.5, 80.0)
+	floor_shape.shape = floor_box
+	floor.add_child(floor_shape)
+	floor.position.y = -0.25
+	add_child(floor)
+
 	var skier := SkierController.new()
 	skier.set_physics_process(false)
 	add_child(skier)
@@ -106,12 +119,15 @@ func _run_raised_feature_occlusion_reproduction() -> void:
 	feature.add_child(shape_node)
 	add_child(feature)
 
+	var camera_safety_failures := 0
 	for frame_index: int in 150:
 		if not failures.is_empty():
 			break
 		var previous := camera_controller.global_position
 		camera_controller._physics_process(STEP)
 		var snapshot := camera_controller.debug_snapshot()
+		if not camera_controller._camera_destination_is_clear(camera_controller.global_position):
+			camera_safety_failures += 1
 		var distance := float(snapshot.target_distance)
 		var travel := camera_controller.global_position.distance_to(previous)
 		if distance < camera_controller.minimum_camera_distance - 0.01:
@@ -123,6 +139,8 @@ func _run_raised_feature_occlusion_reproduction() -> void:
 		if travel > MAXIMUM_FRAME_TRAVEL:
 			failures.append("Raised feature caused a %.3f m camera framing discontinuity" % travel)
 			break
+	if camera_safety_failures > 0:
+		failures.append("Raised feature placed the camera volume inside geometry for %d/150 frames" % camera_safety_failures)
 
 	remove_child(feature)
 	feature.queue_free()
@@ -130,6 +148,8 @@ func _run_raised_feature_occlusion_reproduction() -> void:
 	camera_controller.queue_free()
 	remove_child(skier)
 	skier.queue_free()
+	remove_child(floor)
+	floor.queue_free()
 
 func _step_and_measure(camera_controller: SkiCameraController, skier: SkierController, frames: int, phase: String) -> void:
 	for _index: int in frames:
@@ -144,5 +164,5 @@ func _step_and_measure(camera_controller: SkiCameraController, skier: SkierContr
 			failures.append("Camera entered terrain at y=%.3f" % camera_controller.global_position.y)
 			return
 		if frame_travel > MAXIMUM_FRAME_TRAVEL:
-			failures.append("Camera jumped %.3f m in one frame" % frame_travel)
+			failures.append("Camera jumped %.3f m in one frame from %s to %s at %s" % [frame_travel, previous_position, camera_controller.global_position, phase])
 			return

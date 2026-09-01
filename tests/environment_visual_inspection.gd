@@ -9,13 +9,19 @@ var landing_captured := false
 var output_directory := OUTPUT_DIRECTORY
 
 func _ready() -> void:
-	if OS.get_cmdline_user_args().has("--capture-character-scale"):
-		output_directory = "res://.godot_user/captures/priority_0_scale_after"
+	_parse_visual_arguments()
 	var absolute_directory := ProjectSettings.globalize_path(output_directory)
 	DirAccess.make_dir_recursive_absolute(absolute_directory)
 	var skier := get_node_or_null("Resort/Skier") as SkierController
 	if skier != null:
 		skier.landed.connect(_on_gameplay_landed)
+
+func _parse_visual_arguments() -> void:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument == "--capture-character-scale":
+			output_directory = "res://.godot_user/captures/priority_0_scale_after"
+		elif argument.begins_with("--capture-dir="):
+			output_directory = argument.trim_prefix("--capture-dir=")
 
 func _process(delta: float) -> void:
 	if frame_count > 90:

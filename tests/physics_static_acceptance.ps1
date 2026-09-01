@@ -56,9 +56,9 @@ Require-Match $controller 'animation_frame\.compression\s*=.*profile\.maximum_ju
 Reject-Match $controller 'jump_charge\s*/\s*0\.(28|32)' "No second jump-charge normalization constant may remain."
 
 Require-Match $resort '@export var physics_profile:\s*SkiPhysicsProfile' "Resort must own the active physics profile."
-Require-Match $resort 'ParkCourseBuilderModule\.build\(self,\s*course_profile,\s*physics_profile\)' "Course construction must receive the active profile."
+Require-Match $resort 'ParkCourseBuilderModule\.build\(self,\s*course_profile,\s*physics_profile(?:,\s*environment_asset_catalog)?\)' "Course construction must receive the active profile."
 Require-Match $resort 'player\.profile\s*=\s*physics_profile' "The skier must receive the same active profile."
-Require-Match $builder 'build\(parent:\s*Node3D,\s*profile:\s*ParkCourseProfile,\s*physics_profile:\s*SkiPhysicsProfile\)' "The course builder interface must require the active profile."
+Require-Match $builder 'build\(parent:\s*Node3D,\s*profile:\s*ParkCourseProfile,\s*physics_profile:\s*SkiPhysicsProfile(?:,\s*asset_catalog:\s*EnvironmentAssetCatalog\s*=\s*null)?\)' "The course builder interface must require the active profile."
 Require-Match $layout 'resolved_pop_strength\s*:=\s*design_pop_strength\s+if\s+design_pop_strength\s*>=\s*0\.0\s+else\s+physics_profile\.minimum_pop_strength' "Omitted design pop must resolve through the active profile."
 Require-Match $layout 'physics_profile\.pop_impulse\s*\*\s*clampf\(resolved_pop_strength' "Jump sizing must use active-profile pop impulse."
 Require-Match $layout 'physics_profile\.air_gravity' "Jump sizing must use active-profile air gravity."
@@ -102,7 +102,7 @@ foreach ($spec in $railSpecs) {
 }
 
 Reject-Match $camera '1\s*\|\s*4\s*\|\s*8' "Camera collision cannot include the Grind layer."
-Require-Match $camera 'PhysicsRayQueryParameters3D\.create\(from,\s*desired,\s*1\s*\|\s*4\)' "Camera collision must retain Terrain and Features layers."
+Require-Match $camera 'collision_mask\s*=\s*1\s*\|\s*4' "Camera collision must retain Terrain and Features layers."
 Require-Match $camera 'air_vertical_dead_zone' "Airborne camera framing must have a vertical dead zone."
 Require-Match $camera 'func _air_framing_target' "Airborne camera framing must use a filtered target seam."
 Require-Match $camera 'predicted_landing_look_weight' "Airborne camera must look toward predicted landings during descent."

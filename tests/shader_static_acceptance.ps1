@@ -147,8 +147,8 @@ foreach ($texturePath in @($diffusePath, $detailPath)) {
 Require-Match $attribution 'https://polyhaven\.com/a/snow_02' "Snow asset source URL is missing."
 Require-Match $attribution '\bCC0\b' "Snow asset CC0 status is missing."
 Require-Match $attribution 'Rob Tuytel' "Snow asset author is missing."
-Require-Match $attribution 'R:\s*OpenGL normal X' "Packed channel documentation must identify OpenGL normal X."
-Require-Match $attribution 'G:\s*OpenGL normal Y' "Packed channel documentation must identify OpenGL normal Y."
+Require-Match $attribution 'R\s*(?::|\|)\s*OpenGL normal X' "Packed channel documentation must identify OpenGL normal X."
+Require-Match $attribution 'G\s*(?::|\|)\s*OpenGL normal Y' "Packed channel documentation must identify OpenGL normal Y."
 Require-Match $importer 'snow_02_nor_gl_2k\.png' "Importer must use Poly Haven's OpenGL normal map."
 Require-Match $importer 'Image\.merge\("RGBA",\s*\(normal_x,\s*normal_y,\s*roughness,\s*translucency\)\)' "Importer channel packing must remain normal X/Y, roughness, translucency."
 

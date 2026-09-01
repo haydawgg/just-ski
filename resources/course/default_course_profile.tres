@@ -4,7 +4,7 @@
 
 [resource]
 script = ExtResource("1")
-snow_feature_marker_color = Color(0.164706, 0.65098, 0.741176, 1)
+snow_feature_marker_color = Color(0.0862745, 0.560784, 0.658824, 1)
 takeoff_marker_depth = 0.44
 landing_marker_length = 4.5
 landing_marker_width = 0.22

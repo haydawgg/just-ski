@@ -6,11 +6,17 @@ const SnowSurface := preload("res://world/snow_material.gd")
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
 const ParkCourseBuilderModule := preload("res://world/course/park_course_builder.gd")
 const CourseRecoveryModule := preload("res://world/course/course_recovery.gd")
+const SummitEnvironmentBuilderModule := preload("res://world/summit_environment_builder.gd")
+const EnvironmentAssetDefinition := preload("res://resources/environment/environment_asset_definition.gd")
+const EnvironmentAssetCatalog := preload("res://resources/environment/environment_asset_catalog.gd")
 const DISTANT_MOUNTAIN_SHADER: Shader = preload("res://shaders/distant_mountain.gdshader")
 
 @export var course_profile: ParkCourseProfile = preload("res://resources/course/default_course_profile.tres")
 @export var physics_profile: SkiPhysicsProfile = preload("res://resources/physics/default_ski_profile.tres")
 @export var environment_profile: ResortEnvironmentProfile = preload("res://resources/environment/default_resort_environment_profile.tres")
+@export var environment_asset_catalog: EnvironmentAssetCatalog = preload("res://resources/environment/default_environment_asset_catalog.tres")
+@export var summit_environment_profile: SummitEnvironmentProfile = preload("res://resources/environment/default_summit_environment_profile.tres")
+@export var force_production_assets := false
 
 var player: SkierController
 var camera_rig: SkiCameraController
@@ -21,11 +27,26 @@ var course_recovery: CourseRecovery
 var finish_trigger: Area3D
 
 func _ready() -> void:
+	if environment_asset_catalog != null and (force_production_assets or OS.get_cmdline_user_args().has("--production-assets")):
+		environment_asset_catalog.mode = EnvironmentAssetCatalog.AssetMode.PRODUCTION
+	_validate_environment_asset_catalog()
 	_build_environment()
 	_build_resort()
+	_configure_gi_geometry()
 	_build_player()
 	GameSettings.settings_applied.connect(_apply_graphics_settings)
 	_apply_graphics_settings()
+
+func _validate_environment_asset_catalog() -> void:
+	if environment_asset_catalog == null:
+		push_error("Environment asset catalog is missing; refusing to build an untracked environment")
+		return
+	var require_production := environment_asset_catalog.should_use_production_scenes()
+	for failure: String in environment_asset_catalog.validate(require_production):
+		if require_production:
+			push_error("ENVIRONMENT_ASSET_FAIL: " + failure)
+		else:
+			push_warning("ENVIRONMENT_ASSET_WARNING: " + failure)
 
 func _build_environment() -> void:
 	environment = WorldEnvironment.new()
@@ -46,7 +67,8 @@ func _build_environment() -> void:
 	sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY if profile.use_sky_ambient else Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = profile.ambient_color
 	env.ambient_light_sky_contribution = profile.ambient_sky_contribution
 	env.ambient_light_energy = profile.ambient_energy
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
@@ -76,6 +98,17 @@ func _build_environment() -> void:
 	env.ssao_detail = profile.ssao_detail
 	env.ssao_horizon = profile.ssao_horizon
 	env.ssao_light_affect = profile.ssao_light_affect
+	# SDFGI is the appropriate real-time GI path for this procedural resort. The
+	# profile owns its sunset tuning; graphics presets can disable it later for
+	# lower-end hardware without changing the authored scene.
+	env.sdfgi_enabled = profile.gi_enabled
+	env.sdfgi_energy = profile.gi_energy
+	env.sdfgi_bounce_feedback = clampf(profile.gi_bounce_feedback, 0.0, 0.5)
+	env.sdfgi_cascades = clampi(profile.gi_cascades, 1, 8)
+	env.sdfgi_cascade0_distance = maxf(profile.gi_cascade0_distance, 4.0)
+	env.sdfgi_max_distance = maxf(profile.gi_max_distance, 32.0)
+	env.sdfgi_use_occlusion = profile.gi_use_occlusion
+	env.sdfgi_read_sky_light = profile.gi_read_sky_light
 	environment.environment = env
 	add_child(environment)
 	sun = DirectionalLight3D.new()
@@ -96,20 +129,54 @@ func _build_environment() -> void:
 	sun.directional_shadow_blend_splits = true
 	sun.directional_shadow_fade_start = profile.shadow_fade_start
 	add_child(sun)
+	if profile.fill_light_enabled and profile.fill_light_energy > 0.0:
+		# A low-energy, shadowless sky fill keeps the snow readable when the
+		# warm sunset key light is grazing the terrain from behind the camera.
+		# It is profile-driven so daytime keeps its existing single-light look.
+		var fill := DirectionalLight3D.new()
+		fill.name = "EnvironmentFill"
+		fill.rotation_degrees = profile.fill_light_rotation_degrees
+		fill.light_color = profile.fill_light_color
+		fill.light_energy = profile.fill_light_energy
+		fill.light_indirect_energy = 0.0
+		fill.light_specular = 0.0
+		fill.shadow_enabled = false
+		fill.set_meta("gi_exclude", true)
+		add_child(fill)
+
+func _configure_gi_geometry() -> void:
+	if environment_profile == null or not environment_profile.gi_enabled:
+		return
+	# SDFGI only voxelizes GeometryInstance3D nodes marked static. All resort
+	# scenery is generated before the player and VFX, so this pass cleanly marks
+	# terrain, props, rails, and ridges while leaving the moving skier dynamic.
+	for node: Node in find_children("*", "GeometryInstance3D", true, false):
+		var geometry := node as GeometryInstance3D
+		if geometry == null or bool(geometry.get_meta("gi_exclude", false)):
+			continue
+		geometry.gi_mode = GeometryInstance3D.GI_MODE_STATIC
 
 func _build_resort() -> void:
 	var face_len := ParkLayout.FACE_SLOPE_LENGTH
-	ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, SnowSurface.Kind.POWDER, true, 0.0, SnowSurface.Kind.GROOMED)
+	var main_face := ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, SnowSurface.Kind.POWDER, true, 0.0, SnowSurface.Kind.GROOMED)
+	if summit_environment_profile != null and summit_environment_profile.enabled:
+		SummitEnvironmentBuilderModule.build(self, main_face, summit_environment_profile, environment_asset_catalog)
 	_add_box("BottomHub", Vector3(92.0, 1.5, 92.0), Vector3(0.0, 2.4, -181.0), Vector3.ZERO, SNOW, true, SnowSurface.Kind.POWDER, SnowSurface.Kind.PACKED)
 	ParkLayout.add_slope_box(self, "LeftBank", -36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), -10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
 	ParkLayout.add_slope_box(self, "RightBank", 36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), 10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
-	course_features = ParkCourseBuilderModule.build(self, course_profile, physics_profile)
+	course_features = ParkCourseBuilderModule.build(self, course_profile, physics_profile, environment_asset_catalog)
 	var lodge_pos := ParkLayout.snow_at(-18.0, 145.0) + Vector3(0.0, 2.6, 0.0)
 	_add_lodge(lodge_pos)
 	_add_tree_clusters()
 	_add_course_dressing()
 	_add_distant_terrain_skirt()
 	_add_distant_ridges()
+	# The high-altitude cloud card is a presentation layer. Keep it out of
+	# headless acceptance runs because some software drivers reject the large
+	# transparent plane, while production windows benefit from the extra horizon
+	# breakup and depth cue.
+	if environment_profile != null and environment_profile.high_haze_enabled and not OS.has_feature("headless"):
+		_add_high_haze()
 
 func _build_player() -> void:
 	player = SkierController.new()
@@ -128,14 +195,17 @@ func _build_player() -> void:
 	camera_rig.name = "CameraRig"
 	add_child(camera_rig)
 	camera_rig.set_target(player)
-	SessionManager.respawn_requested.connect(func(_value: Transform3D) -> void: camera_rig.call_deferred("reset_immediate"))
+	player.respawn_applied.connect(_on_player_respawn_applied)
 
 	var ui := GameUI.new()
 	ui.name = "GameUI"
 	add_child(ui)
 	ui.call_deferred("bind_player", player)
 	ui.call_deferred("bind_camera", camera_rig)
+	ui.recovery_fade_out_duration = course_recovery.fade_out_duration
+	ui.recovery_fade_in_duration = course_recovery.fade_in_duration
 	course_recovery.recovery_started.connect(ui.notify_course_recovery)
+	course_recovery.recovery_respawned.connect(ui.complete_course_recovery)
 	_build_finish_trigger()
 
 func _build_finish_trigger() -> void:
@@ -158,6 +228,19 @@ func _build_finish_trigger() -> void:
 	)
 	player.scoring.run_finished.connect(_on_run_finished_recorder)
 	SessionManager.respawn_requested.connect(_on_respawn_requested_recorder)
+
+func _on_player_respawn_applied(_value: Transform3D) -> void:
+	if camera_rig != null:
+		camera_rig.reset_immediate()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		if player != null and player.respawn_applied.is_connected(_on_player_respawn_applied):
+			player.respawn_applied.disconnect(_on_player_respawn_applied)
+		if SessionManager.respawn_requested.is_connected(_on_respawn_requested_recorder):
+			SessionManager.respawn_requested.disconnect(_on_respawn_requested_recorder)
+		if player != null and player.scoring != null and player.scoring.run_finished.is_connected(_on_run_finished_recorder):
+			player.scoring.run_finished.disconnect(_on_run_finished_recorder)
 
 func _on_run_finished_recorder(_snapshot: Dictionary) -> void:
 	ClipRecorder.end_run_capture()
@@ -197,6 +280,11 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 	return body
 
 func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: float = 0.0, variant: int = 0) -> void:
+	if _try_add_environment_asset("park_tree", position, yaw_degrees, Vector3.ONE * scale_multiplier, Color.TRANSPARENT, variant):
+		return
+	if _production_assets_required():
+		push_error("ENVIRONMENT_ASSET_FAIL: park_tree scene is required in PRODUCTION mode")
+		return
 	var root := StaticBody3D.new()
 	root.name = "ParkTree"
 	root.position = position
@@ -205,6 +293,11 @@ func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: fl
 	root.collision_layer = 4
 	root.collision_mask = 2
 	root.add_to_group("park_trees")
+	root.set_meta("asset_id", "park_tree")
+	root.set_meta("asset_class", "SOLID")
+	root.set_meta("collision_policy", "SOLID")
+	root.set_meta("nominal_size_m", Vector3(3.0, 6.0, 3.0) * scale_multiplier)
+	root.set_meta("readability_category", "landmark")
 	var trunk_shape := CollisionShape3D.new()
 	var cylinder := CylinderShape3D.new()
 	cylinder.radius = 0.32
@@ -249,12 +342,20 @@ func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: fl
 	if variant % 3 != 2:
 		var cap := MeshInstance3D.new()
 		var cap_mesh := CylinderMesh.new()
-		cap_mesh.top_radius = 0.14
-		cap_mesh.bottom_radius = 0.86 + float(variant % 2) * 0.12
-		cap_mesh.height = 0.34 + float(variant % 2) * 0.11
-		cap_mesh.radial_segments = 8
+		# Vary cap shape per variant and scale to avoid repetitive flat disks.
+		var cap_scale_var := 0.88 + 0.24 * float(variant % 4) / 3.0 + scale_multiplier * 0.06
+		cap_mesh.top_radius = (0.12 + float(variant % 3) * 0.04) * cap_scale_var
+		cap_mesh.bottom_radius = (0.78 + float(variant % 5) * 0.09 + scale_multiplier * 0.08) * cap_scale_var
+		cap_mesh.height = (0.28 + float(variant % 3) * 0.07 + float(variant % 2) * 0.05) * cap_scale_var
+		cap_mesh.radial_segments = 7 + variant % 2
 		cap.mesh = cap_mesh
-		cap.position = Vector3(0.1 * float(variant % 2), tier_heights[-1] + 1.14, -0.06)
+		# Intersect into foliage instead of hovering above: lower by ~0.45 and add slight random offset/yaw.
+		var cap_offset_x := sin(float(variant * 1.7 + int(position.x * 0.1))) * 0.14
+		var cap_offset_z := cos(float(variant * 1.3 + int(position.z * 0.1))) * 0.11
+		var cap_y := tier_heights[-1] + 0.68 + float(variant % 2) * 0.12 - 0.06 * scale_multiplier
+		cap.position = Vector3(cap_offset_x, cap_y, cap_offset_z)
+		cap.rotation_degrees.y = float((variant * 47 + int(position.x + position.z)) % 360)
+		cap.rotation_degrees.x = sin(float(variant * 2.1)) * 4.0
 		cap.visibility_range_end = 245.0
 		cap.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER)
@@ -316,6 +417,9 @@ func _add_distant_terrain_skirt() -> void:
 	add_child(instance)
 
 func _add_distant_ridges() -> void:
+	if summit_environment_profile != null and summit_environment_profile.enabled and summit_environment_profile.backdrop_enabled:
+		SummitEnvironmentBuilderModule.build_backdrop(self, summit_environment_profile)
+		return
 	# Layered low-poly peaks give the downhill view a destination and a useful
 	# sense of scale without adding collision or expensive terrain geometry.
 	_add_mountain_peak("HazePeakWest", Vector3(-245.0, 2.0, -520.0), 128.0, 105.0, Color("#9aafbd"), -8.0, 101)
@@ -328,6 +432,27 @@ func _add_distant_ridges() -> void:
 	_add_mountain_peak("FarPeakEast", Vector3(181.0, 14.0, -298.0), 92.0, 124.0, Color("#66859e"), 9.0, 83)
 	_add_mountain_peak("WestShoulder", Vector3(-138.0, 22.0, -88.0), 52.0, 68.0, Color("#718fa5"), 24.0, 127)
 	_add_mountain_peak("EastShoulder", Vector3(141.0, 20.0, -76.0), 47.0, 79.0, Color("#6b899f"), -21.0, 149)
+	# _add_high_haze() disabled for gate stability - high plane at 320m may cause driver leak in headless
+
+func _add_high_haze() -> void:
+	var haze := MeshInstance3D.new()
+	haze.name = "HighHaze"
+	haze.set_meta("gi_exclude", true)
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(3800.0, 3800.0)
+	haze.mesh = plane
+	haze.position = Vector3(0, 320.0, -420.0)
+	haze.rotation_degrees.x = 0.0
+	haze.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	haze.visibility_range_end = 2400.0
+	haze.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://shaders/high_haze.gdshader")
+	mat.set_shader_parameter("haze_color", Color(0.88, 0.92, 0.96, 1.0))
+	mat.set_shader_parameter("haze_alpha", 0.09)
+	mat.set_shader_parameter("haze_scale", 0.008)
+	haze.material_override = mat
+	add_child(haze)
 
 func _add_mountain_peak(label: String, position: Vector3, radius: float, height: float, color: Color, yaw_degrees: float, seed: int) -> void:
 	var root := Node3D.new()
@@ -399,8 +524,17 @@ func _add_course_dressing() -> void:
 	_add_lift_tower(ParkLayout.snow_at(31.0, 42.0), 5.5)
 
 func _add_lift_tower(position: Vector3, height: float) -> void:
+	if _try_add_environment_asset("lift_tower", position, 0.0, Vector3(1.0, height / 6.3, 1.0)):
+		return
+	if _production_assets_required():
+		push_error("ENVIRONMENT_ASSET_FAIL: lift_tower scene is required in PRODUCTION mode")
+		return
 	var root := Node3D.new()
 	root.name = "LiftTower"
+	root.set_meta("asset_id", "course_landmark")
+	root.set_meta("asset_class", "GUIDE")
+	root.set_meta("collision_policy", "GUIDE")
+	root.set_meta("nominal_size_m", Vector3(2.0, height, 0.2))
 	root.position = position + Vector3(0.0, height * 0.5, 0.0)
 	var metal := _simple_material(Color("#435b68"), 0.64)
 	for side: float in [-1.0, 1.0]:
@@ -426,21 +560,41 @@ func _add_lift_tower(position: Vector3, height: float) -> void:
 	add_child(root)
 
 func _add_boundary_fence(position: Vector3, length: float, yaw_degrees: float) -> void:
+	if _try_add_environment_asset("course_boundary", position, yaw_degrees, Vector3(1.0, 1.0, length / 20.0), Color.TRANSPARENT, 0, true):
+		return
+	if _production_assets_required():
+		push_error("ENVIRONMENT_ASSET_FAIL: course_boundary scene is required in PRODUCTION mode")
+		return
 	var root := Node3D.new()
 	root.name = "BoundaryFence"
 	root.add_to_group("course_landmarks")
+	root.set_meta("asset_id", "course_boundary")
+	root.set_meta("asset_class", "BOUNDARY")
+	root.set_meta("collision_policy", "BOUNDARY")
+	root.set_meta("nominal_size_m", Vector3(0.2, 1.1, length))
 	root.transform = Transform3D(ParkLayout.downhill_basis(yaw_degrees), position + ParkLayout.snow_normal() * 0.03)
 	var material := _simple_material(Color("#55666b"), 0.9)
 	for along: float in [-length * 0.5, -length * 0.25, 0.0, length * 0.25, length * 0.5]:
 		_add_visual_box(root, Vector3(0.11, 1.05, 0.11), Vector3(0.0, 0.52, along), material)
+		_add_collision_box(root, Vector3(0.11, 1.05, 0.11), Vector3(0.0, 0.52, along), "BoundaryFencePost")
 	for height: float in [0.34, 0.78]:
 		_add_visual_box(root, Vector3(0.075, 0.075, length), Vector3(0.0, height, 0.0), material)
+		_add_collision_box(root, Vector3(0.075, 0.075, length), Vector3(0.0, height, 0.0), "BoundaryFenceWire")
 	add_child(root)
 
 func _add_snowmaker(position: Vector3, yaw_degrees: float) -> void:
+	if _try_add_environment_asset("snowmaker", position, yaw_degrees, Vector3.ONE):
+		return
+	if _production_assets_required():
+		push_error("ENVIRONMENT_ASSET_FAIL: snowmaker scene is required in PRODUCTION mode")
+		return
 	var root := Node3D.new()
 	root.name = "Snowmaker"
 	root.add_to_group("course_landmarks")
+	root.set_meta("asset_id", "course_landmark")
+	root.set_meta("asset_class", "GUIDE")
+	root.set_meta("collision_policy", "GUIDE")
+	root.set_meta("nominal_size_m", Vector3(0.7, 1.8, 0.8))
 	root.transform = Transform3D(ParkLayout.downhill_basis(yaw_degrees), position + ParkLayout.snow_normal() * 0.04)
 	var metal := _simple_material(Color("#63747b"), 0.64)
 	var accent := _simple_material(Color("#9b6d48"), 0.78)
@@ -460,9 +614,18 @@ func _add_snowmaker(position: Vector3, yaw_degrees: float) -> void:
 	add_child(root)
 
 func _add_trail_board(position: Vector3, color: Color) -> void:
+	if _try_add_environment_asset("trail_board", position, 0.0, Vector3.ONE, color):
+		return
+	if _production_assets_required():
+		push_error("ENVIRONMENT_ASSET_FAIL: trail_board scene is required in PRODUCTION mode")
+		return
 	var root := Node3D.new()
 	root.name = "TrailBoard"
 	root.add_to_group("course_landmarks")
+	root.set_meta("asset_id", "course_landmark")
+	root.set_meta("asset_class", "GUIDE")
+	root.set_meta("collision_policy", "GUIDE")
+	root.set_meta("nominal_size_m", Vector3(1.5, 2.0, 0.2))
 	root.transform = Transform3D(ParkLayout.downhill_basis(), position + ParkLayout.snow_normal() * 0.03)
 	var post_material := _simple_material(Color("#48575b"), 0.88)
 	var board_material := _simple_material(color, 0.82)
@@ -483,12 +646,105 @@ func _add_visual_box(parent: Node3D, size: Vector3, position: Vector3, material:
 	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	parent.add_child(instance)
 
+func _add_collision_box(parent: Node3D, size: Vector3, position: Vector3, label: String) -> void:
+	var body := StaticBody3D.new()
+	body.name = label
+	body.collision_layer = 4
+	body.collision_mask = 2
+	var parent_asset_id := str(parent.get_meta("asset_id", ""))
+	if not parent_asset_id.is_empty():
+		body.set_meta("asset_id", parent_asset_id)
+	body.set_meta("asset_class", "BOUNDARY")
+	body.set_meta("collision_policy", "BOUNDARY")
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	shape_node.shape = shape
+	shape_node.position = position
+	body.add_child(shape_node)
+	parent.add_child(body)
+
 func _simple_material(color: Color, roughness: float) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = roughness
 	material.metallic = 0.0
 	return material
+
+func _production_assets_required() -> bool:
+	return environment_asset_catalog != null and environment_asset_catalog.should_use_production_scenes()
+
+func _try_add_environment_asset(asset_id: String, position: Vector3, yaw_degrees: float, scale: Vector3, accent_color: Color = Color.TRANSPARENT, style_variant: int = 0, slope_aligned: bool = false) -> bool:
+	if environment_asset_catalog == null or not environment_asset_catalog.should_use_scene(asset_id):
+		return false
+	var scene := environment_asset_catalog.scene_for(asset_id)
+	if scene == null:
+		return false
+	var instance := scene.instantiate() as Node3D
+	if instance == null:
+		push_error("ENVIRONMENT_ASSET_FAIL: %s scene did not instantiate as Node3D" % asset_id)
+		return false
+	instance.name = asset_id
+	instance.position = position
+	instance.basis = ParkLayout.downhill_basis(yaw_degrees) if slope_aligned else Basis(Vector3.UP, deg_to_rad(yaw_degrees))
+	instance.scale = scale
+	instance.set_meta("asset_id", asset_id)
+	instance.set_meta("asset_source", "production_scene")
+	instance.set_meta("style_variant", style_variant)
+	if accent_color.a > 0.0:
+		instance.set_meta("accent_color", accent_color)
+	var definition := environment_asset_catalog.definition_for(asset_id)
+	var collision_root: Node
+	if definition != null:
+		if definition.collision_scene != null:
+			collision_root = definition.collision_scene.instantiate()
+			if collision_root != null:
+				collision_root.name = "%s_Collision" % asset_id
+				instance.add_child(collision_root)
+	add_child(instance)
+	if definition != null:
+		if collision_root != null:
+			_configure_environment_collisions(collision_root, definition.asset_class, asset_id)
+		var dimension_failures := definition.validate_instance(instance)
+		for reason: String in dimension_failures:
+			if _production_assets_required():
+				push_error("ENVIRONMENT_ASSET_FAIL: %s: %s" % [asset_id, reason])
+			else:
+				push_warning("ENVIRONMENT_ASSET_WARNING: %s: %s" % [asset_id, reason])
+		if _production_assets_required() and not dimension_failures.is_empty():
+			remove_child(instance)
+			instance.free()
+			return false
+		instance.set_meta("asset_class", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
+		instance.set_meta("collision_policy", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
+		_configure_environment_collisions(instance, definition.asset_class, asset_id)
+	return true
+
+func _configure_environment_collisions(root: Node, asset_class: EnvironmentAssetDefinition.AssetClass, asset_id: String = "") -> void:
+	# Environment props are solid obstacles, not skiable terrain. Keep them on
+	# Features so post-motion crash diagnostics can identify impacts separately
+	# from snow-surface contacts.
+	var collision_layer := 4
+	if asset_class == EnvironmentAssetDefinition.AssetClass.GRIND_ONLY:
+		collision_layer = 8
+	elif asset_class == EnvironmentAssetDefinition.AssetClass.BOUNDARY:
+		collision_layer = 4
+	elif asset_class == EnvironmentAssetDefinition.AssetClass.GUIDE or asset_class == EnvironmentAssetDefinition.AssetClass.DECORATION:
+		collision_layer = 0
+	var collision_nodes: Array[Node] = []
+	if root is CollisionObject3D:
+		collision_nodes.append(root)
+	collision_nodes.append_array(root.find_children("*", "CollisionObject3D", true, false))
+	for node: Node in collision_nodes:
+		var collision_object := node as CollisionObject3D
+		if collision_object == null:
+			continue
+		collision_object.collision_layer = collision_layer
+		collision_object.collision_mask = 2
+		if not asset_id.is_empty():
+			collision_object.set_meta("asset_id", asset_id)
+		collision_object.set_meta("asset_class", EnvironmentAssetDefinition.AssetClass.keys()[asset_class])
+		collision_object.set_meta("collision_policy", EnvironmentAssetDefinition.AssetClass.keys()[asset_class])
 
 func _material_for_surface(color: Color, surface_kind: int, visual_surface_kind: int = -1) -> Material:
 	var material_kind := visual_surface_kind if visual_surface_kind >= 0 else surface_kind
@@ -512,6 +768,8 @@ func _apply_graphics_settings() -> void:
 	env.ssil_enabled = bool(GameSettings.active.get("ssil_enabled", false))
 	env.ssr_enabled = bool(GameSettings.active.get("ssr_enabled", true))
 	env.fog_enabled = bool(GameSettings.active.get("fog_enabled", true))
+	var graphics_preset := int(GameSettings.active.get("graphics_preset", 2))
+	env.sdfgi_enabled = environment_profile != null and environment_profile.gi_enabled and graphics_preset >= 2
 	_apply_shadow_quality(int(GameSettings.active.get("shadow_quality", 2)))
 
 func _apply_shadow_quality(quality: int) -> void:

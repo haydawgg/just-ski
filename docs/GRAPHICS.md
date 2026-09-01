@@ -77,6 +77,10 @@ Environment resources own the maintained presentation values rather than scatter
 
 The environment is deterministic enough for repeatable capture-based review.
 
+Course guidance is presentation-only. Oversized overhead gates and persistent world labels are replaced by short paired flag posts with no collision, emission, or cross-course beam. They fade at close and long range. Takeoff/landing stamps remain surface-conforming, opaque, rough, and scene-lit so they read as snow treatment rather than see-through geometry, a rail, or a HUD overlay.
+
+The summit-to-first-landing vertical slice adds a deterministic heightfield render layer over the existing `MainSnowFace` collision box. The playable corridor stays coplanar with the collision plane; only the outer shoulder receives seeded relief, so render dressing cannot change ski contact or recovery. The heightfield uses the existing snow texture/detail parameter set through a shadow-safe unshaded variant (`snow_summit.gdshader`) because the large presentation mesh otherwise becomes a full receiver for low-angle sunset shadow cascades. The summit shader remaps the authored broad field into a bounded world-space breakup plus a finer seeded field: the near camera footprint spans only a few meters, so the profile's 0.018 world scale would otherwise sample almost one constant noise cell and flatten the snow. Its GI exclusion is intentional: sunset SDFGI remains enabled for the authored ridges, lift line, trees, and course dressing while the render-only summit surface keeps neutral snow readability. Summit boulders and the lift line are cataloged `DECORATION` assets with finite LOD ranges and no colliders.
+
 ## Procedural terrain presentation
 
 Park terrain is generated as actual snow forms rather than assembled only from visible boxes and wedges. Jumps, rollers, banks, aprons, knuckles, landings, and run-outs use sampled geometry that also supplies collision.
@@ -100,6 +104,8 @@ Normal-play HUD hierarchy prioritizes speed and scoring, then contextual trick, 
 The control onboarding, right-stick visualizer, and trick/landing callouts are intentionally contextual rather than permanently occupying the screen.
 
 Snow VFX uses existing gameplay/contact signals to differentiate continuous ski spray, stronger skid/brake spray, landings, and bail scraping. Audio and rumble consume the same broad gameplay state but are separate systems.
+
+`snow_depth_visual_metrics.tscn` checks the five fixed gameplay trajectory captures for average neutral-snow value separation and bounds the coverage of dark blue shadows; unrelated diagnostic PNGs in the same directory are ignored. The matching capture loop remains `environment_visual_inspection.tscn`; the snow-depth baseline and result live under `.godot_user/captures/snow_depth_before` and `.godot_user/captures/snow_depth_after`.
 
 ## Gameplay clip output
 

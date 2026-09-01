@@ -18,6 +18,10 @@ var path_length := 0.0
 
 func _ready() -> void:
 	add_to_group("grind_rails")
+	set_meta("asset_id", "grind_rail")
+	set_meta("asset_class", "GRIND_ONLY")
+	set_meta("collision_policy", "GRIND_ONLY")
+	set_meta("readability_category", "jib")
 	if path == null or path.point_count < 2:
 		push_warning("Disabled invalid grind rail: %s" % name)
 		process_mode = Node.PROCESS_MODE_DISABLED
@@ -94,12 +98,24 @@ func _build_visual_and_collision() -> void:
 	visual.name = "ContinuousRailVisual"
 	visual.mesh = _build_continuous_visual_mesh(samples)
 	var material := StandardMaterial3D.new()
-	material.albedo_color = Color("#b9784e") if rail_type == RailType.BOX else Color("#536d78")
-	material.metallic = 0.48 if rail_type != RailType.BOX else 0.08
-	material.roughness = 0.46 if rail_type != RailType.BOX else 0.58
+	material.albedo_color = Color("#c76833") if rail_type == RailType.BOX else Color("#2f6f82")
+	material.metallic = 0.52 if rail_type != RailType.BOX else 0.12
+	material.roughness = 0.38 if rail_type != RailType.BOX else 0.52
 	material.emission_enabled = false
 	visual.material_override = material
-	visual.visibility_range_end = 190.0
+	var lod_end := 190.0
+	var lod_start := 30.0
+	var lod_contract := get_node_or_null("LODContract")
+	if lod_contract != null:
+		var distances := lod_contract.get_meta("lod_distances_m", Vector3(30.0, 90.0, 190.0)) as Vector3
+		lod_start = maxf(distances.x, 1.0)
+		lod_end = maxf(distances.z, lod_start + 1.0)
+	visual.set_meta("lod_cull_start_m", lod_start)
+	visual.set_meta("lod_cull_end_m", lod_end)
+	visual.visibility_range_begin = 0.0
+	visual.visibility_range_begin_margin = 0.0
+	visual.visibility_range_end = lod_end
+	visual.visibility_range_end_margin = maxf(lod_start * 0.2, 8.0)
 	visual.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(visual)
 	for index: int in range(samples.size() - 1):
@@ -112,6 +128,9 @@ func _build_visual_and_collision() -> void:
 		body.collision_layer = 8
 		body.collision_mask = 2
 		body.set_meta("ski_surface_class", "metal")
+		body.set_meta("asset_id", "grind_rail")
+		body.set_meta("asset_class", "GRIND_ONLY")
+		body.set_meta("collision_policy", "GRIND_ONLY")
 		if rail_type == RailType.BOX:
 			var box_shape := BoxShape3D.new()
 			box_shape.size = Vector3(1.15, 0.22, delta.length())

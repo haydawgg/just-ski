@@ -20,6 +20,7 @@ const CAPTURE_WIDTH := 960
 const CAPTURE_HEIGHT := 540
 const JPEG_QUALITY := 0.75
 const MIN_CLIP_FRAMES := 18           # ~0.6 s
+const MAX_PENDING_JPEG_FRAMES := 6
 
 var armed := false
 var _recording := false
@@ -27,6 +28,14 @@ var _encoding := false
 var _frames: Array[PackedByteArray] = []
 var _capture_accum := 0.0
 var _encode_thread: Thread = null
+var _jpeg_thread: Thread = null
+var _jpeg_mutex := Mutex.new()
+var _jpeg_semaphore := Semaphore.new()
+var _jpeg_queue: Array[Image] = []
+var _jpeg_worker_stop := false
+var _jpeg_worker_available := false
+var _capture_frame_count := 0
+var _dropped_capture_frames := 0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -49,14 +58,23 @@ func _process(delta: float) -> void:
 	if _capture_accum < interval:
 		return
 	_capture_accum = fmod(_capture_accum, interval)
-	var image := get_viewport().get_texture().get_image()
+	if _jpeg_worker_available and not _can_queue_jpeg_frame():
+		_dropped_capture_frames += 1
+		return
+	var viewport_texture := get_viewport().get_texture()
+	if viewport_texture == null or not viewport_texture.get_rid().is_valid():
+		return
+	var image := viewport_texture.get_image()
 	if image == null or image.is_empty():
 		return
-	image.resize(CAPTURE_WIDTH, CAPTURE_HEIGHT, Image.INTERPOLATE_BILINEAR)
-	if image.get_format() != Image.FORMAT_RGB8:
-		image.convert(Image.FORMAT_RGB8)
-	_frames.append(image.save_jpg_to_buffer(JPEG_QUALITY))
-	if _frames.size() >= MAX_CLIP_FRAMES:
+	if _jpeg_worker_available:
+		_queue_jpeg_frame(image)
+	else:
+		var encoded := _encode_jpeg_frame(image)
+		if not encoded.is_empty():
+			_frames.append(encoded)
+	_capture_frame_count += 1
+	if _capture_frame_count >= MAX_CLIP_FRAMES:
 		_stop_recording()
 
 func is_recording() -> bool:
@@ -94,6 +112,9 @@ func _start_recording() -> void:
 	_recording = true
 	_frames.clear()
 	_capture_accum = 1.0 / CAPTURE_FPS
+	_capture_frame_count = 0
+	_dropped_capture_frames = 0
+	_start_jpeg_worker()
 	recording_changed.emit(true)
 
 func _stop_recording() -> void:
@@ -101,6 +122,7 @@ func _stop_recording() -> void:
 		return
 	_recording = false
 	recording_changed.emit(false)
+	_stop_jpeg_worker()
 	if _frames.size() < MIN_CLIP_FRAMES:
 		clip_info.emit("CLIP TOO SHORT — RIDE A MOMENT BEFORE SAVING")
 		_frames.clear()
@@ -111,6 +133,79 @@ func _stop_recording() -> void:
 	encoding_changed.emit(true)
 	_encode_thread = Thread.new()
 	_encode_thread.start(_encode_clip.bind(frames, CAPTURE_WIDTH, CAPTURE_HEIGHT))
+
+func _start_jpeg_worker() -> void:
+	_stop_jpeg_worker()
+	_jpeg_mutex.lock()
+	_jpeg_queue.clear()
+	_jpeg_worker_stop = false
+	_jpeg_mutex.unlock()
+	_jpeg_thread = Thread.new()
+	var start_error := _jpeg_thread.start(_jpeg_worker)
+	if start_error != OK:
+		_jpeg_thread = null
+		_jpeg_worker_available = false
+		push_warning("Clip JPEG worker unavailable (%s); using synchronous capture" % error_string(start_error))
+		return
+	_jpeg_worker_available = true
+
+func _stop_jpeg_worker() -> void:
+	if _jpeg_thread == null:
+		_jpeg_worker_available = false
+		return
+	_jpeg_mutex.lock()
+	_jpeg_worker_stop = true
+	_jpeg_mutex.unlock()
+	_jpeg_semaphore.post()
+	_jpeg_thread.wait_to_finish()
+	_jpeg_thread = null
+	_jpeg_worker_available = false
+	_jpeg_mutex.lock()
+	_jpeg_queue.clear()
+	_jpeg_worker_stop = false
+	_jpeg_mutex.unlock()
+
+func _can_queue_jpeg_frame() -> bool:
+	_jpeg_mutex.lock()
+	var can_queue := _jpeg_queue.size() < MAX_PENDING_JPEG_FRAMES
+	_jpeg_mutex.unlock()
+	return can_queue
+
+func _queue_jpeg_frame(image: Image) -> void:
+	_jpeg_mutex.lock()
+	if _jpeg_worker_stop or _jpeg_queue.size() >= MAX_PENDING_JPEG_FRAMES:
+		_jpeg_mutex.unlock()
+		_dropped_capture_frames += 1
+		return
+	_jpeg_queue.append(image)
+	_jpeg_mutex.unlock()
+	_jpeg_semaphore.post()
+
+func _jpeg_worker() -> void:
+	while true:
+		_jpeg_semaphore.wait()
+		var image: Image = null
+		var should_stop := false
+		_jpeg_mutex.lock()
+		if not _jpeg_queue.is_empty():
+			image = _jpeg_queue.pop_front()
+		elif _jpeg_worker_stop:
+			should_stop = true
+		_jpeg_mutex.unlock()
+		if image != null:
+			var encoded := _encode_jpeg_frame(image)
+			if not encoded.is_empty():
+				_jpeg_mutex.lock()
+				_frames.append(encoded)
+				_jpeg_mutex.unlock()
+		elif should_stop:
+			return
+
+func _encode_jpeg_frame(image: Image) -> PackedByteArray:
+	image.resize(CAPTURE_WIDTH, CAPTURE_HEIGHT, Image.INTERPOLATE_BILINEAR)
+	if image.get_format() != Image.FORMAT_RGB8:
+		image.convert(Image.FORMAT_RGB8)
+	return image.save_jpg_to_buffer(JPEG_QUALITY)
 
 func _encode_clip(frames: Array, width: int, height: int) -> void:
 	# Frames arrive pre-encoded as JPEG; muxing is pure byte assembly.
