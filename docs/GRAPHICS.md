@@ -109,7 +109,7 @@ Snow VFX uses existing gameplay/contact signals to differentiate continuous ski 
 
 ## Gameplay clip output
 
-The built-in recorder captures the viewport at 960×540 and 30 fps, JPEG-encodes frames, and muxes them into an MJPEG-in-MP4 file. Encoding occurs after capture on a worker thread so the gameplay loop is not responsible for muxing each frame.
+The built-in recorder captures the viewport at 960×540 and 30 fps, JPEG-encodes frames, and muxes them into an MJPEG-in-MP4 file. Encoding occurs after capture on a worker thread so the gameplay loop is not responsible for muxing each frame. Capture slots are retained when the bounded JPEG queue is saturated and missing slots repeat the nearest encoded frame, preserving presentation duration. The long-capture mux streams MP4 samples to a temporary file rather than building a second complete payload in memory; see [Clip capture](CLIP_CAPTURE.md).
 
 The capture contains video only. See [Controls](CONTROLS.md) for recorder behavior.
 

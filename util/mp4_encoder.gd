@@ -5,7 +5,9 @@ extends RefCounted
 ## Every frame is a complete JPEG produced by Image.save_jpg_to_buffer().
 ## Samples are stored contiguously in a single mdat chunk at a constant
 ## frame rate, so all sample tables are trivial. Safe to run on a
-## background thread; no allocations are shared with the caller.
+## background thread; no allocations are shared with the caller. The
+## streaming entry point writes the mdat samples directly to disk instead of
+## creating a second complete payload in memory.
 
 const VIDEO_TIMESCALE := 30000
 const MOVIE_TIMESCALE := 1000
@@ -30,6 +32,38 @@ static func encode(jpeg_frames: Array, fps: int, width: int, height: int) -> Pac
 	bytes.append_array(_box("mdat", mdat_payload))
 	bytes.append_array(_build_moov(sizes, delta, chunk_offset, width, height, fps))
 	return bytes
+
+static func write_to_file(jpeg_frames: Array, fps: int, width: int, height: int, path: String) -> Error:
+	if jpeg_frames.is_empty() or fps <= 0 or width <= 0 or height <= 0:
+		return ERR_INVALID_PARAMETER
+	var sizes := PackedInt32Array()
+	sizes.resize(jpeg_frames.size())
+	var mdat_payload_size := 0
+	for i: int in jpeg_frames.size():
+		var frame: PackedByteArray = jpeg_frames[i]
+		if frame.is_empty() or frame.size() > 0x7FFFFFFF:
+			return ERR_INVALID_DATA
+		sizes[i] = frame.size()
+		mdat_payload_size += frame.size()
+	if mdat_payload_size > 0xFFFFFFFF - 8:
+		return ERR_INVALID_PARAMETER
+
+	var ftyp := _build_ftyp()
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return FileAccess.get_open_error()
+	file.store_buffer(ftyp)
+	file.store_buffer(_u32(mdat_payload_size + 8))
+	file.store_buffer(_tag("mdat"))
+	for frame: PackedByteArray in jpeg_frames:
+		file.store_buffer(frame)
+	var delta := maxi(roundi(float(VIDEO_TIMESCALE) / fps), 1)
+	var chunk_offset := ftyp.size() + 8
+	file.store_buffer(_build_moov(sizes, delta, chunk_offset, width, height, fps))
+	file.flush()
+	var error := file.get_error()
+	file.close()
+	return error
 
 static func _build_ftyp() -> PackedByteArray:
 	var payload := PackedByteArray()

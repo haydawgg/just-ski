@@ -18,6 +18,7 @@ $checks = @(
 	"tests/shader_static_acceptance.ps1",
 	"tests/config_docs_static_acceptance.ps1",
 	"tests/world_authoring_static_acceptance.ps1",
+	"tests/release_static_acceptance.ps1",
 	"tests/runtime_quality_gate.ps1"
 )
 $failures = [System.Collections.Generic.List[string]]::new()

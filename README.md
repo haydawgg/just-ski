@@ -1,6 +1,6 @@
 # Summit Sessions
 
-Summit Sessions is a controller-first, single-player park-skiing prototype built in Godot 4.7. The project focuses on momentum-led skiing, Flick-It-style trick input, rail riding, procedural animation, and a deterministic graybox resort that can be launched without manual scene setup.
+Summit Sessions is a controller-first, single-player park-skiing prototype built for Godot 4.7.2 stable. The project focuses on momentum-led skiing, Flick-It-style trick input, rail riding, procedural animation, and a deterministic graybox resort that can be launched without manual scene setup.
 
 The current presentation combines project-built geometry and effects with two documented CC0 sources: the Snow 02 material set and the production skier body. See [Asset Sources](docs/ASSET_SOURCES.md) for attribution and processing details.
 
@@ -21,6 +21,28 @@ To run the warm-lighting variant, launch the sunset scene directly:
 ```
 
 The sunset profile enables Forward+ SDFGI for the static procedural resort geometry, with lower graphics presets disabling it automatically.
+
+## Build and release
+
+The supported engine is the official Godot 4.7.2 stable release. The committed
+Windows Desktop preset in `export_presets.cfg` is the reproducible build
+configuration; install the matching official export templates before running:
+
+```powershell
+$godot = $env:GODOT_PATH
+New-Item -ItemType Directory -Force builds\windows | Out-Null
+& $godot --headless --path . --export-release "Windows Desktop" builds\windows\SummitSessions.exe
+```
+
+Smoke-test an exported build on a machine with the required graphics driver:
+
+```powershell
+& .\builds\windows\SummitSessions.exe --headless --quit-after 120
+```
+
+The repository does not yet assert a project-level distribution license. The
+included external sources remain governed by their local CC0 provenance
+records; decide and add a project license before publishing a distributable.
 
 ## Controls
 
@@ -64,6 +86,8 @@ The playable slice includes:
 - [Animation](docs/ANIMATION.md) — presentation architecture, rig adapters, procedural layers, and animation test coverage.
 - [Graphics](docs/GRAPHICS.md) — renderer settings, snow, environment, character presentation, HUD, and visual verification.
 - [Asset Sources](docs/ASSET_SOURCES.md) — third-party source index and provenance.
+- [Clip capture](docs/CLIP_CAPTURE.md) — timing compensation, worker shutdown, and streaming mux behavior.
+- [Release](docs/RELEASE.md) — supported engine, export preset, and smoke-test procedure.
 - [Known Issues](docs/KNOWN_ISSUES.md) — automated coverage boundaries and remaining human validation work.
 
 ## Verification

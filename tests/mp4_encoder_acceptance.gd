@@ -28,6 +28,20 @@ func _ready() -> void:
 	if bytes.size() < 128:
 		_fail("encoded clip suspiciously small (%d bytes)" % bytes.size())
 		return
+	var streamed_path := "user://mp4_acceptance_stream.mp4"
+	var stream_error := Mp4Encoder.write_to_file(frames, 30, width, height, streamed_path)
+	if stream_error != OK:
+		_fail("streaming mux failed (%s)" % error_string(stream_error))
+		return
+	var streamed_file := FileAccess.open(streamed_path, FileAccess.READ)
+	if streamed_file == null:
+		_fail("streaming mux did not create %s" % streamed_path)
+		return
+	var streamed_bytes := streamed_file.get_buffer(streamed_file.get_length())
+	streamed_file.close()
+	if streamed_bytes != bytes:
+		_fail("streaming mux bytes differ from the compatibility byte encoder")
+		return
 
 	var boxes := {}
 	var offset := 0
@@ -78,7 +92,7 @@ func _ready() -> void:
 		return
 	file.store_buffer(bytes)
 	file.close()
-	print("MP4_ACCEPTANCE_PASS: wrote %s (%d bytes, %d frames, %dx%d)" % [path, bytes.size(), frames.size(), width, height])
+	print("MP4_ACCEPTANCE_PASS: wrote %s (%d bytes, %d frames, %dx%d); streaming output matched" % [path, bytes.size(), frames.size(), width, height])
 	get_tree().quit(0)
 
 func _fail(reason: String) -> void:
