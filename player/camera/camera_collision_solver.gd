@@ -17,6 +17,7 @@ var ray_queries := 0
 var _camera_sphere: SphereShape3D
 var _camera_sweep_query: PhysicsShapeQueryParameters3D
 var _camera_destination_query: PhysicsShapeQueryParameters3D
+var _camera_foreground_query: PhysicsRayQueryParameters3D
 var _camera_clearance_query: PhysicsRayQueryParameters3D
 
 func configure(
@@ -35,6 +36,7 @@ func configure(
 		_camera_sphere = SphereShape3D.new()
 		_camera_sweep_query = PhysicsShapeQueryParameters3D.new()
 		_camera_destination_query = PhysicsShapeQueryParameters3D.new()
+		_camera_foreground_query = PhysicsRayQueryParameters3D.new()
 		_camera_clearance_query = PhysicsRayQueryParameters3D.new()
 	_camera_sphere.radius = maxf(camera_collision_radius, 0.05)
 	_camera_sweep_query.shape = _camera_sphere
@@ -43,6 +45,7 @@ func configure(
 	_camera_destination_query.shape = _camera_sphere
 	_camera_destination_query.collision_mask = collision_mask
 	_camera_destination_query.margin = collision_clearance
+	_camera_foreground_query.collision_mask = collision_mask
 	_camera_clearance_query.collision_mask = collision_mask
 	_refresh_excludes()
 
@@ -62,6 +65,8 @@ func _refresh_excludes() -> void:
 		_camera_sweep_query.exclude = excludes
 	if _camera_destination_query != null:
 		_camera_destination_query.exclude = excludes
+	if _camera_foreground_query != null:
+		_camera_foreground_query.exclude = excludes
 	if _camera_clearance_query != null:
 		_camera_clearance_query.exclude = excludes
 
@@ -72,6 +77,20 @@ func destination_is_clear(position: Vector3) -> bool:
 	_camera_destination_query.transform = Transform3D(Basis.IDENTITY, position)
 	shape_queries += 1
 	return world.direct_space_state.intersect_shape(_camera_destination_query, 1).is_empty()
+
+func foreground_occluded(camera_position: Vector3, world_position: Vector3, clearance: float) -> bool:
+	if world == null or target == null:
+		return false
+	var distance := camera_position.distance_to(world_position)
+	if distance <= 0.1 or not camera_position.is_finite() or not world_position.is_finite():
+		return false
+	_camera_foreground_query.from = camera_position
+	_camera_foreground_query.to = world_position
+	ray_queries += 1
+	var hit := world.direct_space_state.intersect_ray(_camera_foreground_query)
+	if hit.is_empty() or not (hit.position is Vector3):
+		return false
+	return (hit.position as Vector3).distance_to(camera_position) < distance - maxf(clearance, 0.1)
 
 func trace(from: Vector3, desired: Vector3) -> Dictionary:
 	if world == null:

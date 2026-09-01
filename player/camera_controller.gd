@@ -201,7 +201,6 @@ var _previous_target_distance := 0.0
 var _camera_sphere: SphereShape3D
 var _camera_sweep_query: PhysicsShapeQueryParameters3D
 var _camera_destination_query: PhysicsShapeQueryParameters3D
-var _camera_foreground_query: PhysicsRayQueryParameters3D
 var _camera_clearance_query: PhysicsRayQueryParameters3D
 var _camera_surface_query: PhysicsRayQueryParameters3D
 var _camera_query_exclude: Array[RID] = []
@@ -239,7 +238,6 @@ func _ready() -> void:
 	_camera_sphere = SphereShape3D.new()
 	_camera_sweep_query = PhysicsShapeQueryParameters3D.new()
 	_camera_destination_query = PhysicsShapeQueryParameters3D.new()
-	_camera_foreground_query = PhysicsRayQueryParameters3D.new()
 	_camera_clearance_query = PhysicsRayQueryParameters3D.new()
 	_camera_surface_query = PhysicsRayQueryParameters3D.new()
 	_framing_solver.configure(
@@ -270,7 +268,6 @@ func _configure_camera_queries() -> void:
 	_camera_destination_query.shape = _camera_sphere
 	_camera_destination_query.collision_mask = 1 | 4
 	_camera_destination_query.margin = collision_clearance
-	_camera_foreground_query.collision_mask = 1 | 4
 	_camera_clearance_query.collision_mask = 1 | 4
 	_camera_surface_query.collision_mask = 1
 	_collision_solver.configure(get_world_3d(), target, 1 | 4, camera_collision_radius, collision_clearance)
@@ -284,8 +281,6 @@ func _refresh_camera_query_exclude() -> void:
 		_camera_sweep_query.exclude = _camera_query_exclude
 	if _camera_destination_query != null:
 		_camera_destination_query.exclude = _camera_query_exclude
-	if _camera_foreground_query != null:
-		_camera_foreground_query.exclude = _camera_query_exclude
 	if _camera_clearance_query != null:
 		_camera_clearance_query.exclude = _camera_query_exclude
 	if _camera_surface_query != null:
@@ -1253,18 +1248,7 @@ func _project_composition_point(camera_position: Vector3, camera_basis: Basis, f
 	return CompositionEvaluatorModule.project_point(camera_position, camera_basis, fov, viewport_size, world_position)
 
 func _is_foreground_occluded(camera_position: Vector3, world_position: Vector3) -> bool:
-	if get_world_3d() == null or target == null:
-		return false
-	var distance := camera_position.distance_to(world_position)
-	if distance <= 0.1:
-		return false
-	_camera_foreground_query.from = camera_position
-	_camera_foreground_query.to = world_position
-	_record_ray_queries()
-	var hit := get_world_3d().direct_space_state.intersect_ray(_camera_foreground_query)
-	if hit.is_empty() or not (hit.position is Vector3):
-		return false
-	return (hit.position as Vector3).distance_to(camera_position) < distance - maxf(surface_clearance, 0.1)
+	return _collision_solver.foreground_occluded(camera_position, world_position, surface_clearance)
 
 func _rect_violation(value: Rect2, container: Rect2) -> float:
 	return CompositionEvaluatorModule.rect_violation(value, container)

@@ -160,3 +160,5 @@ func _test_camera_interfaces() -> void:
 	collision.configure(null, null, 1 | 4, 0.22, 0.35)
 	if not bool(collision.destination_is_clear(Vector3.ZERO)):
 		failures.append("Camera collision solver did not treat an unbound world as clear")
+	if collision.foreground_occluded(Vector3.ZERO, Vector3.FORWARD, 0.12):
+		failures.append("Camera collision solver reported foreground occlusion without a bound world")
