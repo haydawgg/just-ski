@@ -4,8 +4,11 @@ var failures: Array[String] = []
 
 func _ready() -> void:
 	_test_release_is_frame_rate_independent()
+	_test_recorded_release_tracks_applied_budget()
 	_test_reference_frame_progress()
 	_test_cork_axis_progress()
+	_test_authoritative_rotation_vectors()
+	_test_continuous_management_and_assist_budget()
 	_test_compactness_changes_existing_rotation_only()
 	_test_compactness_is_frame_rate_independent()
 	_test_reset_clears_state()
@@ -31,11 +34,22 @@ func _test_release_is_frame_rate_independent() -> void:
 	if at_30.distance_to(at_120) > 0.001 or at_60.distance_to(at_120) > 0.001:
 		failures.append("Takeoff release total changed with physics tick rate")
 
+func _test_recorded_release_tracks_applied_budget() -> void:
+	var state := TrickRotationState.new()
+	var total := Vector3(0.0, -6.9, 0.0)
+	state.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, total, 0.14)
+	state.record_takeoff_release(total * 0.4, 0.05)
+	if absf(state.released_fraction - 0.4) > 0.001:
+		failures.append("Gameplay release state did not record the applied takeoff fraction")
+	state.record_takeoff_release(total * 0.6, 0.09)
+	if state.takeoff_release_active() or absf(state.released_fraction - 1.0) > 0.001:
+		failures.append("Gameplay release state did not finish with the full applied budget")
+
 func _test_reference_frame_progress() -> void:
 	var state := TrickRotationState.new()
 	state.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, Vector3(0.0, -6.9, 0.0))
 	state.integrate_world_angular_velocity(Vector3(0.0, -TAU, 0.0), 1.0)
-	if absf(rad_to_deg(state.primary_progress_radians()) + 360.0) > 0.1:
+	if absf(rad_to_deg(state.primary_progress_radians()) - 360.0) > 0.1:
 		failures.append("Spin progress did not integrate around takeoff up")
 
 	var rotated_basis := Basis(Vector3.FORWARD, deg_to_rad(35.0))
@@ -53,6 +67,39 @@ func _test_cork_axis_progress() -> void:
 	state.integrate_world_angular_velocity(world_rate, 0.5)
 	if absf(rad_to_deg(state.primary_progress_radians()) - 180.0) > 0.1:
 		failures.append("Cork progress did not integrate around the committed diagonal axis")
+
+func _test_authoritative_rotation_vectors() -> void:
+	var spin := TrickRotationState.new()
+	spin.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, Vector3(0.0, -6.9, 0.0))
+	spin.integrate_world_angular_velocity(Vector3(0.0, -TAU, 0.0), 1.0)
+	if spin.accumulated_rotation_vector().distance_to(Vector3(0.0, -TAU, 0.0)) > 0.001:
+		failures.append("Spin reference progress did not map into authoritative yaw accumulation")
+	var coupled_rate := Vector3(0.24, -TAU, -0.31)
+	spin.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, Vector3(0.0, -6.8, -0.5))
+	spin.integrate_world_angular_velocity(coupled_rate, 1.0)
+	if spin.accumulated_rotation_vector().distance_to(coupled_rate) > 0.001:
+		failures.append("Authoritative spin accumulation discarded subtle coupled-axis motion")
+
+	var cork := TrickRotationState.new()
+	var impulse := Vector3(0.0, -4.0, -5.8)
+	cork.begin(TrickCommand.Kind.CORK_LEFT, Basis.IDENTITY, impulse)
+	cork.integrate_world_angular_velocity(cork.primary_axis_world * PI, 1.0)
+	var cork_rotation := cork.accumulated_rotation_vector()
+	if cork_rotation.distance_to(cork.primary_axis_local * PI) > 0.001:
+		failures.append("Cork reference progress did not preserve its continuous committed axis")
+
+func _test_continuous_management_and_assist_budget() -> void:
+	var state := TrickRotationState.new()
+	state.begin(TrickCommand.Kind.SPIN_LEFT, Basis.IDENTITY, Vector3(0.0, -6.9, 0.0), 0.14, 0.1)
+	if state.control_projection(Vector2.LEFT) != 0.0:
+		failures.append("Air management became active before the takeoff gesture recentered")
+	state.control_projection(Vector2.ZERO)
+	if state.control_projection(Vector2.LEFT) <= 0.99 or state.control_projection(Vector2.RIGHT) >= -0.99:
+		failures.append("Continuous air management did not project held input onto the committed axis")
+	var first := state.consume_assist_acceleration(Vector3(10.0, 0.0, 0.0), 0.02)
+	var second := state.consume_assist_acceleration(Vector3(10.0, 0.0, 0.0), 0.02)
+	if absf(first.length() - 0.1) > 0.001 or second.length() > 0.001:
+		failures.append("Continuous precision assist exceeded or regenerated its takeoff budget")
 
 func _test_compactness_changes_existing_rotation_only() -> void:
 	var compact_state := TrickRotationState.new()

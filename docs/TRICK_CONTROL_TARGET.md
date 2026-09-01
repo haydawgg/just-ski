@@ -141,68 +141,39 @@ The result should feel expressive without feeling motorized.
 
 ## Current implementation alignment
 
-The project is already moving toward this target.
+The mechanical redesign now implements this target.
 
-Implemented or underway:
+Implemented:
 
 - preload depth, duration, and release speed contribute to takeoff quality,
 - the minimum effective takeoff strength has been lowered so weak setups remain meaningfully weak,
-- spin and cork authority is committed at takeoff,
+- one continuous takeoff axis is authored from release direction, ski pressure, and edge input,
+- spin, cork, and flip are derived presentation regions rather than separate physical impulse families,
 - takeoff rotation is distributed across a short release window instead of arriving as one instantaneous impulse,
-- neutral airborne spin/cork flicks are rejected,
-- airborne continuation/check authority is finite,
-- precision air trim has been reduced so it cannot substitute for takeoff technique,
+- neutral airborne spin/cork/flip flicks are rejected,
+- held airborne input continuously manages compactness/inertia without adding repeated impulses,
+- precision air trim draws from one finite, non-regenerating assist budget,
 - signed rotation residuals and stricter completion thresholds exist,
-- a persistent `TrickRotationState` exists for reference-frame progress, release state, compactness, inertia, and future assist accounting,
+- a persistent `TrickRotationState` owns the committed axis, reference-frame progress, quaternion orientation delta, release state, compactness, inertia, and assist accounting,
 - a quaternion air-rotation integrator exists and has acceptance coverage,
 - compactness/inertia behavior has deterministic test coverage,
+- `SkierController` now uses quaternion integration and `TrickRotationState` for live reference-frame progress,
+- gameplay-owned compactness now changes live rotational inertia and damping while animation reads the same value,
+- authoritative signed residuals now feed landing classification, scoring, and animation from one rotation history,
+- late-air automatic damping has been reduced to a conservative safety layer behind visible body opening,
+- every rotational takeoff varies continuously with release direction while preserving mirrored behavior,
+- forward/back ski pressure blends pitch into the same axis while neutral pressure preserves a straight vertical pop,
+- trick naming, credited degrees, residuals, HUD data, and animation weights are derived from the physical axis,
+- held committed/opposite input projects onto that axis and changes body shape rather than issuing a new trick command,
 - trick rotation benchmark and live control regression tests have been added.
 
 ## Remaining gaps
 
-The target is not complete yet.
+The code path no longer has a mechanical continuous-axis or discrete-air-transaction gap. Remaining work is empirical rather than architectural: physical-controller playtesting, threshold tuning, accessibility tuning, and visual QA across the complete gesture space.
 
-### Live controller integration
+### Animation tuning and visual QA
 
-`SkierController` still needs to use the new rotation state as the authoritative live model.
-
-That includes:
-
-- quaternion orientation integration,
-- takeoff-reference-frame rotation progress,
-- gameplay-owned compactness/inertia affecting live angular velocity,
-- authoritative signed residuals feeding landing and animation,
-- removal or reduction of unexplained late-air automatic damping.
-
-### Flip controls
-
-Flips are still on the legacy airborne initiation path because the current down-to-up preload gesture already owns straight pop.
-
-A proper preload-compatible flip control must be designed so flips obey the same rule as spins and corks without making straight pop awkward or ambiguous.
-
-### Continuous trick axes
-
-Cork geometry should be derived continuously from the release vector rather than using a fixed yaw/roll ratio.
-
-Eventually spin, flip, and cork should behave more like regions of one continuous rotational space instead of completely separate canned axes.
-
-### Continuous airborne body management
-
-The current continuation/check command system is an important guardrail against airborne trick spam, but the final feel should become more continuous.
-
-The end state should rely more on:
-
-- current stick/body input,
-- body compactness,
-- effective inertia,
-- existing angular momentum,
-- remaining airtime,
-
-and less on repeated discrete airborne flick transactions.
-
-### Animation
-
-The procedural animation should explain the physical system through:
+The procedural animation already exposes the physical system through:
 
 - preload and prewind,
 - shoulder-led initiation,
@@ -213,6 +184,8 @@ The procedural animation should explain the physical system through:
 - head/chest spotting,
 - visible opening/checking,
 - signed underrotation/overrotation landing recovery.
+
+The remaining work here is controller playtesting and visual tuning across the full range of weak, strong, switch, grab, and off-axis takeoffs.
 
 ## Final feel test
 

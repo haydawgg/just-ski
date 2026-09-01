@@ -58,6 +58,14 @@ extends Resource
 @export var air_angular_damping: float = 0.32
 @export var air_landing_damping: float = 2.8
 @export var air_landing_window: float = 0.28
+@export var air_open_inertia_scale: float = 1.18
+@export var air_compact_inertia_scale: float = 0.82
+@export var air_inertia_response_rate: float = 12.0
+@export var air_open_damping_multiplier: float = 1.65
+@export var air_compact_damping_multiplier: float = 0.62
+# The visible landing-open pose now owns most late-air slowdown. This retains a
+# conservative safety layer without allowing assist to perform the rotation.
+@export var air_landing_assist_damping_weight: float = 0.35
 @export var maximum_angular_speed: float = 7.5
 # Left-stick pitch is precision trim, not a replacement for takeoff trick authority.
 @export var air_flip_trim_acceleration: float = 0.48

@@ -29,7 +29,7 @@ On snow, the left stick is the ski-control input:
 - X carves left and right.
 - Y changes ski pressure. Forward pressure loads the tips; back pressure helps unweight the skis.
 
-In the air, the same axes provide limited yaw and flip correction. They are intentionally lower-authority than committed trick gestures.
+In the air, the same axes provide limited yaw and flip correction. This precision assist is finite for the whole jump and remains lower-authority than the committed takeoff.
 
 On rails, left-stick X counters balance drift.
 
@@ -37,20 +37,25 @@ On rails, left-stick X counters balance drift.
 
 The right stick is the primary trick control. Ground and rail takeoffs begin from a preload by holding the stick down, then flicking out of that setup.
 
-Ground / rail release gestures:
+Ground release regions provide familiar controls, but the physical throw axis varies continuously between them:
 
-- Down → up: straight pop.
+- Down → up with neutral left-stick pressure: straight pop.
+- Down → up while holding left-stick forward/back: frontflip/backflip intent.
 - Down → left or right: pop with spin intent.
-- Down → diagonal: pop with cork intent.
+- Down → diagonal: pop with an off-axis/cork intent whose yaw/roll blend follows the release angle.
+
+Left-stick pressure, edge input, and right-stick release direction are combined into one local rotation axis. Spin, flip, and cork names are derived afterward for presentation and scoring; they do not select separate physics impulses.
+
+On rails, down → up remains an unmodified rail pop.
 
 Airborne gestures while not grabbing:
 
-- Left / right: spin impulse.
-- Up: frontflip impulse.
-- Down: backflip impulse.
-- Diagonal: cork impulse.
+- Holding the committed direction compacts the skier and preserves angular momentum through lower effective inertia.
+- Holding the opposite direction opens the skier and checks the committed rotation.
+- A neutral takeoff cannot start a new spin, cork, or flip in midair.
+- Pitch-dominant axes use up/down management; yaw/off-axis throws use left/right management.
 
-The stick must recenter between committed gestures. Repeated gestures can build larger rotations up to the physics limits. The interpreter uses configurable thresholds, timing windows, buffering, cooldown, and direction sectors from the Flick-It profile rather than relying on exact cardinal input.
+The stick must recenter once after the takeoff release before airborne management becomes active. After that, held input continuously controls compact/open body shape without generating repeated rotation impulses. Small left-stick corrections draw from a finite assist budget and cannot regenerate during the jump.
 
 Keyboard arrows provide the corresponding digital trick directions. Space remains the keyboard pop fallback because a keyboard cannot reproduce the analog preload path.
 

@@ -61,6 +61,7 @@ var debug_mesh: ImmediateMesh
 var flick: FlickTrickInterpreter
 var trick_sample := TrickInputSample.new()
 var trick_command: TrickCommand
+var trick_rotation_state := TrickRotationState.new()
 var active_trick_kind := TrickCommand.Kind.NONE
 var trick_phase := TrickCommand.PresentationPhase.NEUTRAL
 var gesture_strength := 0.0
@@ -313,11 +314,11 @@ func _update_ground(delta: float) -> void:
 	if trick_command.phase == TrickCommand.PresentationPhase.SETUP:
 		jump_charge = maxf(jump_charge, trick_command.gesture_strength * profile.maximum_jump_charge)
 	if trick_command.pop_strength > 0.0:
-		_pop(normal, trick_command.pop_strength, trick_command.rotation_impulse, trick_command.kind)
+		_pop(normal, trick_command.pop_strength, trick_command.rotation_impulse, trick_command.kind, delta)
 	elif Input.is_action_pressed("jump"):
 		jump_charge = minf(jump_charge + delta, profile.maximum_jump_charge)
 	if trick_command.pop_strength <= 0.0 and Input.is_action_just_released("jump"):
-		_pop(normal)
+		_pop(normal, -1.0, Vector3.ZERO, TrickCommand.Kind.POP, delta)
 	elif Input.is_action_just_pressed("jump") and last_physics_delta > 0.0:
 		jump_charge = maxf(jump_charge, 0.06)
 
@@ -353,23 +354,58 @@ func _update_air(delta: float) -> void:
 	velocity.y = maxf(velocity.y, -profile.air_terminal_speed)
 	if trick_command.committed:
 		angular_velocity += trick_command.rotation_impulse
-	angular_velocity.y += -trick_sample.left_stick.x * flick_profile.air_yaw_trim_acceleration * delta
-	angular_velocity.x += -trick_sample.left_stick.y * profile.air_flip_trim_acceleration * delta
-	angular_velocity = angular_velocity.limit_length(profile.maximum_angular_speed)
-	var damping := profile.air_angular_damping
+	if trick_rotation_state.active and trick_command.takeoff_release_impulse.length_squared() > 0.0000001:
+		trick_rotation_state.record_takeoff_release(trick_command.takeoff_release_impulse, delta)
 	var predicted := _predict_landing_time()
+	if trick_rotation_state.active:
+		var assist_availability := smoothstep(
+			0.0,
+			1.0,
+			predicted / maxf(profile.air_landing_window, 0.01)
+		) if predicted >= 0.0 else 1.0
+		var trim_acceleration := Vector3(
+			-trick_sample.left_stick.y * profile.air_flip_trim_acceleration,
+			-trick_sample.left_stick.x * flick_profile.air_yaw_trim_acceleration,
+			0.0
+		) * assist_availability
+		angular_velocity += trick_rotation_state.consume_assist_acceleration(trim_acceleration, delta)
+	angular_velocity = angular_velocity.limit_length(profile.maximum_angular_speed)
+	var rotation_compactness := _air_rotation_compactness(predicted)
+	if trick_rotation_state.active:
+		angular_velocity = trick_rotation_state.apply_compactness(
+			angular_velocity,
+			rotation_compactness,
+			delta,
+			profile.air_open_inertia_scale,
+			profile.air_compact_inertia_scale,
+			profile.air_inertia_response_rate
+		)
+	var body_damping_multiplier := lerpf(
+		profile.air_open_damping_multiplier,
+		profile.air_compact_damping_multiplier,
+		rotation_compactness
+	) if trick_rotation_state.active else 1.0
+	var damping := profile.air_angular_damping * body_damping_multiplier
 	var landing_assist := float(GameSettings.active.get("landing_assist", 0.35))
-	var actively_rotating := trick_sample.left_stick.length() > 0.2 or trick_sample.right_stick.length() > flick_profile.center_reset_threshold or grab_amount > 0.05
-	if not actively_rotating and predicted >= 0.0 and predicted < profile.air_landing_window:
+	if predicted >= 0.0 and predicted < profile.air_landing_window:
 		var landing_proximity := 1.0 - predicted / maxf(profile.air_landing_window, 0.01)
-		damping = lerpf(damping, profile.air_landing_damping, landing_proximity * landing_assist)
+		var assist_weight := landing_proximity * landing_assist * profile.air_landing_assist_damping_weight
+		damping = lerpf(damping, profile.air_landing_damping, assist_weight)
 	angular_velocity *= exp(-damping * delta)
-	global_basis = global_basis.orthonormalized()
-	rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta)
-	rotate_object_local(Vector3.UP, angular_velocity.y * delta)
-	rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
-	global_basis = global_basis.orthonormalized()
-	trick.update_air(angular_velocity, delta, trick_command)
+	if trick_rotation_state.active:
+		var world_angular_velocity := AirRotationIntegrator.local_to_world_angular_velocity(global_basis, angular_velocity)
+		trick_rotation_state.integrate_world_angular_velocity(world_angular_velocity, delta)
+	global_basis = AirRotationIntegrator.integrate_basis(global_basis, angular_velocity, delta)
+	if trick_rotation_state.active:
+		trick_rotation_state.record_world_basis(global_basis)
+		trick.update_air_authoritative(
+			angular_velocity,
+			delta,
+			trick_command,
+			trick_rotation_state.accumulated_rotation_vector()
+		)
+	else:
+		trick.update_air(angular_velocity, delta, trick_command)
 	_try_capture_rail()
 	if state != State.AIR:
 		return
@@ -380,6 +416,32 @@ func _update_air(delta: float) -> void:
 			# Terrain hop (crest, deck lip, spawn seat): rejoin the snow without
 			# presenting a jump landing.
 			_reseat_on_snow()
+
+func _air_rotation_compactness(predicted_landing: float) -> float:
+	if not trick_rotation_state.active:
+		return 0.5
+	var target := 0.5
+	if grab_amount > 0.05:
+		target = 0.88
+	else:
+		match trick_command.style_pose:
+			TrickController.StylePose.SPREAD_EAGLE, TrickController.StylePose.DAFFY:
+				target = 0.08
+			TrickController.StylePose.SHIFTY_LEFT, TrickController.StylePose.SHIFTY_RIGHT:
+				target = 0.38
+			_:
+				var projection := trick_rotation_state.control_projection(
+					trick_sample.right_stick,
+					flick_profile.center_reset_threshold
+				)
+				if projection > flick_profile.continuous_axis_deadzone:
+					target = lerpf(0.5, 0.84, projection)
+				elif projection < -flick_profile.continuous_axis_deadzone:
+					target = lerpf(0.5, 0.12, -projection)
+	if predicted_landing >= 0.0 and predicted_landing < profile.air_landing_window:
+		var landing_open := 1.0 - predicted_landing / maxf(profile.air_landing_window, 0.01)
+		target = lerpf(target, 0.05, smoothstep(0.0, 1.0, landing_open))
+	return clampf(target, 0.0, 1.0)
 
 func _update_grind(delta: float) -> void:
 	if active_rail == null:
@@ -494,7 +556,13 @@ func _update_bail(delta: float) -> void:
 	crash_context.angular_speed = angular_velocity.length()
 	_update_crash_stage_and_rest(delta)
 
-func _pop(normal: Vector3, requested_strength: float = -1.0, rotation_impulse: Vector3 = Vector3.ZERO, takeoff_kind: int = TrickCommand.Kind.POP) -> void:
+func _pop(
+	normal: Vector3,
+	requested_strength: float = -1.0,
+	rotation_impulse: Vector3 = Vector3.ZERO,
+	takeoff_kind: int = TrickCommand.Kind.POP,
+	delta: float = 0.0
+) -> void:
 	var normalized_charge := clampf(jump_charge / maxf(profile.maximum_jump_charge, 0.001), 0.0, 1.0)
 	var strength := requested_strength if requested_strength >= 0.0 else lerpf(profile.minimum_pop_strength, 1.0, normalized_charge)
 	velocity += normal * profile.pop_impulse * strength
@@ -503,6 +571,15 @@ func _pop(normal: Vector3, requested_strength: float = -1.0, rotation_impulse: V
 	jump_charge = 0.0
 	_enter_air(takeoff_kind, normalized_charge, normal)
 	air_deliberate = true
+	if trick_command.takeoff_rotation_committed and trick_command.takeoff_rotation_impulse.length_squared() > 0.000001:
+		trick_rotation_state.begin(
+			takeoff_kind,
+			global_basis,
+			trick_command.takeoff_rotation_impulse,
+			flick_profile.takeoff_release_duration,
+			flick_profile.air_assist_budget
+		)
+		trick_rotation_state.record_takeoff_release(trick_command.takeoff_release_impulse, delta)
 	angular_velocity = (angular_velocity + rotation_impulse).limit_length(profile.maximum_angular_speed)
 
 func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE, normalized_charge: float = 0.0, takeoff_normal: Vector3 = Vector3.ZERO) -> void:
@@ -519,13 +596,20 @@ func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE, normalized_charge: f
 	landing_feedback_armed = true
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	angular_velocity = Vector3.ZERO
+	trick_rotation_state.reset()
 	air_time = 0.0
 	active_trick_kind = takeoff_kind
-	trick.begin_air(velocity.dot(-global_basis.z) < 0.0, takeoff_kind, takeoff_kind != TrickCommand.Kind.NONE)
+	trick.begin_air(
+		velocity.dot(-global_basis.z) < 0.0,
+		takeoff_kind,
+		takeoff_kind != TrickCommand.Kind.NONE,
+		trick_command.rotation_axis_local
+	)
 	state_changed.emit("Air")
 
 func _handle_landing() -> void:
 	var result := LandingSolver.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
+	_apply_trick_rotation_to_landing(result)
 	if int(result.outcome) != LandingSolver.Outcome.BAIL:
 		var assisted_score := minf(1.0, float(result.score) + float(GameSettings.active.get("landing_assist", 0.35)) * 0.06)
 		result.score = assisted_score
@@ -533,6 +617,8 @@ func _handle_landing() -> void:
 			result.outcome = LandingSolver.Outcome.CLEAN
 		elif assisted_score >= profile.sketchy_threshold and float(result.upright_dot) >= profile.sketchy_upright_dot and float(result.impact) <= profile.bail_impact_speed * profile.sketchy_impact_ratio:
 			result.outcome = LandingSolver.Outcome.SKETCHY
+		else:
+			result.outcome = LandingSolver.Outcome.HARD
 	var should_present_landing := landing_feedback_armed
 	landing_feedback_armed = false
 	_capture_landing_context(result, true)
@@ -566,7 +652,8 @@ func _handle_landing() -> void:
 	state = State.GROUND
 	if trick.had_trick_intent:
 		scoring.begin_feature("jump")
-	trick.land(quality, velocity.dot(-global_basis.z) < 0.0)
+	trick.land(quality, velocity.dot(-global_basis.z) < 0.0, 0, true)
+	trick_rotation_state.reset()
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	rail_pose = 0
@@ -595,7 +682,7 @@ func _capture_landing_context(result: Dictionary, deliberate: bool) -> void:
 	var rotation_residual := Vector3.ZERO
 	if trick != null and trick.had_trick_intent:
 		rotation_accumulated = trick.accumulated_rotation
-		rotation_residual = _animation_rotation_residual(rotation_accumulated)
+		rotation_residual = trick.rotation_residual_vector()
 		rotation_error = rotation_residual.y / PI
 	var air_scale := 1.0 if deliberate else clampf(air_time / maxf(animation_controller.profile.landing_hop_air_time_reference, 0.01), animation_controller.profile.landing_min_air_time_scale, 1.0)
 	landing_context = {
@@ -616,6 +703,24 @@ func _capture_landing_context(result: Dictionary, deliberate: bool) -> void:
 		"active": true,
 		"deliberate": deliberate,
 	}
+
+func _apply_trick_rotation_to_landing(result: Dictionary) -> void:
+	if trick == null or not trick.had_trick_intent or trick.rotation_target_degrees() <= 0:
+		return
+	var residual_degrees := trick.rotation_residual_degrees()
+	var rotation_quality := trick.rotation_quality_factor()
+	var orientation_error_degrees := rad_to_deg(trick_rotation_state.orientation_error_radians()) if trick_rotation_state.active else 0.0
+	result.score = clampf(float(result.score) * rotation_quality, 0.0, 1.0)
+	result.balance_error = maxf(
+		float(result.balance_error),
+		maxf(
+			clampf(absf(residual_degrees) / 90.0, 0.0, 1.0),
+			clampf(orientation_error_degrees / 90.0, 0.0, 1.0)
+		)
+	)
+	result["rotation_residual_degrees"] = residual_degrees
+	result["rotation_quality"] = rotation_quality
+	result["rotation_orientation_error_degrees"] = orientation_error_degrees
 
 func _suppress_into_slope_bounce() -> void:
 	var into := velocity.dot(contact.average_normal)
@@ -658,6 +763,7 @@ func _reseat_on_snow() -> void:
 	global_basis = Basis.looking_at(projected_forward.normalized(), contact.average_normal.normalized()).orthonormalized()
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
+	trick_rotation_state.reset()
 	state_changed.emit("Ground")
 
 func _try_capture_rail() -> void:
@@ -768,6 +874,7 @@ func enter_crash(context: CrashContext) -> bool:
 	scoring.bail()
 	trick.reset()
 	flick.reset()
+	trick_rotation_state.reset()
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	grab_amount = 0.0
@@ -930,6 +1037,7 @@ func respawn_at(value: Transform3D) -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	trick.reset()
 	flick.reset()
+	trick_rotation_state.reset()
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	rail_pose = 0
@@ -1038,6 +1146,7 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	trick_command.reset()
 	trick.reset()
 	flick.reset()
+	trick_rotation_state.reset()
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	gesture_strength = 0.0
@@ -1126,6 +1235,7 @@ func telemetry() -> Dictionary:
 		"heading_travel_angle_degrees": heading_travel_angle_degrees,
 		"slope_angle_degrees": slope_angle_degrees,
 		"angular_velocity": angular_velocity,
+		"trick_rotation": trick_rotation_state.snapshot(),
 		"rail": active_rail.name if active_rail != null else "—",
 		"rail_balance": rail_balance,
 		"rail_progress": clampf(rail_offset / maxf(active_rail.path_length, 0.01), 0.0, 1.0) if active_rail != null else 0.0,
@@ -1468,10 +1578,14 @@ func _update_animation(delta: float) -> void:
 		else landing_context.get("rotation_accumulated", Vector3.ZERO) as Vector3
 	)
 	animation_frame.rotation_residual = (
-		_animation_rotation_residual(trick.accumulated_rotation)
+		trick.rotation_residual_vector()
 		if trick.active and trick.had_trick_intent
 		else landing_context.get("rotation_residual", Vector3.ZERO) as Vector3
 	)
+	animation_frame.rotation_compactness = trick_rotation_state.compactness if trick_rotation_state.active else 0.5
+	animation_frame.rotation_inertia_scale = trick_rotation_state.inertia_scale if trick_rotation_state.active else 1.0
+	animation_frame.rotation_axis_local = trick_rotation_state.primary_axis_local if trick_rotation_state.active else Vector3.ZERO
+	animation_frame.rotation_axis_weights = trick_rotation_state.axis_weights if trick_rotation_state.active else Vector3.ZERO
 	animation_frame.crash_reason = crash_context.reason
 	animation_frame.crash_stage = crash_context.stage
 	animation_frame.crash_elapsed = crash_context.elapsed
@@ -1503,19 +1617,6 @@ func _update_animation(delta: float) -> void:
 
 func _predict_landing_time() -> float:
 	return float(_predict_landing().time)
-
-func _animation_rotation_residual(rotation: Vector3) -> Vector3:
-	return Vector3(
-		_axis_rotation_residual(rotation.x, TAU),
-		_axis_rotation_residual(rotation.y, PI),
-		_axis_rotation_residual(rotation.z, PI)
-	)
-
-func _axis_rotation_residual(value: float, step: float) -> float:
-	if absf(value) < deg_to_rad(5.0):
-		return 0.0
-	var completed_steps := maxi(1, roundi(absf(value) / maxf(step, 0.001)))
-	return value - signf(value) * float(completed_steps) * step
 
 func _predict_landing() -> Dictionary:
 	var result := {

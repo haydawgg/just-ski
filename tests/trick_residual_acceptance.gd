@@ -41,6 +41,8 @@ func _test_signed_spin_residual() -> void:
 		failures.append("A near-complete 350-degree spin did not credit 360")
 	if absf(tricks.rotation_residual_degrees() + 10.0) > 0.1:
 		failures.append("Underrotated 360 residual was not approximately -10 degrees")
+	if absf(rad_to_deg(tricks.rotation_residual_vector().y) - 10.0) > 0.1:
+		failures.append("Left underrotation did not expose the positive corrective residual direction")
 	tricks.queue_free()
 
 	tricks = _new_tricks(TrickCommand.Kind.SPIN_LEFT)
@@ -49,6 +51,8 @@ func _test_signed_spin_residual() -> void:
 		failures.append("A 391-degree spin did not remain credited as 360")
 	if absf(tricks.rotation_residual_degrees() - 31.0) > 0.1:
 		failures.append("Overrotated 360 residual was not approximately +31 degrees")
+	if absf(rad_to_deg(tricks.rotation_residual_vector().y) + 31.0) > 0.1:
+		failures.append("Left overrotation did not expose the negative corrective residual direction")
 	tricks.queue_free()
 
 func _test_mirrored_spin_residual() -> void:
@@ -60,6 +64,8 @@ func _test_mirrored_spin_residual() -> void:
 		failures.append("Mirrored spins did not receive the same credited target")
 	if absf(left.rotation_residual_degrees() - right.rotation_residual_degrees()) > 0.1:
 		failures.append("Mirrored spins did not report matching under/over residuals")
+	if left.rotation_residual_vector().y * right.rotation_residual_vector().y >= 0.0:
+		failures.append("Mirrored spins did not expose mirrored corrective residual directions")
 	left.queue_free()
 	right.queue_free()
 
@@ -81,7 +87,7 @@ func _test_flip_credit_threshold() -> void:
 func _test_cork_residual() -> void:
 	var tricks := _new_tricks(TrickCommand.Kind.CORK_LEFT)
 	var radians := deg_to_rad(345.0)
-	tricks.update_air(Vector3(0.0, -radians, -radians), 1.0)
+	tricks.update_air(Vector3(0.0, -1.0, -1.0).normalized() * radians, 1.0)
 	if tricks.rotation_target_degrees() != 360:
 		failures.append("Near-complete cork did not credit the expected 360 bucket")
 	if absf(tricks.rotation_residual_degrees() + 15.0) > 0.1:

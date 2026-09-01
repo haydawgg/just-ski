@@ -24,6 +24,23 @@ A poorly preloaded takeoff should therefore produce limited rotation, and the pl
 
 The intended feel is **commitment rather than command**: the player decides the major rotational maneuver before takeoff, then manages the consequences of that decision while airborne.
 
+## Current implementation status
+
+The core mechanical tranche is implemented and covered by deterministic tests:
+
+- preload depth, duration, release speed, and direction author a distributed takeoff budget,
+- a continuous axis authored from release, pressure, and edge input is committed at takeoff,
+- spin, flip, and cork are derived presentation labels rather than separate physical impulses,
+- neutral-air major trick initiation is rejected across the full gesture space,
+- held committed/opposite input continuously compacts or opens the body without adding repeated rotation impulses,
+- gameplay-owned inertia and visible body opening now explain most speed preservation/checking,
+- quaternion integration and a takeoff-reference rotation history are authoritative in live skiing,
+- signed full-axis residuals and quaternion orientation error feed landing classification, scoring, HUD naming, and animation from the same history,
+- the complete takeoff axis varies continuously with release direction, pressure, and edge input while preserving mirrored behavior,
+- existing delayed-body, deterministic asymmetry, whole-body grab, landing recovery, camera, audio, and rumble systems remain covered by the project quality gate.
+
+The planned mechanical redesign is implemented. Remaining work is feel tuning and human controller playtesting.
+
 ## Priorities
 
 ### P0 — Make rotation feel physically authored
@@ -148,13 +165,13 @@ Acceptance criteria:
 
 #### 4. Make airborne input manage committed rotation, not create it
 
-Repeated airborne flicks currently add substantial angular impulses. This is responsive, but it can make rotation feel powered rather than ballistic and lets the player initiate too much rotation after takeoff.
+The redesigned path treats airborne input as a continuous body-state control. It does not add repeated continuation/check impulses.
 
 Target behavior:
 
 - Takeoff provides roughly 75–90% of the rotational authority for a normal trick.
 - A major spin, flip, or cork cannot be initiated from a neutral airborne state.
-- Airborne input acts as low-authority continuation, checking, compact/open control, or correction for a maneuver already committed at takeoff.
+- Airborne input acts as continuous compact/open control plus finite precision correction for a maneuver already committed at takeoff.
 - Repeated flicking should not manufacture unlimited rotation or rescue a poorly preloaded takeoff into a high-rotation trick.
 - The player can intentionally overrotate an existing maneuver by preserving/continuing rotation.
 - The player can intentionally check or stop an existing maneuver by opening and applying limited corrective input.
@@ -168,12 +185,11 @@ Likely files:
 
 Suggested implementation direction:
 
-- Separate takeoff impulse values from airborne continuation/correction values.
-- Gate major airborne commands on takeoff trick intent; neutral takeoff means no new major rotation family in the air.
-- Add diminishing returns or a bounded continuation budget to repeated in-air trick inputs.
-- Scale continuation authority by current angular speed, remaining airtime, and the already committed trick direction.
-- Allow opposite-direction input to check rotation conservatively without becoming an instant counter-spin command.
-- Preserve the left-stick low-authority trim system for precise correction.
+- Author one continuous takeoff impulse before leaving the snow.
+- Gate airborne body management on committed rotational intent; neutral takeoff means no new major rotation in the air.
+- Project held right-stick input onto the committed axis to drive compact/open inertia continuously.
+- Prevent right-stick management from adding angular impulse.
+- Preserve left-stick precision trim behind one finite, non-regenerating assist budget.
 
 Acceptance criteria:
 
@@ -405,14 +421,15 @@ Add or extend tests for:
 - weak / medium / strong takeoff setup producing ordered angular velocity,
 - setup duration and release speed affecting rotation predictably,
 - neutral takeoff followed by an airborne trick flick not initiating a major spin, flip, or cork,
-- committed takeoff rotation accepting only bounded airborne continuation/correction,
+- committed takeoff rotation accepting continuous body management plus bounded precision correction,
 - a committed rotation being intentionally checked versus intentionally allowed to overrotate,
 - 180 / 360 / 540 spin residuals,
 - underrotated and overrotated landing classification,
 - body-open versus body-compact angular damping,
-- diminishing airborne continuation impulses,
+- held airborne management producing no new angular impulse,
 - mirrored left/right behavior,
 - continuous cork-axis mapping,
+- continuity and symmetry across the complete spin/flip/cork gesture space,
 - quaternion integration equivalence across 30/60/120 Hz,
 - grab compactness changing body shape without changing trajectory,
 - landing animation preserving signed residual,
@@ -454,9 +471,9 @@ After automated gates pass, test with a physical controller:
 2. **Enforce preload commitment: no major neutral-air trick initiation.**
 3. **Body compactness → angular damping and rotation management.**
 4. **Signed rotation residual → stricter landing/trick qualification.**
-5. **Reduced/bounded airborne continuation and checking inputs.**
+5. **Continuous compact/open management with finite precision assist.**
 6. **Quaternion angular integration.**
-7. **Continuous cork axes and subtle takeoff-axis coupling.**
+7. **One continuous takeoff-axis space with derived presentation labels.**
 8. **Delayed torso/pelvis/ski animation response.**
 9. **Deterministic asymmetry and whole-body grab shaping.**
 10. **Landing-error presentation, camera, audio, and rumble polish.**

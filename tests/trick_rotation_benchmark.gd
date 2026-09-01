@@ -5,12 +5,12 @@ var rows: Array[Dictionary] = []
 
 func _ready() -> void:
 	_rows_for_preload_strength()
-	_rows_for_air_authority()
+	_rows_for_air_management()
 	_validate_relationships()
 	for row: Dictionary in rows:
 		print("TRICK_ROTATION_BENCHMARK: " + JSON.stringify(row))
 	if failures.is_empty():
-		print("TRICK_ROTATION_BENCHMARK_PASS: preload and air-authority relationships are ordered")
+		print("TRICK_ROTATION_BENCHMARK_PASS: preload and continuous air-management relationships are ordered")
 		get_tree().quit(0)
 	else:
 		for failure: String in failures:
@@ -22,7 +22,7 @@ func _rows_for_preload_strength() -> void:
 	rows.append(_measure_takeoff("medium", 0.78, 0.12, Vector2(-0.82, 0.0), 0.05))
 	rows.append(_measure_takeoff("strong", 1.0, 0.22, Vector2.LEFT, 0.05))
 
-func _rows_for_air_authority() -> void:
+func _rows_for_air_management() -> void:
 	var interpreter := FlickTrickInterpreter.new()
 	var sample := TrickInputSample.new()
 	sample.right_stick = Vector2.DOWN
@@ -39,24 +39,18 @@ func _rows_for_air_authority() -> void:
 	sample.right_stick = Vector2.LEFT
 	var continuation_one := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
 	var continuation_one_impulse := continuation_one.rotation_impulse.length()
-	sample.right_stick = Vector2.ZERO
-	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
-	sample.right_stick = Vector2.LEFT
-	var continuation_two := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	var continuation_one_projection := continuation_one.air_control_projection
+	var continuation_two := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.20)
 	var continuation_two_impulse := continuation_two.rotation_impulse.length()
-	sample.right_stick = Vector2.ZERO
-	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
-	sample.right_stick = Vector2.LEFT
-	var continuation_three := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	var continuation_three_impulse := continuation_three.rotation_impulse.length()
+	var continuation_two_projection := continuation_two.air_control_projection
 
 	rows.append({
-		"scenario": "air_authority",
+		"scenario": "continuous_air_management",
 		"takeoff_total_impulse": total_takeoff.length(),
 		"continuation_1": continuation_one_impulse,
 		"continuation_2": continuation_two_impulse,
-		"continuation_3": continuation_three_impulse,
-		"remaining_budget": float(interpreter.snapshot().get("air_authority_remaining", -1.0)),
+		"projection_1": continuation_one_projection,
+		"projection_2": continuation_two_projection,
 	})
 
 	var neutral := FlickTrickInterpreter.new()
@@ -116,10 +110,10 @@ func _validate_relationships() -> void:
 	if not (float(weak.total_takeoff_impulse) < float(medium.total_takeoff_impulse) and float(medium.total_takeoff_impulse) < float(strong.total_takeoff_impulse)):
 		failures.append("Physical takeoff impulse was not ordered weak < medium < strong")
 	var air := rows[3]
-	if float(air.continuation_1) >= float(air.takeoff_total_impulse):
-		failures.append("Air continuation authority matched/exceeded the committed takeoff")
-	if float(air.continuation_3) >= float(air.continuation_1):
-		failures.append("Repeated air continuation did not diminish as the finite budget was consumed")
+	if float(air.continuation_1) > 0.001 or float(air.continuation_2) > 0.001:
+		failures.append("Continuous air management manufactured angular impulse")
+	if float(air.projection_1) <= 0.99 or float(air.projection_2) <= 0.99:
+		failures.append("Held same-direction input did not continuously manage the committed axis")
 	var neutral := rows[4]
 	if float(neutral.impulse) > 0.001 or bool(neutral.committed):
 		failures.append("Neutral-air spin benchmark still produced a committed impulse")

@@ -2,9 +2,9 @@ class_name FlickTrickInterpreter
 extends RefCounted
 
 enum Context { GROUND, AIR, GRIND, BAIL }
-enum RotationFamily { NONE, SPIN, FLIP, CORK }
 
 var profile: FlickTrickProfile
+var _intent_author: RotationIntentAuthor
 var _command := TrickCommand.new()
 var _last_context := Context.BAIL
 var _setup_active := false
@@ -21,13 +21,16 @@ var _history_clock := 0.0
 var _stick_history: Array[Dictionary] = []
 var _takeoff_rotation_committed := false
 var _takeoff_kind := TrickCommand.Kind.NONE
-var _air_authority_remaining := 0.0
+var _takeoff_axis_local := Vector3.ZERO
+var _takeoff_axis_weights := Vector3.ZERO
+var _air_management_armed := false
 var _pending_takeoff_impulse := Vector3.ZERO
 var _takeoff_release_elapsed := 0.0
 var _takeoff_release_fraction := 0.0
 
 func _init(value: FlickTrickProfile = null) -> void:
 	profile = value if value != null else preload("res://resources/physics/default_flick_trick_profile.tres")
+	_intent_author = RotationIntentAuthor.new(profile)
 
 func step(sample: TrickInputSample, context: int, delta: float) -> TrickCommand:
 	_record_stick_sample(sample.right_stick, delta)
@@ -77,7 +80,9 @@ func snapshot() -> Dictionary:
 		"setup_peak_depth": _setup_peak_depth,
 		"takeoff_rotation_committed": _takeoff_rotation_committed,
 		"takeoff_kind": _takeoff_kind,
-		"air_authority_remaining": _air_authority_remaining,
+		"takeoff_axis_local": _takeoff_axis_local,
+		"takeoff_axis_weights": _takeoff_axis_weights,
+		"air_management_armed": _air_management_armed,
 		"takeoff_release_fraction": _takeoff_release_fraction,
 		"takeoff_release_elapsed": _takeoff_release_elapsed,
 		"pending_takeoff_impulse": _pending_takeoff_impulse,
@@ -92,6 +97,7 @@ func _enter_context(sample: TrickInputSample, context: int) -> void:
 		_right_grab_armed = sample.right_trigger < profile.trigger_press_threshold
 		_left_grab_active = false
 		_right_grab_active = false
+		_air_management_armed = sample.right_stick.length() <= profile.center_reset_threshold
 	elif context == Context.GROUND:
 		_clear_takeoff_commitment()
 		_left_grab_active = false
@@ -126,44 +132,34 @@ func _step_ground(sample: TrickInputSample, delta: float, rail: bool) -> void:
 		return
 	if stick.length() < profile.flick_threshold:
 		return
-	var kind := _classify_takeoff(stick, rail)
+	var quality := _setup_quality(_release_speed(stick))
+	var intent := _intent_author.author_takeoff(sample, quality)
+	var kind := intent.presentation_kind if intent.committed else TrickCommand.Kind.NONE
+	if not intent.committed and stick.y <= -profile.flick_threshold and absf(stick.x) < profile.flick_threshold:
+		kind = TrickCommand.Kind.RAIL_POP if rail else TrickCommand.Kind.POP
 	if kind == TrickCommand.Kind.NONE:
 		return
-	_commit_takeoff(kind, stick, delta)
+	_commit_takeoff(kind, sample, delta, intent)
 
 func _step_air(sample: TrickInputSample) -> void:
 	var stick := sample.right_stick
 	if stick.length() <= profile.center_reset_threshold:
-		if _cooldown_remaining <= 0.0:
-			_gesture_armed = true
+		_air_management_armed = true
 		return
-	if not _gesture_armed or _cooldown_remaining > 0.0 or stick.length() < profile.flick_threshold:
+	if not _takeoff_rotation_committed or not _air_management_armed:
 		return
-	var requested := _classify_air(stick)
-	if requested == TrickCommand.Kind.NONE:
+	var projection := _air_control_projection(stick)
+	if absf(projection) <= profile.continuous_axis_deadzone:
 		return
-
-	# Spin and cork authority come from takeoff. Air input can only continue or
-	# check the already-committed family. Flip input remains on the legacy air
-	# path until a dedicated preload mapping can be introduced without stealing
-	# the established down-to-up straight-pop gesture.
-	if _rotation_family(requested) in [RotationFamily.SPIN, RotationFamily.CORK]:
-		if not _takeoff_rotation_committed:
-			_consume_rejected_air_gesture()
-			return
-		if _rotation_family(requested) != _rotation_family(_takeoff_kind):
-			_consume_rejected_air_gesture()
-			return
-		_commit_air_management(requested, stick)
-		return
-
-	# Do not let a legacy flip input replace a spin/cork family that was already
-	# committed at the lip. This preserves maneuver-family commitment even while
-	# flip preload is still being migrated.
-	if _takeoff_rotation_committed:
-		_consume_rejected_air_gesture()
-		return
-	_commit_legacy_air(requested, stick)
+	_command.kind = _takeoff_kind
+	_command.phase = TrickCommand.PresentationPhase.ROTATE
+	_command.gesture_strength = clampf(stick.length(), 0.0, 1.0)
+	_command.rotation_axis_local = _takeoff_axis_local
+	_command.rotation_axis_weights = _takeoff_axis_weights
+	_command.air_control_projection = clampf(projection, -1.0, 1.0)
+	# Continuous air control changes body shape/inertia. It does not manufacture
+	# another angular impulse or consume a sequence of discrete flick charges.
+	_command.committed = true
 
 func _step_grind(sample: TrickInputSample, delta: float) -> void:
 	var stick := sample.right_stick
@@ -178,27 +174,12 @@ func _step_grind(sample: TrickInputSample, delta: float) -> void:
 		return
 	_commit_simple(TrickCommand.Kind.RAIL_SLIDE_LEFT if stick.x < 0.0 else TrickCommand.Kind.RAIL_SLIDE_RIGHT, stick, false)
 
-func _classify_takeoff(stick: Vector2, rail: bool) -> int:
-	if stick.y <= -profile.flick_threshold and absf(stick.x) < profile.flick_threshold:
-		return TrickCommand.Kind.RAIL_POP if rail else TrickCommand.Kind.POP
-	if absf(stick.x) < profile.flick_threshold:
-		return TrickCommand.Kind.NONE
-	if stick.y <= -0.42:
-		return TrickCommand.Kind.CORK_LEFT if stick.x < 0.0 else TrickCommand.Kind.CORK_RIGHT
-	return TrickCommand.Kind.SPIN_LEFT if stick.x < 0.0 else TrickCommand.Kind.SPIN_RIGHT
-
-func _classify_air(stick: Vector2) -> int:
-	if absf(stick.x) >= profile.flick_threshold and absf(stick.y) >= 0.42:
-		return TrickCommand.Kind.CORK_LEFT if stick.x < 0.0 else TrickCommand.Kind.CORK_RIGHT
-	if absf(stick.x) >= absf(stick.y):
-		return TrickCommand.Kind.SPIN_LEFT if stick.x < 0.0 else TrickCommand.Kind.SPIN_RIGHT
-	return TrickCommand.Kind.FRONTFLIP if stick.y < 0.0 else TrickCommand.Kind.BACKFLIP
-
-func _commit_takeoff(kind: int, stick: Vector2, delta: float) -> void:
+func _commit_takeoff(kind: int, sample: TrickInputSample, delta: float, intent: RotationIntent) -> void:
+	var stick := sample.right_stick
 	var release_speed := _release_speed(stick)
 	var quality := _setup_quality(release_speed)
 	var command_strength := lerpf(profile.minimum_command_strength, 1.0, quality)
-	var total_rotation_impulse := _rotation_impulse(kind, command_strength)
+	var total_rotation_impulse := intent.impulse_local
 	_command.kind = kind
 	_command.phase = TrickCommand.PresentationPhase.RELEASE
 	_command.gesture_strength = command_strength
@@ -208,14 +189,20 @@ func _commit_takeoff(kind: int, stick: Vector2, delta: float) -> void:
 	_command.release_speed = release_speed
 	_command.release_direction = stick.normalized() if stick.length_squared() > 0.0001 else Vector2.ZERO
 	_command.setup_quality = quality
-	_command.takeoff_rotation_committed = _is_preload_rotation_kind(kind)
+	_command.takeoff_rotation_committed = intent.committed
+	_command.rotation_axis_local = intent.axis_local
+	_command.rotation_axis_weights = intent.axis_weights
 	_command.committed = true
 	if _command.takeoff_rotation_committed:
+		_command.takeoff_rotation_impulse = total_rotation_impulse
 		_takeoff_rotation_committed = true
 		_takeoff_kind = kind
-		_air_authority_remaining = profile.air_authority_budget
+		_takeoff_axis_local = intent.axis_local
+		_takeoff_axis_weights = intent.axis_weights
+		_air_management_armed = false
 		_begin_pending_takeoff_release(total_rotation_impulse)
-		_command.rotation_impulse = _consume_pending_takeoff_release(delta)
+		_command.takeoff_release_impulse = _consume_pending_takeoff_release(delta)
+		_command.rotation_impulse = _command.takeoff_release_impulse
 	else:
 		_clear_takeoff_commitment()
 		_command.rotation_impulse = total_rotation_impulse
@@ -223,36 +210,12 @@ func _commit_takeoff(kind: int, stick: Vector2, delta: float) -> void:
 	_gesture_armed = false
 	_cooldown_remaining = profile.repeat_cooldown
 
-func _commit_air_management(requested: int, stick: Vector2) -> void:
-	if _air_authority_remaining <= 0.001:
-		_consume_rejected_air_gesture()
-		return
-	var strength := clampf(stick.length(), 0.0, 1.0)
-	var same_direction := requested == _takeoff_kind
-	var requested_fraction := (profile.air_continue_fraction if same_direction else profile.air_check_fraction) * strength
-	var authority := minf(requested_fraction, _air_authority_remaining)
-	if authority <= 0.001:
-		return
-	_command.kind = _takeoff_kind
-	_command.phase = TrickCommand.PresentationPhase.ROTATE
-	_command.gesture_strength = strength
-	_command.air_management = TrickCommand.AirManagement.CONTINUE if same_direction else TrickCommand.AirManagement.CHECK
-	_command.air_management_strength = authority
-	_command.rotation_impulse += _rotation_impulse(_takeoff_kind if same_direction else requested, authority)
-	_command.committed = true
-	_air_authority_remaining = maxf(0.0, _air_authority_remaining - authority)
-	_gesture_armed = false
-	_cooldown_remaining = profile.repeat_cooldown
-
-func _commit_legacy_air(kind: int, stick: Vector2) -> void:
-	_commit_simple(kind, stick, false)
-
 func _commit_simple(kind: int, stick: Vector2, includes_pop: bool) -> void:
 	_command.kind = kind
 	_command.phase = TrickCommand.PresentationPhase.RELEASE if includes_pop else TrickCommand.PresentationPhase.ROTATE
 	_command.gesture_strength = clampf(stick.length(), 0.0, 1.0)
 	_command.pop_strength = lerpf(profile.minimum_command_strength, 1.0, _command.gesture_strength) if includes_pop else 0.0
-	_command.rotation_impulse = _rotation_impulse(kind, _command.gesture_strength)
+	_command.rotation_impulse = Vector3.ZERO
 	_command.committed = true
 	_clear_setup_state()
 	_gesture_armed = false
@@ -269,6 +232,9 @@ func _seed_pending_takeoff_release(delta: float) -> void:
 		return
 	_command.kind = _takeoff_kind
 	_command.phase = TrickCommand.PresentationPhase.ROTATE
+	_command.rotation_axis_local = _takeoff_axis_local
+	_command.rotation_axis_weights = _takeoff_axis_weights
+	_command.takeoff_release_impulse = release_impulse
 	_command.rotation_impulse += release_impulse
 	_command.committed = true
 
@@ -292,19 +258,13 @@ func _consume_pending_takeoff_release(delta: float) -> Vector3:
 func _pending_takeoff_release_active() -> bool:
 	return _takeoff_rotation_committed and _pending_takeoff_impulse.length_squared() > 0.0000001 and _takeoff_release_fraction < 1.0
 
-func _consume_rejected_air_gesture() -> void:
-	_gesture_armed = false
-	_cooldown_remaining = profile.repeat_cooldown
-
-func _rotation_impulse(kind: int, strength: float) -> Vector3:
-	match kind:
-		TrickCommand.Kind.SPIN_LEFT: return Vector3(0.0, -profile.spin_impulse * strength, 0.0)
-		TrickCommand.Kind.SPIN_RIGHT: return Vector3(0.0, profile.spin_impulse * strength, 0.0)
-		TrickCommand.Kind.FRONTFLIP: return Vector3(profile.flip_impulse * strength, 0.0, 0.0)
-		TrickCommand.Kind.BACKFLIP: return Vector3(-profile.flip_impulse * strength, 0.0, 0.0)
-		TrickCommand.Kind.CORK_LEFT: return Vector3(0.0, -profile.cork_yaw_impulse * strength, -profile.cork_roll_impulse * strength)
-		TrickCommand.Kind.CORK_RIGHT: return Vector3(0.0, profile.cork_yaw_impulse * strength, profile.cork_roll_impulse * strength)
-	return Vector3.ZERO
+func _air_control_projection(stick: Vector2) -> float:
+	if _takeoff_axis_local.length_squared() <= 0.0001:
+		return 0.0
+	var absolute := Vector3(absf(_takeoff_axis_local.x), absf(_takeoff_axis_local.y), absf(_takeoff_axis_local.z))
+	if absolute.x >= maxf(absolute.y, absolute.z):
+		return -stick.y * signf(_takeoff_axis_local.x)
+	return stick.x * signf(_takeoff_axis_local.y)
 
 func _setup_quality(release_speed: float) -> float:
 	var depth := clampf((_setup_peak_depth - profile.setup_threshold) / maxf(1.0 - profile.setup_threshold, 0.001), 0.0, 1.0)
@@ -329,19 +289,6 @@ func _release_speed(current: Vector2) -> float:
 		return 0.0
 	return (current - (oldest.stick as Vector2)).length() / elapsed
 
-func _rotation_family(kind: int) -> int:
-	match kind:
-		TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT:
-			return RotationFamily.SPIN
-		TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP:
-			return RotationFamily.FLIP
-		TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT:
-			return RotationFamily.CORK
-	return RotationFamily.NONE
-
-func _is_preload_rotation_kind(kind: int) -> bool:
-	return _rotation_family(kind) in [RotationFamily.SPIN, RotationFamily.CORK]
-
 func _clear_setup_state() -> void:
 	_setup_active = false
 	_setup_hold_time = 0.0
@@ -351,7 +298,9 @@ func _clear_setup_state() -> void:
 func _clear_takeoff_commitment() -> void:
 	_takeoff_rotation_committed = false
 	_takeoff_kind = TrickCommand.Kind.NONE
-	_air_authority_remaining = 0.0
+	_takeoff_axis_local = Vector3.ZERO
+	_takeoff_axis_weights = Vector3.ZERO
+	_air_management_armed = false
 	_pending_takeoff_impulse = Vector3.ZERO
 	_takeoff_release_elapsed = 0.0
 	_takeoff_release_fraction = 0.0

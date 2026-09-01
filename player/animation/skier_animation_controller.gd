@@ -157,6 +157,8 @@ var _prewind_weight := 0.0
 var _prewind_direction := 0.0
 var _trick_release_weight := 0.0
 var _spin_compactness := 0.0
+var _gameplay_rotation_compactness := 0.5
+var _gameplay_rotation_inertia := 1.0
 var _spin_cycle := 0.0
 var _spotting_weight := 0.0
 var _spin_open_weight := 0.0
@@ -398,6 +400,8 @@ func debug_snapshot() -> Dictionary:
 		"root_pitch_rate": _smoothed_angular_velocity.x,
 		"root_roll_rate": _smoothed_angular_velocity.z,
 		"spin_compactness": _spin_compactness,
+		"gameplay_rotation_compactness": _gameplay_rotation_compactness,
+		"gameplay_rotation_inertia": _gameplay_rotation_inertia,
 		"spin_cycle": _spin_cycle,
 		"prewind_weight": _prewind_weight,
 		"trick_release_weight": _trick_release_weight,
@@ -762,6 +766,8 @@ func _update_trick_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	_smoothed_angular_velocity = _smoothed_angular_velocity.lerp(bounded_rate, rate_weight)
 	_trick_rotation_accumulated = frame.rotation_accumulated
 	_trick_rotation_residual = frame.rotation_residual
+	_gameplay_rotation_compactness = clampf(frame.rotation_compactness, 0.0, 1.0)
+	_gameplay_rotation_inertia = maxf(frame.rotation_inertia_scale, 0.05)
 	_spin_cycle = fposmod(absf(frame.rotation_accumulated.y), TAU) / TAU
 	_trick_active = frame.trick_active
 	_trick_intent = (
@@ -815,9 +821,14 @@ func _update_trick_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var landing_yield := _landing_anticipation * lerpf(0.82, 0.48, rate_demand)
 	pose_target *= 1.0 - landing_yield
 	_trick_pose_weight = _damp(_trick_pose_weight, pose_target, profile.trick_pose_response, delta)
+	var gameplay_compactness := clampf(frame.rotation_compactness, 0.0, 1.0) if frame.locomotion_state == STATE_AIR else 0.0
+	var visible_compactness := maxf(
+		rate_demand * _trick_pose_weight * (1.0 - _spin_open_weight * 0.78),
+		gameplay_compactness * _trick_pose_weight
+	)
 	_spin_compactness = _damp(
 		_spin_compactness,
-		rate_demand * _trick_pose_weight * (1.0 - _spin_open_weight * 0.78),
+		visible_compactness,
 		profile.trick_pose_response,
 		delta
 	)
@@ -1830,12 +1841,16 @@ func _apply_trick_layer(frame: SkierAnimationFrame) -> void:
 				_current_pose_name = "Landing Ready"
 			var leg_opening := opening
 			var arm_opening := opening
-			var yaw_opening := opening if frame.trick_kind in [
-				TrickCommand.Kind.SPIN_LEFT,
-				TrickCommand.Kind.SPIN_RIGHT,
-				TrickCommand.Kind.CORK_LEFT,
-				TrickCommand.Kind.CORK_RIGHT,
-			] else 0.0
+			var yaw_opening := opening * (
+				frame.rotation_axis_weights.y
+				if frame.rotation_axis_weights.length_squared() > 0.0001
+				else (1.0 if frame.trick_kind in [
+					TrickCommand.Kind.SPIN_LEFT,
+					TrickCommand.Kind.SPIN_RIGHT,
+					TrickCommand.Kind.CORK_LEFT,
+					TrickCommand.Kind.CORK_RIGHT,
+				] else 0.0)
+			)
 			var yaw_open_side := _yaw_direction(frame)
 			# Opening must read as a sequence rather than a uniformly rotating
 			# mannequin: the upper body brakes first while the pelvis and skis
@@ -1857,9 +1872,10 @@ func _apply_command_rotation_pose(frame: SkierAnimationFrame) -> void:
 	var yaw_support := clampf(absf(_smoothed_angular_velocity.y) / maxf(profile.spin_compact_threshold, 0.01), 0.0, 1.0)
 	var pitch_support := clampf(absf(_smoothed_angular_velocity.x) / maxf(profile.flip_compact_threshold, 0.01), 0.0, 1.0)
 	var roll_support := clampf(absf(_smoothed_angular_velocity.z) / maxf(profile.flip_compact_threshold, 0.01), 0.0, 1.0)
-	var yaw_primary := 1.0 if frame.trick_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT, TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight
-	var pitch_primary := 1.0 if frame.trick_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP] else profile.trick_multi_axis_weight
-	var roll_primary := 1.0 if frame.trick_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight
+	var has_axis_weights := frame.rotation_axis_weights.length_squared() > 0.0001
+	var yaw_primary := lerpf(profile.trick_multi_axis_weight, 1.0, frame.rotation_axis_weights.y) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT, TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight)
+	var pitch_primary := lerpf(profile.trick_multi_axis_weight, 1.0, frame.rotation_axis_weights.x) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP] else profile.trick_multi_axis_weight)
+	var roll_primary := lerpf(profile.trick_multi_axis_weight, 1.0, frame.rotation_axis_weights.z) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight)
 	var yaw_amount := yaw_support * yaw_primary * pose
 	var pitch_amount := pitch_support * pitch_primary * pose
 	var roll_amount := roll_support * roll_primary * pose
@@ -2810,6 +2826,8 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_prewind_direction = 0.0
 	_trick_release_weight = 0.0
 	_spin_compactness = 0.0
+	_gameplay_rotation_compactness = 0.5
+	_gameplay_rotation_inertia = 1.0
 	_spin_cycle = 0.0
 	_spotting_weight = 0.0
 	_spin_open_weight = 0.0

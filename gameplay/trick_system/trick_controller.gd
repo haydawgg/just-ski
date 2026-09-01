@@ -51,11 +51,19 @@ var grab_seconds := 0.0
 var style_seconds := 0.0
 var tweak_integral := 0.0
 var dominant_kind := TrickCommand.Kind.NONE
+var committed_axis_local := Vector3.ZERO
+var rotation_axis_weights := Vector3.ZERO
+var presentation_classifier := TrickPresentationClassifier.new()
 var rail_pose := 0
 var had_trick_intent := false
 var air_presentation_eligible := true
 
-func begin_air(is_switch: bool, takeoff_kind: int = TrickCommand.Kind.POP, presentation_eligible: bool = true) -> void:
+func begin_air(
+	is_switch: bool,
+	takeoff_kind: int = TrickCommand.Kind.POP,
+	presentation_eligible: bool = true,
+	takeoff_axis_local: Vector3 = Vector3.ZERO
+) -> void:
 	active = true
 	accumulated_rotation = Vector3.ZERO
 	grab_name = ""
@@ -71,20 +79,46 @@ func begin_air(is_switch: bool, takeoff_kind: int = TrickCommand.Kind.POP, prese
 	grab_seconds = 0.0
 	style_seconds = 0.0
 	tweak_integral = 0.0
-	dominant_kind = takeoff_kind
+	committed_axis_local = takeoff_axis_local.normalized() if takeoff_axis_local.length_squared() > 0.0001 else Vector3.ZERO
+	rotation_axis_weights = presentation_classifier.axis_weights(committed_axis_local)
+	dominant_kind = presentation_classifier.classify(committed_axis_local, takeoff_kind)
 	rail_pose = 0
 	had_trick_intent = takeoff_kind != TrickCommand.Kind.NONE
 	air_presentation_eligible = presentation_eligible
 
 func update_air(local_angular_velocity: Vector3, delta: float, command: TrickCommand = null) -> void:
+	_update_air(local_angular_velocity, delta, command, false, Vector3.ZERO)
+
+func update_air_authoritative(
+	local_angular_velocity: Vector3,
+	delta: float,
+	command: TrickCommand,
+	authoritative_rotation: Vector3
+) -> void:
+	_update_air(local_angular_velocity, delta, command, true, authoritative_rotation)
+
+func _update_air(
+	local_angular_velocity: Vector3,
+	delta: float,
+	command: TrickCommand,
+	use_authoritative_rotation: bool,
+	authoritative_rotation: Vector3
+) -> void:
 	if not active:
 		return
 	var previous_grab_name := grab_name
 	air_seconds += delta
-	accumulated_rotation += local_angular_velocity * delta
+	if use_authoritative_rotation:
+		accumulated_rotation = authoritative_rotation
+	else:
+		accumulated_rotation += local_angular_velocity * delta
 	if command != null:
+		if command.rotation_axis_local.length_squared() > 0.0001:
+			committed_axis_local = command.rotation_axis_local.normalized()
+			rotation_axis_weights = presentation_classifier.axis_weights(committed_axis_local)
+			dominant_kind = presentation_classifier.classify(committed_axis_local, dominant_kind)
 		if command.committed and command.kind not in [TrickCommand.Kind.NONE, TrickCommand.Kind.POP]:
-			dominant_kind = command.kind
+			dominant_kind = presentation_classifier.classify(committed_axis_local, command.kind)
 			had_trick_intent = true
 		grab_pose = command.grab_pose
 		style_pose = command.style_pose
@@ -137,7 +171,7 @@ func update_grind(delta: float, selected_pose: int = 0) -> void:
 	var rail_name := "50-50" if rail_pose == 0 else ("Boardslide Left" if rail_pose < 0 else "Boardslide Right")
 	trick_changed.emit("%s %.1fs" % [rail_name, grind_seconds])
 
-func land(quality: float, switch_landing: bool, link_bonus: int = 0) -> void:
+func land(quality: float, switch_landing: bool, link_bonus: int = 0, rotation_quality_applied: bool = false) -> void:
 	if not active:
 		return
 	var name := current_name()
@@ -167,7 +201,7 @@ func land(quality: float, switch_landing: bool, link_bonus: int = 0) -> void:
 		return
 	if points <= 0 and grind_seconds >= 0.08:
 		points = int(grind_seconds * 300.0)
-	var scored_quality := clampf(quality * _rotation_quality_factor(), 0.2, 1.0)
+	var scored_quality := clampf(quality if rotation_quality_applied else quality * _rotation_quality_factor(), 0.2, 1.0)
 	points = int(points * scored_quality)
 	trick_landed.emit(name, points, scored_quality)
 	reset()
@@ -223,27 +257,10 @@ func live_name() -> String:
 	return " + ".join(parts)
 
 func rotation_target_degrees() -> int:
-	match dominant_kind:
-		TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT:
-			return _spin_degrees()
-		TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP:
-			return _flip_degrees()
-		TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT:
-			return _cork_degrees()
-	return 0
+	return presentation_classifier.target_degrees(committed_axis_local, accumulated_rotation, dominant_kind)
 
 func rotation_residual_degrees() -> float:
-	var target := rotation_target_degrees()
-	if target <= 0:
-		return 0.0
-	match dominant_kind:
-		TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT:
-			return rad_to_deg(absf(accumulated_rotation.y)) - float(target)
-		TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP:
-			return rad_to_deg(absf(accumulated_rotation.x)) - float(target)
-		TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT:
-			return rad_to_deg(maxf(absf(accumulated_rotation.y), absf(accumulated_rotation.z))) - float(target)
-	return 0.0
+	return presentation_classifier.residual_degrees(committed_axis_local, accumulated_rotation, dominant_kind)
 
 func rotation_snapshot() -> Dictionary:
 	return {
@@ -251,7 +268,15 @@ func rotation_snapshot() -> Dictionary:
 		"residual_degrees": rotation_residual_degrees(),
 		"accumulated_rotation": accumulated_rotation,
 		"kind": dominant_kind,
+		"axis_local": committed_axis_local,
+		"axis_weights": rotation_axis_weights,
 	}
+
+func rotation_residual_vector() -> Vector3:
+	return presentation_classifier.residual_vector(committed_axis_local, accumulated_rotation, dominant_kind)
+
+func rotation_quality_factor() -> float:
+	return _rotation_quality_factor()
 
 func reset() -> void:
 	active = false
@@ -269,18 +294,26 @@ func reset() -> void:
 	style_seconds = 0.0
 	tweak_integral = 0.0
 	dominant_kind = TrickCommand.Kind.NONE
+	committed_axis_local = Vector3.ZERO
+	rotation_axis_weights = Vector3.ZERO
 	rail_pose = 0
 	had_trick_intent = false
 	air_presentation_eligible = true
 	trick_changed.emit("")
 
 func _spin_degrees() -> int:
+	if dominant_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT]:
+		return rotation_target_degrees()
 	return _credited_degrees(rad_to_deg(absf(accumulated_rotation.y)), SPIN_STEP_DEGREES, SPIN_MAX_UNDERROTATION_DEGREES)
 
 func _flip_degrees() -> int:
+	if dominant_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP]:
+		return rotation_target_degrees()
 	return _credited_degrees(rad_to_deg(absf(accumulated_rotation.x)), FLIP_STEP_DEGREES, FLIP_MAX_UNDERROTATION_DEGREES)
 
 func _cork_degrees() -> int:
+	if dominant_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT]:
+		return rotation_target_degrees()
 	var amount := rad_to_deg(maxf(absf(accumulated_rotation.y), absf(accumulated_rotation.z)))
 	return _credited_degrees(amount, SPIN_STEP_DEGREES, SPIN_MAX_UNDERROTATION_DEGREES)
 

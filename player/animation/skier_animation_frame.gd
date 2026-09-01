@@ -112,6 +112,12 @@ var trick_active: bool = false
 var trick_intent: bool = false
 var rotation_accumulated: Vector3 = Vector3.ZERO
 var rotation_residual: Vector3 = Vector3.ZERO
+var rotation_axis_local: Vector3 = Vector3.ZERO
+var rotation_axis_weights: Vector3 = Vector3.ZERO
+## Gameplay-owned body shape and effective rotational inertia. Presentation
+## reads these values but never writes rotation back to gameplay.
+var rotation_compactness: float = 0.5
+var rotation_inertia_scale: float = 1.0
 var crash_reason: int = CrashContext.Reason.NONE
 var crash_stage: int = CrashContext.Stage.NONE
 var crash_elapsed: float = 0.0
@@ -232,6 +238,10 @@ func reset() -> void:
 	trick_intent = false
 	rotation_accumulated = Vector3.ZERO
 	rotation_residual = Vector3.ZERO
+	rotation_axis_local = Vector3.ZERO
+	rotation_axis_weights = Vector3.ZERO
+	rotation_compactness = 0.5
+	rotation_inertia_scale = 1.0
 	crash_reason = CrashContext.Reason.NONE
 	crash_stage = CrashContext.Stage.NONE
 	crash_elapsed = 0.0

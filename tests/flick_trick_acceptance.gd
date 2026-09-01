@@ -5,17 +5,20 @@ var failures: Array[String] = []
 func _ready() -> void:
 	_test_ground_preload_flick_pops()
 	_test_directional_takeoffs()
+	_test_preloaded_flip_takeoffs()
+	_test_continuous_cork_axes()
+	_test_takeoff_axis_coupling()
 	_test_preload_quality_orders_strength()
 	_test_invalid_ground_gestures()
 	_test_forgiving_input_buffer()
 	_test_air_rotation_requires_preload()
-	_test_legacy_air_flip_commands()
+	_test_flip_air_management_requires_preload()
 	_test_contextual_trigger_grabs()
 	_test_grind_gestures()
 	_test_motion_driven_recognition_and_scoring()
 	_test_live_degrees_are_not_finalized()
 	if failures.is_empty():
-		print("FLICK_PASS: preload quality, takeoff commitment, bounded air management, grabs, scoring, and rails passed")
+		print("FLICK_PASS: continuous takeoff intent, held air management, grabs, scoring, and rails passed")
 		get_tree().quit(0)
 	else:
 		for failure: String in failures:
@@ -61,6 +64,94 @@ func _check_takeoff(interpreter: FlickTrickInterpreter, endpoint: Vector2, expec
 		failures.append("Directional takeoff did not resolve %s" % label)
 	if expected in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT, TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] and not command.takeoff_rotation_committed:
 		failures.append("%s did not mark rotational takeoff commitment" % label)
+
+func _test_preloaded_flip_takeoffs() -> void:
+	var neutral := _flip_takeoff(0.0)
+	var front := _flip_takeoff(-0.9)
+	var back := _flip_takeoff(0.9)
+	if neutral.kind != TrickCommand.Kind.POP or neutral.takeoff_rotation_committed:
+		failures.append("Neutral-pressure vertical release stopped producing a straight pop")
+	if front.kind != TrickCommand.Kind.FRONTFLIP or not front.takeoff_rotation_committed:
+		failures.append("Forward ski pressure plus vertical release did not preload a frontflip")
+	elif front.takeoff_rotation_impulse.x <= 0.0:
+		failures.append("Preloaded frontflip used the wrong rotation direction")
+	if back.kind != TrickCommand.Kind.BACKFLIP or not back.takeoff_rotation_committed:
+		failures.append("Backward ski pressure plus vertical release did not preload a backflip")
+	elif back.takeoff_rotation_impulse.x >= 0.0:
+		failures.append("Preloaded backflip used the wrong rotation direction")
+
+func _flip_takeoff(pressure_y: float) -> TrickCommand:
+	var interpreter := FlickTrickInterpreter.new()
+	var sample := TrickInputSample.new()
+	sample.right_stick = Vector2.DOWN
+	sample.left_stick.y = pressure_y
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.12)
+	sample.right_stick = Vector2.UP
+	return interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
+
+func _test_continuous_cork_axes() -> void:
+	var shallow := _cork_takeoff(Vector2(-0.9, -0.43))
+	var steep := _cork_takeoff(Vector2(-0.65, -0.78))
+	if shallow.kind != TrickCommand.Kind.CORK_LEFT or steep.kind != TrickCommand.Kind.CORK_LEFT:
+		failures.append("Continuous cork-axis samples did not remain in the left cork family")
+		return
+	var shallow_axis := shallow.takeoff_rotation_impulse.normalized()
+	var steep_axis := steep.takeoff_rotation_impulse.normalized()
+	if absf(shallow_axis.z) >= absf(steep_axis.z):
+		failures.append("Steeper cork release did not contribute more roll to the takeoff axis")
+	if absf(shallow_axis.y) <= absf(steep_axis.y):
+		failures.append("Shallower cork release did not remain more yaw-dominant")
+	if shallow.takeoff_rotation_impulse.length() <= 0.0 or absf(shallow.takeoff_rotation_impulse.length() - steep.takeoff_rotation_impulse.length()) > 0.05:
+		failures.append("Continuous cork-axis mapping changed the intended takeoff budget magnitude")
+	var mirrored := _cork_takeoff(Vector2(0.9, -0.43))
+	if mirrored.kind != TrickCommand.Kind.CORK_RIGHT or shallow.takeoff_rotation_impulse.distance_to(-mirrored.takeoff_rotation_impulse) > 0.05:
+		failures.append("Continuous cork-axis mapping did not preserve left/right symmetry")
+
+func _cork_takeoff(release: Vector2) -> TrickCommand:
+	var interpreter := FlickTrickInterpreter.new()
+	var sample := TrickInputSample.new()
+	sample.right_stick = Vector2(0.0, 0.9)
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.10)
+	sample.right_stick = release.normalized()
+	return interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
+
+func _test_takeoff_axis_coupling() -> void:
+	var left := _coupled_spin_takeoff(Vector2(-0.8, 0.0), Vector2(-0.95, -0.2))
+	var right := _coupled_spin_takeoff(Vector2(0.8, 0.0), Vector2(0.95, -0.2))
+	var left_impulse := left.takeoff_rotation_impulse
+	var right_impulse := right.takeoff_rotation_impulse
+	if left.kind != TrickCommand.Kind.SPIN_LEFT or right.kind != TrickCommand.Kind.SPIN_RIGHT:
+		failures.append("Coupled spin-axis samples did not remain predictable spin families")
+	elif absf(left_impulse.y) <= maxf(absf(left_impulse.x), absf(left_impulse.z)) * 4.0:
+		failures.append("Takeoff-coupled spin stopped being predominantly yaw")
+	if left_impulse.x * right_impulse.x <= 0.0:
+		failures.append("Mirrored spins did not preserve the shared pitch bias from their release angle")
+	if left_impulse.y * right_impulse.y >= 0.0 or left_impulse.z * right_impulse.z >= 0.0:
+		failures.append("Mirrored edge-biased spins did not mirror yaw/roll coupling")
+
+	var flip := _coupled_flip_takeoff(Vector2(-0.6, -0.8))
+	if flip.kind != TrickCommand.Kind.FRONTFLIP or flip.takeoff_rotation_impulse.x <= absf(flip.takeoff_rotation_impulse.y) * 8.0:
+		failures.append("Edge-biased frontflip stopped being predominantly pitch")
+	if absf(flip.takeoff_rotation_impulse.y) <= 0.05:
+		failures.append("Takeoff edge did not add subtle yaw coupling to the flip axis")
+
+func _coupled_spin_takeoff(left_stick: Vector2, release: Vector2) -> TrickCommand:
+	var interpreter := FlickTrickInterpreter.new()
+	var sample := TrickInputSample.new()
+	sample.right_stick = Vector2.DOWN
+	sample.left_stick = left_stick
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.12)
+	sample.right_stick = release.normalized()
+	return interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
+
+func _coupled_flip_takeoff(left_stick: Vector2) -> TrickCommand:
+	var interpreter := FlickTrickInterpreter.new()
+	var sample := TrickInputSample.new()
+	sample.right_stick = Vector2.DOWN
+	sample.left_stick = left_stick
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.12)
+	sample.right_stick = Vector2.UP
+	return interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
 
 func _test_preload_quality_orders_strength() -> void:
 	var weak := FlickTrickInterpreter.new()
@@ -128,7 +219,6 @@ func _test_air_rotation_requires_preload() -> void:
 	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.10)
 	sample.right_stick = Vector2.LEFT
 	var takeoff := interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
-	var takeoff_impulse := takeoff.rotation_impulse.length()
 	if takeoff.kind != TrickCommand.Kind.SPIN_LEFT or not takeoff.takeoff_rotation_committed:
 		failures.append("Preloaded left spin did not establish takeoff commitment")
 		return
@@ -137,19 +227,19 @@ func _test_air_rotation_requires_preload() -> void:
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.12)
 	sample.right_stick = Vector2.LEFT
 	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	if command.kind != TrickCommand.Kind.SPIN_LEFT or command.air_management != TrickCommand.AirManagement.CONTINUE:
+	if command.kind != TrickCommand.Kind.SPIN_LEFT or command.air_control_projection <= 0.0:
 		failures.append("Same-direction air input did not continue the committed spin")
-	if command.rotation_impulse.length() <= 0.0 or command.rotation_impulse.length() >= takeoff_impulse:
-		failures.append("Air continuation was not lower-authority than the takeoff")
+	if command.rotation_impulse.length() > 0.001 or command.air_control_projection <= 0.0:
+		failures.append("Continuous air continuation did not compact without adding angular impulse")
 
 	sample.right_stick = Vector2.ZERO
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
 	sample.right_stick = Vector2.RIGHT
 	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	if command.kind != TrickCommand.Kind.SPIN_LEFT or command.air_management != TrickCommand.AirManagement.CHECK:
+	if command.kind != TrickCommand.Kind.SPIN_LEFT or command.air_control_projection >= 0.0:
 		failures.append("Opposite-direction air input did not check the committed spin")
-	if command.rotation_impulse.y <= 0.0:
-		failures.append("Spin check did not apply opposing angular authority")
+	if command.rotation_impulse.length() > 0.001 or command.air_control_projection >= 0.0:
+		failures.append("Continuous spin check did not open without adding angular impulse")
 
 	interpreter.reset()
 	sample.reset()
@@ -161,27 +251,51 @@ func _test_air_rotation_requires_preload() -> void:
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.12)
 	sample.right_stick = Vector2(-0.8, -0.8).normalized()
 	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	if command.kind != TrickCommand.Kind.NONE:
-		failures.append("Air input switched a committed spin into a cork family")
+	if command.kind != TrickCommand.Kind.SPIN_LEFT or command.rotation_impulse.length() > 0.001:
+		failures.append("Diagonal air input changed the committed spin axis or manufactured momentum")
 
-func _test_legacy_air_flip_commands() -> void:
-	# Flip preload mapping is a separate migration step. Keep the established
-	# flip path covered until that mapping is introduced so this control family
-	# is not accidentally deleted while spin/cork authority moves to takeoff.
+func _test_flip_air_management_requires_preload() -> void:
 	var interpreter := FlickTrickInterpreter.new()
-	_check_legacy_air_flip(interpreter, Vector2.UP, TrickCommand.Kind.FRONTFLIP, Vector3.RIGHT, "frontflip")
-	_check_legacy_air_flip(interpreter, Vector2.DOWN, TrickCommand.Kind.BACKFLIP, Vector3.LEFT, "backflip")
-
-func _check_legacy_air_flip(interpreter: FlickTrickInterpreter, endpoint: Vector2, expected: int, expected_axis: Vector3, label: String) -> void:
-	interpreter.reset()
 	var sample := TrickInputSample.new()
 	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
-	sample.right_stick = endpoint
+	sample.right_stick = Vector2.UP
 	var command := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
-	if command.kind != expected:
-		failures.append("Legacy air gesture did not preserve %s during migration" % label)
-	if command.rotation_impulse.normalized().dot(expected_axis) < 0.7:
-		failures.append("%s used the wrong rotation axis" % label)
+	if command.kind != TrickCommand.Kind.NONE or command.rotation_impulse.length() > 0.001:
+		failures.append("Neutral-air frontflip input created rotation without preload")
+	interpreter.reset()
+	sample.reset()
+	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.11)
+	sample.right_stick = Vector2.DOWN
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.kind != TrickCommand.Kind.NONE or command.rotation_impulse.length() > 0.001:
+		failures.append("Neutral-air backflip input created rotation without preload")
+
+	_check_committed_flip_management(TrickCommand.Kind.FRONTFLIP, -0.9, Vector2.UP, Vector2.DOWN, "frontflip")
+	_check_committed_flip_management(TrickCommand.Kind.BACKFLIP, 0.9, Vector2.DOWN, Vector2.UP, "backflip")
+
+func _check_committed_flip_management(kind: int, pressure_y: float, continue_input: Vector2, check_input: Vector2, label: String) -> void:
+	var interpreter := FlickTrickInterpreter.new()
+	var sample := TrickInputSample.new()
+	sample.right_stick = Vector2.DOWN
+	sample.left_stick.y = pressure_y
+	interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.12)
+	sample.right_stick = Vector2.UP
+	var takeoff := interpreter.step(sample, FlickTrickInterpreter.Context.GROUND, 0.06)
+	if takeoff.kind != kind or not takeoff.takeoff_rotation_committed:
+		failures.append("Preloaded %s did not establish takeoff commitment" % label)
+		return
+	sample.reset()
+	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.12)
+	sample.right_stick = continue_input
+	var command := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.kind != kind or command.air_control_projection <= 0.0:
+		failures.append("Same-direction %s input did not continue the committed flip" % label)
+	sample.right_stick = Vector2.ZERO
+	interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.12)
+	sample.right_stick = check_input
+	command = interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if command.kind != kind or command.air_control_projection >= 0.0:
+		failures.append("Opposite-direction %s input did not check the committed flip" % label)
 
 func _test_contextual_trigger_grabs() -> void:
 	var interpreter := FlickTrickInterpreter.new()
