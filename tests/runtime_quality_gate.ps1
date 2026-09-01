@@ -38,6 +38,7 @@ $scenes = @(
 	"res://tests/skeleton_rig_acceptance.tscn",
 	"res://tests/jump_animation_acceptance.tscn",
 	"res://tests/landing_animation_acceptance.tscn",
+	"res://tests/landing_orientation_acceptance.tscn",
 	"res://tests/rail_animation_acceptance.tscn",
 	"res://tests/trick_animation_acceptance.tscn",
 	"res://tests/grab_animation_acceptance.tscn",

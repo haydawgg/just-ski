@@ -49,7 +49,7 @@ A segmented predictor estimates likely landing position and normal for preparati
 
 Landing evaluation combines travel alignment, skier/surface alignment, impact severity, and remaining angular motion. Hard plausibility gates prevent obviously inverted, excessively rotating, or extreme impacts from passing only because a weighted average is acceptable.
 
-Successful landings retain and project motion onto the receiving surface, classify the outcome for scoring/presentation, and may briefly reduce ordinary steering after a heavier impact. Failed landings preserve incoming momentum into the bail path instead of freezing the skier.
+Successful landings retain and project motion onto the receiving surface, classify the outcome for scoring/presentation, and may briefly reduce ordinary steering after a heavier impact. The AIR-to-GROUND state change is immediate, but the airborne root orientation is preserved and settles toward the receiving surface inside GROUND at a bounded angular rate. Clean landings use the short end of the settle envelope; heavier non-bail landings use the longer end and transfer only a small, damped amount of airborne yaw/tilt residual. The initial ground target keeps the touchdown heading, while normal ground steering and weathervaning correct it afterward. Failed landings preserve incoming momentum into the bail path instead of freezing the skier.
 
 Grab presentation may release before contact, but trick metadata required for landed scoring remains available until the landing resolves.
 

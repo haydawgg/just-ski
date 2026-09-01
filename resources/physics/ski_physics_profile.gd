@@ -73,6 +73,14 @@ extends Resource
 @export var landing_prediction_seconds: float = 2.2
 @export var landing_prediction_step: float = 0.06
 
+@export_category("Landing Continuity")
+@export var landing_orientation_settle_time_soft: float = 0.12
+@export var landing_orientation_settle_time_hard: float = 0.22
+@export var landing_orientation_max_rate_degrees: float = 240.0
+@export var landing_residual_angular_damping: float = 14.0
+@export var landing_residual_yaw_transfer: float = 0.30
+@export var landing_residual_tilt_transfer: float = 0.10
+
 @export_category("Landing")
 @export var clean_threshold: float = 0.72
 @export var sketchy_threshold: float = 0.42

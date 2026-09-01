@@ -55,6 +55,28 @@ Require-Match $controller 'jump_charge\s*/\s*maxf\(profile\.maximum_jump_charge'
 Require-Match $controller 'animation_frame\.compression\s*=.*profile\.maximum_jump_charge' "Animation compression must use the same charge maximum."
 Reject-Match $controller 'jump_charge\s*/\s*0\.(28|32)' "No second jump-charge normalization constant may remain."
 
+foreach ($landingContinuity in @(
+	"landing_orientation_settle_time_soft:\s*float\s*=\s*0\.12",
+	"landing_orientation_settle_time_hard:\s*float\s*=\s*0\.22",
+	"landing_orientation_max_rate_degrees:\s*float\s*=\s*240\.0",
+	"landing_residual_angular_damping:\s*float\s*=\s*14\.0",
+	"landing_residual_yaw_transfer:\s*float\s*=\s*0\.30",
+	"landing_residual_tilt_transfer:\s*float\s*=\s*0\.10"
+)) {
+	Require-Match $profile $landingContinuity "Landing orientation continuity tuning is missing or changed."
+}
+Require-Match $controller 'var landing_orientation_remaining\s*:=\s*0\.0' "Landing orientation settle state is missing."
+Require-Match $controller 'var landing_orientation_duration\s*:=\s*0\.0' "Landing orientation duration state is missing."
+Require-Match $controller 'var landing_residual_angular_velocity\s*:=\s*Vector3\.ZERO' "Landing residual angular velocity state is missing."
+Require-Match $controller 'func _apply_ground_orientation\(' "Ground orientation must have a dedicated landing continuity seam."
+Require-Match $controller 'func _begin_landing_orientation_settle\(' "Successful landings must seed orientation continuity state."
+Require-Match $controller 'AirRotationIntegrator\.local_to_world_angular_velocity\(global_basis,\s*angular_velocity\)' "Landing residuals must convert local airborne angular velocity into world space."
+Require-Match $controller 'global_basis\s*=\s*_apply_ground_orientation\(' "Ground orientation must be resolved through the bounded landing seam."
+$landingHandler = [regex]::Match($controller, 'func _handle_landing\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($landingHandler.Success) {
+	Reject-Match $landingHandler.Groups["body"].Value 'global_basis\s*=\s*Basis\.looking_at' "Successful landing handler cannot replace the physical orientation in one frame."
+}
+
 Require-Match $resort '@export var physics_profile:\s*SkiPhysicsProfile' "Resort must own the active physics profile."
 Require-Match $resort 'ParkCourseBuilderModule\.build\(self,\s*course_profile,\s*physics_profile(?:,\s*environment_asset_catalog)?\)' "Course construction must receive the active profile."
 Require-Match $resort 'player\.profile\s*=\s*physics_profile' "The skier must receive the same active profile."

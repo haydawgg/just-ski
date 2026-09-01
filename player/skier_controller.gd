@@ -77,6 +77,11 @@ var landing_feedback_armed := false
 var landing_context := {}
 var landing_control_multiplier := 1.0
 var landing_control_recovery_rate := 0.0
+var landing_orientation_remaining := 0.0
+var landing_orientation_duration := 0.0
+# Airborne angular velocity is local-space. The landing residual is world-space
+# so its yaw/tilt split remains relative to the receiving surface normal.
+var landing_residual_angular_velocity := Vector3.ZERO
 var air_deliberate := false
 var air_takeoff_type := SkierAnimationFrame.TakeoffType.NONE
 var air_takeoff_charge := 0.0
@@ -308,8 +313,12 @@ func _update_ground(delta: float) -> void:
 	# Normalized lerp avoids Vector3.slerp's axis-normalization error for nearly parallel normals.
 	var aligned_up := current_up.lerp(surface_up, 1.0 - exp(-profile.ground_align_rate * delta)).normalized()
 	if absf(aligned_up.dot(turned_forward)) > 0.92:
-		aligned_up = normal
-	global_basis = Basis.looking_at(turned_forward.normalized(), aligned_up).orthonormalized()
+		aligned_up = surface_up
+	var ground_target_basis := Basis.looking_at(
+		turned_forward.normalized(),
+		aligned_up
+	).orthonormalized()
+	global_basis = _apply_ground_orientation(ground_target_basis, surface_up, delta)
 
 	if trick_command.phase == TrickCommand.PresentationPhase.SETUP:
 		jump_charge = maxf(jump_charge, trick_command.gesture_strength * profile.maximum_jump_charge)
@@ -323,6 +332,78 @@ func _update_ground(delta: float) -> void:
 		jump_charge = maxf(jump_charge, 0.06)
 
 	AudioManager.skid_feedback(skid_amount)
+
+func _apply_ground_orientation(target_basis: Basis, surface_normal: Vector3, delta: float) -> Basis:
+	var current := global_basis.orthonormalized()
+	var target := target_basis.orthonormalized()
+	if landing_orientation_duration <= 0.0:
+		landing_residual_angular_velocity = Vector3.ZERO
+		return target
+	var dt := maxf(delta, 0.0)
+	if dt <= 0.0:
+		return current
+	landing_residual_angular_velocity *= exp(-profile.landing_residual_angular_damping * dt)
+	var remaining_angle := deg_to_rad(maxf(profile.landing_orientation_max_rate_degrees, 0.0)) * dt
+	if remaining_angle <= 0.0:
+		return current
+
+	# Apply residual rotation in the current body frame, but account for it in
+	# the same angular budget as target convergence so the root never exceeds the
+	# configured per-frame rate ceiling.
+	var residual_speed_squared := landing_residual_angular_velocity.length_squared()
+	if residual_speed_squared > 0.000001:
+		var local_residual := current.inverse() * landing_residual_angular_velocity
+		var residual_basis := AirRotationIntegrator.integrate_basis(current, local_residual, dt)
+		var current_quaternion := current.get_rotation_quaternion()
+		var residual_quaternion := residual_basis.get_rotation_quaternion()
+		var residual_step := current_quaternion.angle_to(residual_quaternion)
+		if residual_step > remaining_angle and residual_step > 0.000001:
+			current = Basis(current_quaternion.slerp(residual_quaternion, remaining_angle / residual_step)).orthonormalized()
+			remaining_angle = 0.0
+		else:
+			current = residual_basis
+			remaining_angle -= residual_step
+
+	var current_quaternion := current.get_rotation_quaternion()
+	var target_quaternion := target.get_rotation_quaternion()
+	var error := current_quaternion.angle_to(target_quaternion)
+	if remaining_angle > 0.0 and error > 0.000001:
+		var target_step := minf(error, remaining_angle)
+		current = Basis(current_quaternion.slerp(target_quaternion, target_step / error)).orthonormalized()
+
+	landing_orientation_remaining = maxf(landing_orientation_remaining - dt, 0.0)
+	var final_error := current.get_rotation_quaternion().angle_to(target_quaternion)
+	if final_error <= deg_to_rad(1.0):
+		landing_orientation_remaining = 0.0
+		landing_orientation_duration = 0.0
+		landing_residual_angular_velocity = Vector3.ZERO
+	elif landing_orientation_remaining <= 0.0:
+		# The configured duration is an envelope, not permission to snap. Keep
+		# the continuity seam active until the remaining error is rate-safe.
+		landing_orientation_duration = maxf(landing_orientation_duration, dt)
+	return current
+
+func _begin_landing_orientation_settle(severity: float) -> void:
+	var bounded_severity := clampf(severity, 0.0, 1.0)
+	var normal := contact.average_normal.normalized() if contact.average_normal.length_squared() > 0.0001 else Vector3.UP
+	var world_angular_velocity := AirRotationIntegrator.local_to_world_angular_velocity(global_basis, angular_velocity)
+	var yaw_component := normal * world_angular_velocity.dot(normal)
+	var tilt_component := world_angular_velocity - yaw_component
+	landing_residual_angular_velocity = (
+		yaw_component * profile.landing_residual_yaw_transfer
+		+ tilt_component * profile.landing_residual_tilt_transfer
+	)
+	landing_orientation_duration = maxf(lerpf(
+		profile.landing_orientation_settle_time_soft,
+		profile.landing_orientation_settle_time_hard,
+		bounded_severity
+	), 0.0)
+	landing_orientation_remaining = landing_orientation_duration
+
+func _clear_landing_orientation_settle() -> void:
+	landing_orientation_remaining = 0.0
+	landing_orientation_duration = 0.0
+	landing_residual_angular_velocity = Vector3.ZERO
 
 func _constrain_heading_to_travel(candidate: Vector3, normal: Vector3, speed_ratio: float, delta: float) -> Vector3:
 	var travel := velocity.slide(normal)
@@ -595,6 +676,7 @@ func _enter_air(takeoff_kind: int = TrickCommand.Kind.NONE, normalized_charge: f
 	air_deliberate = false
 	landing_feedback_armed = true
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
+	_clear_landing_orientation_settle()
 	angular_velocity = Vector3.ZERO
 	trick_rotation_state.reset()
 	air_time = 0.0
@@ -641,12 +723,7 @@ func _handle_landing() -> void:
 		velocity *= profile.sketchy_landing_speed_retain
 	elif int(result.outcome) == LandingSolver.Outcome.HARD:
 		velocity *= profile.hard_landing_speed_retain
-	var projected_forward := (-global_basis.z).slide(contact.average_normal)
-	if projected_forward.length_squared() < 0.0001:
-		projected_forward = contact.downhill()
-	if projected_forward.length_squared() < 0.0001:
-		projected_forward = Vector3.FORWARD
-	global_basis = Basis.looking_at(projected_forward.normalized(), contact.average_normal.normalized()).orthonormalized()
+	_begin_landing_orientation_settle(float(result.impact_severity))
 	angular_velocity = Vector3.ZERO
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
@@ -754,6 +831,7 @@ func _reseat_on_snow() -> void:
 		signf(float(result.lateral_velocity))
 	)
 	velocity = velocity.slide(contact.average_normal)
+	_clear_landing_orientation_settle()
 	angular_velocity = Vector3.ZERO
 	var projected_forward := (-global_basis.z).slide(contact.average_normal)
 	if projected_forward.length_squared() < 0.0001:
@@ -863,6 +941,7 @@ func _slip_off_rail() -> void:
 func enter_crash(context: CrashContext) -> bool:
 	if state == State.BAIL or context == null or not context.active:
 		return false
+	_clear_landing_orientation_settle()
 	crash_context = context
 	state = State.BAIL
 	bail_time = profile.crash_max_duration
@@ -1006,6 +1085,7 @@ func _evaluate_feature_crash_after_motion() -> void:
 
 func _recover_from_bail() -> void:
 	bail_recovering = false
+	_clear_landing_orientation_settle()
 	velocity = velocity.slide(contact.average_normal) * profile.bail_recovery_speed_retain
 	angular_velocity = Vector3.ZERO
 	var projected_forward := (-global_basis.z).slide(contact.average_normal)
@@ -1024,6 +1104,7 @@ func respawn_at(value: Transform3D) -> void:
 	respawn_count += 1
 	active_rail = null
 	velocity = Vector3.ZERO
+	_clear_landing_orientation_settle()
 	angular_velocity = Vector3.ZERO
 	global_transform = value
 	global_position += Vector3.UP * 0.35
@@ -1083,6 +1164,7 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	recovery_frozen = false
 	active_rail = null
 	velocity = initial_velocity
+	_clear_landing_orientation_settle()
 	angular_velocity = Vector3.ZERO
 	global_transform = value
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
