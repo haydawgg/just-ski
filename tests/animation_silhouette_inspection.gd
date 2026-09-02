@@ -3,6 +3,16 @@ extends Node3D
 const DURATION := 21.6
 const REVIEW_TIMES: Array[float] = [0.8, 2.0, 3.2, 4.4, 5.6, 6.9, 8.2, 9.5, 10.7, 11.9, 13.1, 14.3, 15.5, 16.8, 17.9, 19.0, 20.2, 21.0]
 const REVIEW_LABELS := ["ground", "carve", "scrape", "switch", "takeoff", "spin", "grab", "spread_eagle", "daffy", "shifty", "frontflip", "backflip", "cork", "rail_50_50", "rail_slide", "landing_setup", "landing_impact", "runout"]
+const GRAB_SHOWCASE_DURATION := 9.0
+const GRAB_SHOWCASE_REVIEW_TIMES: Array[float] = [1.2, 3.0, 4.8, 6.6, 8.4]
+const GRAB_SHOWCASE_REVIEW_LABELS := ["mute", "japan", "tail", "nose", "double"]
+const GRAB_SHOWCASE_POSES: Array[int] = [
+	TrickController.GrabPose.MUTE_LEFT,
+	TrickController.GrabPose.JAPAN_LEFT,
+	TrickController.GrabPose.TAIL,
+	TrickController.GrabPose.NOSE,
+	TrickController.GrabPose.DOUBLE,
+]
 
 var rig: SkierAnimationController
 var skier: SkierController
@@ -13,6 +23,7 @@ var previous_stage := -1
 var review_index := 0
 var capture_mode := false
 var presentation_capture := false
+var grab_showcase_mode := false
 var capture_finished := false
 var output_directory := ""
 
@@ -28,11 +39,17 @@ func _ready() -> void:
 	add_child(camera_rig)
 	camera_rig.set_target(skier)
 	presentation_capture = OS.get_cmdline_user_args().has("--capture-character-presentation")
-	capture_mode = OS.get_cmdline_user_args().has("--capture-silhouette-showcase") or presentation_capture
+	grab_showcase_mode = OS.get_cmdline_user_args().has("--capture-production-grab-showcase")
+	capture_mode = OS.get_cmdline_user_args().has("--capture-silhouette-showcase") or presentation_capture or grab_showcase_mode
 	if capture_mode:
-		output_directory = ProjectSettings.globalize_path("res://.godot_user/captures/phase_17_after" if presentation_capture else "res://.godot_user/captures")
+		var capture_path := "res://.godot_user/captures"
+		if presentation_capture:
+			capture_path = "res://.godot_user/captures/phase_17_after"
+		elif grab_showcase_mode:
+			capture_path = "res://.godot_user/captures/production_grab_showcase"
+		output_directory = ProjectSettings.globalize_path(capture_path)
 		DirAccess.make_dir_recursive_absolute(output_directory)
-		if not presentation_capture:
+		if not presentation_capture and not grab_showcase_mode:
 			ClipRecorder.clip_saved.connect(_on_clip_saved)
 			ClipRecorder.clip_failed.connect(_on_clip_failed)
 			ClipRecorder._start_recording()
@@ -41,25 +58,56 @@ func _process(delta: float) -> void:
 	if capture_finished:
 		return
 	elapsed += delta
-	var timeline := minf(elapsed, DURATION - 0.001)
-	_apply_timeline(timeline, delta)
+	var duration := GRAB_SHOWCASE_DURATION if grab_showcase_mode else DURATION
+	var timeline := minf(elapsed, duration - 0.001)
+	if grab_showcase_mode:
+		_apply_grab_showcase(timeline, delta)
+	else:
+		_apply_timeline(timeline, delta)
 	camera_rig._physics_process(delta)
-	if capture_mode and review_index < REVIEW_TIMES.size() and elapsed >= REVIEW_TIMES[review_index]:
+	var review_times: Array[float] = GRAB_SHOWCASE_REVIEW_TIMES if grab_showcase_mode else REVIEW_TIMES
+	if capture_mode and review_index < review_times.size() and elapsed >= review_times[review_index]:
 		_capture_review_frame(review_index)
 		review_index += 1
-	if presentation_capture and elapsed >= DURATION:
+	if grab_showcase_mode and elapsed >= duration:
+		capture_finished = true
+		print("PRODUCTION_GRAB_SHOWCASE_CAPTURED: %s" % output_directory)
+		get_tree().quit(0)
+	elif presentation_capture and elapsed >= duration:
 		capture_finished = true
 		print("CHARACTER_PRESENTATION_CAPTURED: %s" % output_directory)
 		get_tree().quit(0)
-	elif capture_mode and elapsed >= DURATION and ClipRecorder._recording:
+	elif capture_mode and elapsed >= duration and ClipRecorder._recording:
 		ClipRecorder._stop_recording()
-	if capture_mode and not presentation_capture and elapsed > DURATION + 12.0:
+	if capture_mode and not presentation_capture and not grab_showcase_mode and elapsed > duration + 12.0:
 		push_error("SILHOUETTE_INSPECTION_FAIL: capture did not finish")
 		get_tree().quit(1)
-	elif not capture_mode and elapsed >= DURATION:
+	elif not capture_mode and elapsed >= duration:
 		elapsed = 0.0
 		previous_stage = -1
 		rig.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
+
+func _apply_grab_showcase(time: float, delta: float) -> void:
+	frame.reset()
+	frame.speed_mps = 18.0
+	frame.speed_ratio = 0.82
+	var segment := clampi(int(time / (GRAB_SHOWCASE_DURATION / float(GRAB_SHOWCASE_POSES.size()))), 0, GRAB_SHOWCASE_POSES.size() - 1)
+	var segment_width := GRAB_SHOWCASE_DURATION / float(GRAB_SHOWCASE_POSES.size())
+	var segment_time := fmod(time, segment_width)
+	_set_air(0.58, 0.24)
+	frame.grab_pose = GRAB_SHOWCASE_POSES[segment]
+	frame.grab_amount = 1.0
+	frame.grab_input_strength = 1.0
+	frame.grab_hold_time = maxf(0.0, segment_time - 0.25)
+	frame.trick_phase = TrickCommand.PresentationPhase.GRAB
+	# Vary the gameplay root heading so the captures provide multiple readable
+	# angles while the equipment markers remain attached to the production skis.
+	skier.rotation.y = [0.0, 0.55, PI, -0.55, 0.25][segment]
+	frame.ski_forward = -skier.global_basis.z
+	frame.ski_up = skier.global_basis.y
+	frame.body_up = skier.global_basis.y
+	frame.angular_velocity_world = skier.global_basis * frame.angular_velocity
+	rig.apply_frame(frame, delta)
 
 func _apply_timeline(time: float, delta: float) -> void:
 	frame.reset()
@@ -247,8 +295,8 @@ func _capture_review_frame(index: int) -> void:
 	if image == null or image.is_empty():
 		return
 	image.resize(960, 540, Image.INTERPOLATE_BILINEAR)
-	var label: String = REVIEW_LABELS[index] if index < REVIEW_LABELS.size() else "pose"
-	var filename := "character_%02d_%s.png" % [index + 1, label] if presentation_capture else "silhouette_%02d.png" % (index + 1)
+	var label: String = GRAB_SHOWCASE_REVIEW_LABELS[index] if grab_showcase_mode else REVIEW_LABELS[index] if index < REVIEW_LABELS.size() else "pose"
+	var filename := "character_%02d_%s.png" % [index + 1, label] if presentation_capture else "grab_%02d_%s.png" % [index + 1, label] if grab_showcase_mode else "silhouette_%02d.png" % (index + 1)
 	image.save_png(output_directory.path_join(filename))
 
 func _on_clip_saved(path: String) -> void:

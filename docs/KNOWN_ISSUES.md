@@ -5,6 +5,7 @@ This file tracks unresolved behavior, missing production work, and checks that s
 ## Recently resolved
 
 - **Crest unweighting is covered and tuned.** Production roller geometry now has deterministic front/rear contact, tip-load, vertical-response, partial-support, and runout-recontact coverage in `tests/crest_unweighting_acceptance.tscn`. The active profile uses symmetric `0.84m` front/rear probe offsets; `tip_grip_gain` remains at its existing value.
+- **Production grab contact is calibrated.** The default `Skeleton3D` adapter measures its scaled rest-pose arm lengths, follows attached equipment markers, and evaluates a calibrated palm point with `0.18 m` acquisition and `0.12 m` maintenance caps. Remaining grab presentation issues are limited to the intersections listed below.
 
 ## Ski feel and controls
 
@@ -14,7 +15,6 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 ## Animation and character presentation
 
-- **Grab contact is intentionally approximate on the production body.** The production mesh has different shoulder and arm proportions from the canonical pose driver, so grabs are designed for readable near-contact rather than exact wrist-to-marker locking.
 - **Occasional pole/body and cloth/skin intersections may still occur.** These need visual checking from multiple camera angles during normal play. The current rig does not attempt full-body collision solving or cloth simulation.
 - **Secondary-motion amplitudes still need final visual tuning.** Deterministic tests cover continuity, settling, clamps, combined trick/grab behavior, and frame-rate consistency, but the final inertia feel is still a presentation judgment.
 

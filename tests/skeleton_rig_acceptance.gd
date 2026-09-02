@@ -22,8 +22,10 @@ func _ready() -> void:
 	_test_controller_selection(profile)
 	_test_supplied_asset_when_present()
 	_test_production_visual_alignment()
+	_test_production_calibration()
 	await _test_production_pose_sweep()
 	await _test_production_grab_reach()
+	await _test_production_contact_envelope()
 	if failures.is_empty():
 		print("SKELETON_RIG_PASS: bone mapping, production pose sweep, grab reach, neutral-relative retargeting, equipment attachments, strict selection, and AUTO fallback passed")
 		get_tree().quit(0)
@@ -145,6 +147,34 @@ func _test_production_visual_alignment() -> void:
 	remove_child(controller)
 	controller.free()
 
+func _test_production_calibration() -> void:
+	const body_path := "res://assets/characters/skier/skier_body.glb"
+	if not ResourceLoader.exists(body_path):
+		return
+	var controller := _production_controller()
+	var adapter := controller.rig_adapter as SkeletonSkierRig
+	if adapter == null:
+		_check(false, "Production calibration could not create the Skeleton3D adapter")
+		controller.free()
+		return
+	var left_lengths := adapter.arm_lengths(&"left")
+	var right_lengths := adapter.arm_lengths(&"right")
+	print("SKELETON_RIG_CALIBRATION left=(%.4f,%.4f) right=(%.4f,%.4f) helpers=%s" % [
+		left_lengths.x, left_lengths.y, right_lengths.x, right_lengths.y, adapter.grab_debug_snapshot().get("helper_bones", {}),
+	])
+	for side: StringName in [&"left", &"right"]:
+		var lengths := adapter.arm_lengths(side)
+		_check(lengths.x > 0.30 and lengths.x < 0.36, "%s production upper-arm length was not measured from the scaled rest pose" % side)
+		_check(lengths.y > 0.20 and lengths.y < 0.28, "%s production forearm length was not measured from the scaled rest pose" % side)
+		_check(absf(lengths.x - controller.profile.grab_upper_arm_length) > 0.05, "%s production upper-arm length fell back to the canonical value" % side)
+		_check(absf(lengths.y - controller.profile.grab_forearm_length) > 0.05, "%s production forearm length fell back to the canonical value" % side)
+	_check(left_lengths.distance_to(right_lengths) < 0.002, "Mirrored production arm lengths were not calibrated consistently")
+	_check(adapter._helper_bone_indices.has(&"upper_spine"), "Default production profile did not enable the upper-spine helper")
+	_check(adapter._helper_bone_indices.has(&"left_clavicle"), "Default production profile did not enable the left clavicle helper")
+	_check(adapter._helper_bone_indices.has(&"right_clavicle"), "Default production profile did not enable the right clavicle helper")
+	_check(str(adapter.grab_debug_snapshot().get("solver", "")) == "IDLE", "Production solver was active without a grab request")
+	controller.free()
+
 func _test_production_pose_sweep() -> void:
 	const body_path := "res://assets/characters/skier/skier_body.glb"
 	if not ResourceLoader.exists(body_path):
@@ -218,34 +248,137 @@ func _test_production_grab_reach() -> void:
 	if not ResourceLoader.exists(body_path):
 		return
 	var maximum_reach := 0.0
+	var maximum_wrist_error := 0.0
+	var maximum_segment_drift := 0.0
 	for pose: int in GRAB_POSES:
 		var controller := _production_controller()
+		var adapter := controller.rig_adapter as SkeletonSkierRig
+		if adapter == null:
+			_check(false, "Production grab reach could not create the Skeleton3D adapter")
+			controller.free()
+			return
+		var helper_baseline := _helper_pose_rotations(adapter)
+		var segment_baseline := _segment_lengths(adapter)
 		var frame := _air_frame()
 		frame.grab_pose = pose
 		frame.grab_amount = 1.0
 		frame.grab_input_strength = 1.0
 		frame.grab_hold_time = 0.8
 		frame.trick_phase = TrickCommand.PresentationPhase.GRAB
+		var pose_max_hold_error := 0.0
+		var pose_max_wrist_error := 0.0
+		var minimum_hold_contact := 1.0
+		var hold_frames := 0
 		for _index: int in 140:
 			controller.apply_frame(frame, STEP)
-		await get_tree().process_frame
-		var adapter := controller.rig_adapter as SkeletonSkierRig
+			var snapshot := controller.debug_snapshot()
+			var definition := controller._grab_definition as GrabAnimationDefinition
+			if str(snapshot.get("grab_phase", "")) == "HOLD" and definition != null:
+				hold_frames += 1
+				minimum_hold_contact = minf(minimum_hold_contact, float(snapshot.get("grab_contact_weight", 0.0)))
+				for hand_side: StringName in _grab_hand_sides(definition):
+					var reach_error := _production_grab_error(adapter, definition, hand_side)
+					var wrist_error := _production_wrist_error(adapter, definition, hand_side)
+					pose_max_hold_error = maxf(pose_max_hold_error, reach_error)
+					pose_max_wrist_error = maxf(pose_max_wrist_error, wrist_error)
+		var final_snapshot := controller.debug_snapshot()
 		var definition := controller._grab_definition as GrabAnimationDefinition
-		var target_name: StringName = [&"", &"binding_outside", &"binding_inside", &"nose", &"tail"][definition.target]
-		var visual := adapter.landmarks()
-		var pose_reach := 0.0
-		if definition.hand in [GrabAnimationDefinition.Hand.LEFT, GrabAnimationDefinition.Hand.BOTH]:
-			var target_side := &"left" if definition.target_ski in [GrabAnimationDefinition.Ski.LEFT, GrabAnimationDefinition.Ski.BOTH] else &"right"
-			var target := adapter.equipment_targets[StringName("%s_%s" % [target_side, target_name])] as Node3D
-			pose_reach = maxf(pose_reach, (visual.left_hand as Vector3).distance_to(target.global_position))
-		if definition.hand in [GrabAnimationDefinition.Hand.RIGHT, GrabAnimationDefinition.Hand.BOTH]:
-			var target_side := &"right" if definition.target_ski in [GrabAnimationDefinition.Ski.RIGHT, GrabAnimationDefinition.Ski.BOTH] else &"left"
-			var target := adapter.equipment_targets[StringName("%s_%s" % [target_side, target_name])] as Node3D
-			pose_reach = maxf(pose_reach, (visual.right_hand as Vector3).distance_to(target.global_position))
-		maximum_reach = maxf(maximum_reach, pose_reach)
-		print("SKELETON_RIG_GRAB pose=%s visual_reach=%.3f" % [definition.display_name, pose_reach])
+		var final_reach := 0.0
+		var final_wrist_error := 0.0
+		if definition != null:
+			for hand_side: StringName in _grab_hand_sides(definition):
+				final_reach = maxf(final_reach, _production_grab_error(adapter, definition, hand_side))
+				final_wrist_error = maxf(final_wrist_error, _production_wrist_error(adapter, definition, hand_side))
+		maximum_reach = maxf(maximum_reach, maxf(pose_max_hold_error, final_reach))
+		maximum_wrist_error = maxf(maximum_wrist_error, maxf(pose_max_wrist_error, final_wrist_error))
+		maximum_segment_drift = maxf(maximum_segment_drift, _segment_length_drift(adapter, segment_baseline))
+		var helper_drift := _helper_pose_drift(adapter, helper_baseline)
+		print("SKELETON_RIG_GRAB pose=%s reach=%.3f hold_frames=%d contact_min=%.2f wrist=%.3f helper=%.3f solver=%s" % [
+			definition.display_name if definition != null else "NONE",
+			maxf(pose_max_hold_error, final_reach), hold_frames, minimum_hold_contact,
+			maxf(pose_max_wrist_error, final_wrist_error), helper_drift,
+			adapter.grab_debug_snapshot().get("solver", "IDLE"),
+		])
+		_check(hold_frames > 20, "%s never settled into a sustained HOLD" % (definition.display_name if definition != null else pose))
+		_check(maxf(pose_max_hold_error, final_reach) <= 0.1205, "%s exceeded the 0.12m visual palm envelope" % (definition.display_name if definition != null else pose))
+		_check(minimum_hold_contact > 0.8, "%s contact weight was not stable during HOLD" % (definition.display_name if definition != null else pose))
+		_check(str(final_snapshot.get("grab_phase", "")) == "HOLD", "%s finished outside HOLD" % (definition.display_name if definition != null else pose))
+		_check(str(adapter.grab_debug_snapshot().get("solver", "")) == "CONTACT", "%s production solver did not report CONTACT" % (definition.display_name if definition != null else pose))
+		_check(_segment_length_drift(adapter, segment_baseline) < 0.003, "%s changed a measured arm segment length" % (definition.display_name if definition != null else pose))
+		if pose == TrickController.GrabPose.MUTE_LEFT or pose == TrickController.GrabPose.MUTE_RIGHT:
+			_check(helper_drift > 0.02, "%s did not activate production helper bones for the cross-body reach" % (definition.display_name if definition != null else pose))
+			var clavicle_name: StringName = &"shoulder.L" if pose == TrickController.GrabPose.MUTE_LEFT else &"shoulder.R"
+			_check(_helper_pose_delta(adapter, helper_baseline, clavicle_name) > 0.02, "%s did not activate its clavicle helper" % (definition.display_name if definition != null else pose))
 		controller.free()
-	_check(maximum_reach < 0.8, "Production grab hand remained %.2fm from its attached ski target" % maximum_reach)
+	print("SKELETON_RIG_GRAB_SUMMARY poses=%d maximum_reach=%.4f maximum_wrist=%.4f maximum_segment_drift=%.4f" % [
+		GRAB_POSES.size(), maximum_reach, maximum_wrist_error, maximum_segment_drift,
+	])
+	_check(maximum_reach <= 0.1205, "Production grab palm exceeded %.3fm" % maximum_reach)
+	_check(maximum_wrist_error < 0.08, "Production wrist orientation diverged by %.3f radians" % maximum_wrist_error)
+
+func _test_production_contact_envelope() -> void:
+	const body_path := "res://assets/characters/skier/skier_body.glb"
+	if not ResourceLoader.exists(body_path):
+		return
+	var controller := _production_controller()
+	var adapter := controller.rig_adapter as SkeletonSkierRig
+	var target := adapter.grab_target(&"left", &"binding_outside")
+	_check(target != null, "Production contact-envelope fixture could not find the attached ski marker")
+	if target == null:
+		controller.free()
+		return
+	target.position += Vector3(0.0, 2.0, 0.0)
+	var frame := _air_frame()
+	frame.grab_pose = TrickController.GrabPose.SAFETY_LEFT
+	frame.grab_amount = 1.0
+	frame.grab_input_strength = 1.0
+	frame.grab_hold_time = 0.8
+	frame.trick_phase = TrickCommand.PresentationPhase.GRAB
+	for _index: int in 140:
+		controller.apply_frame(frame, STEP)
+	var snapshot := controller.debug_snapshot()
+	var definition := controller._grab_definition as GrabAnimationDefinition
+	var reach_error := _production_grab_error(adapter, definition, &"left") if definition != null else 0.0
+	print("SKELETON_RIG_ENVELOPE outside_error=%.3f phase=%s contact=%.2f" % [reach_error, snapshot.get("grab_phase", ""), snapshot.get("grab_contact_weight", 0.0)])
+	_check(reach_error > 0.12, "An out-of-envelope production marker was reported as visual contact")
+	_check(str(snapshot.get("grab_phase", "")) != "HOLD", "Production lifecycle entered HOLD outside the 0.12m maintenance envelope")
+	_check(float(snapshot.get("grab_contact_weight", 0.0)) < 0.72, "Out-of-envelope production marker accumulated HOLD contact weight")
+	controller.free()
+
+func _grab_hand_sides(definition: GrabAnimationDefinition) -> Array[StringName]:
+	var result: Array[StringName] = []
+	if definition.hand == GrabAnimationDefinition.Hand.LEFT or definition.hand == GrabAnimationDefinition.Hand.BOTH:
+		result.append(&"left")
+	if definition.hand == GrabAnimationDefinition.Hand.RIGHT or definition.hand == GrabAnimationDefinition.Hand.BOTH:
+		result.append(&"right")
+	return result
+
+func _target_name(target: int) -> StringName:
+	return [&"", &"binding_outside", &"binding_inside", &"nose", &"tail"][target]
+
+func _target_side_for_hand(definition: GrabAnimationDefinition, hand_side: StringName) -> StringName:
+	if definition.target_ski == GrabAnimationDefinition.Ski.BOTH:
+		return hand_side
+	return &"left" if definition.target_ski == GrabAnimationDefinition.Ski.LEFT else &"right"
+
+func _production_grab_error(adapter: SkeletonSkierRig, definition: GrabAnimationDefinition, hand_side: StringName) -> float:
+	if adapter == null or definition == null:
+		return INF
+	var target := adapter.grab_target(_target_side_for_hand(definition, hand_side), _target_name(definition.target))
+	if target == null:
+		return INF
+	return adapter.grab_contact_point(hand_side).distance_to(target.global_position)
+
+func _production_wrist_error(adapter: SkeletonSkierRig, definition: GrabAnimationDefinition, hand_side: StringName) -> float:
+	if adapter == null or definition == null:
+		return INF
+	var target := adapter.grab_target(_target_side_for_hand(definition, hand_side), _target_name(definition.target))
+	if target == null:
+		return INF
+	var correction := adapter._as_quaternion(adapter.profile.hand_wrist_corrections.get(hand_side, Quaternion.IDENTITY), Quaternion.IDENTITY)
+	var expected := (target.global_transform.basis.orthonormalized().get_rotation_quaternion() * correction).normalized()
+	var actual := adapter._bone_world(StringName("%s_hand" % hand_side)).basis.orthonormalized().get_rotation_quaternion()
+	return _quaternion_delta(expected, actual)
 
 func _production_controller() -> SkierAnimationController:
 	var controller := SkierAnimationController.new()
@@ -285,6 +418,14 @@ func _helper_pose_drift(adapter: SkeletonSkierRig, baseline: Dictionary) -> floa
 	for name: StringName in baseline:
 		maximum = maxf(maximum, _quaternion_delta(baseline[name] as Quaternion, adapter.skeleton.get_bone_pose_rotation(adapter.skeleton.find_bone(name))))
 	return maximum
+
+func _helper_pose_delta(adapter: SkeletonSkierRig, baseline: Dictionary, name: StringName) -> float:
+	if adapter == null or not baseline.has(name):
+		return 0.0
+	var index := adapter.skeleton.find_bone(name)
+	if index < 0:
+		return 0.0
+	return _quaternion_delta(baseline[name] as Quaternion, adapter.skeleton.get_bone_pose_rotation(index))
 
 func _segment_lengths(adapter: SkeletonSkierRig) -> Dictionary:
 	var result: Dictionary = {}

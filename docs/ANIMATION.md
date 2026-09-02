@@ -33,7 +33,7 @@ Presentation is split into three layers of responsibility:
 
 The command-line argument `-- --primitive-skier` forces the primitive presentation for debugging and comparison.
 
-`SkierSkeletonProfile` owns model-specific bone mapping, neutral orientation data, axis correction, scale, and attachment offsets. Skis, boots, poles, helmet, and goggles remain presentation attachments rather than locomotion owners.
+`SkierSkeletonProfile` owns model-specific bone mapping, neutral orientation data, axis correction, scale, attachment offsets, and optional production reach calibration. The default production profile maps `spine.002` and `shoulder.L/R` as optional upper-spine and clavicle helpers, records palm and wrist corrections, and measures the visible upper-arm and forearm lengths from the scaled rest transforms. Skis, boots, poles, helmet, and goggles remain presentation attachments rather than locomotion owners.
 
 ## Layer order
 
@@ -103,7 +103,7 @@ Physical grabs and style-only poses are data-driven resources.
 
 `default_grab_animation_library.tres` contains the supported physical grabs and their hand / ski target definitions. `default_style_pose_library.tres` contains style poses that do not require hand-to-ski contact.
 
-The grab system blends authored body shapes with bounded arm targeting. Ski-local markers move with the skier, so grab targets remain attached through spins and tweaks. Contact is presentation-only; scoring state remains owned by the trick system.
+The grab system blends authored body shapes with bounded arm targeting. Ski-local markers move with the skier, so grab targets remain attached through spins and tweaks. On the production `Skeleton3D`, the adapter receives a typed visual reach request after canonical retargeting and applies bounded upper-spine/clavicle assistance, an actual-length two-bone arm solve, and marker-aligned wrist orientation. The palm contact point is calibrated against the attached equipment marker, with a `0.18 m` acquisition cap and a `0.12 m` maintenance envelope during `HOLD`; no bone scaling, root translation, or gameplay transform is involved. The primitive adapter keeps the canonical solver path, and production helper bones return to their neutral pose outside grabs. Contact is presentation-only; scoring state remains owned by the trick system.
 
 Grab presentation moves through setup, reach, contact, hold, release, and recovery behavior without snapping the root or changing airtime. Landing preparation can progressively take priority as contact approaches.
 
@@ -148,7 +148,7 @@ Prefer changing these resources or the existing layer logic over adding overlapp
 
 ## Debugging
 
-F3 exposes animation telemetry such as active rig adapter, fallback reason, locomotion state, pose/blend information, terrain influence, air/trick phases, landing readiness, grab state, rail state, secondary motion, and bail presentation.
+F3 exposes animation telemetry such as active rig adapter, fallback reason, locomotion state, pose/blend information, terrain influence, air/trick phases, landing readiness, grab state, rail state, secondary motion, and bail presentation. The production adapter diagnostics also expose measured arm lengths, attached target positions, palm contact points, post-solve reach errors, helper-bone state, and the current reach solver state.
 
 The exact diagnostic fields are implementation details and may change as the prototype evolves.
 
@@ -166,6 +166,12 @@ For deterministic visual review, generate the silhouette comparison with:
 
 ```powershell
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-silhouette-showcase
+```
+
+For a focused production contact review, use the capture-only grab showcase. It writes deterministic stills for Mute, Japan, Tail, Nose, and Double to `.godot_user/captures/production_grab_showcase`:
+
+```powershell
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-production-grab-showcase
 ```
 
 Output is written under `.godot_user/captures/`.

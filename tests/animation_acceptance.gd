@@ -219,7 +219,6 @@ func _test_continuous_grab_reach() -> void:
 	_step(45)
 	var light_reach := float(rig.debug_snapshot().grab_reach_error)
 	frame.grab_amount = 1.0
-	frame.grab_tweak = Vector2(0.0, 0.8)
 	_step(60)
 	var full_reach := float(rig.debug_snapshot().grab_reach_error)
 	if full_reach >= light_reach:

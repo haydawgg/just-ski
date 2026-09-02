@@ -2,6 +2,7 @@ class_name SkierAnimationController
 extends Node3D
 
 const GrabDefinition = preload("res://player/animation/grab_animation_definition.gd")
+const GrabReachRequestModule = preload("res://player/animation/skier_grab_reach_request.gd")
 const PoseShapeDefinition = preload("res://player/animation/skier_pose_shape_definition.gd")
 const PoseDriverModule = preload("res://player/animation/skier_pose_driver.gd")
 const PrimitiveRigModule = preload("res://player/animation/primitive_skier_rig.gd")
@@ -14,6 +15,8 @@ const LandingPoseLayerModule = preload("res://player/animation/landing_pose_laye
 const RailPoseLayerModule = preload("res://player/animation/rail_pose_layer.gd")
 const CrashReactionLayerModule = preload("res://player/animation/crash_reaction_layer.gd")
 const SecondaryMotionLayerModule = preload("res://player/animation/secondary_motion_layer.gd")
+const GRAB_CONTACT_ACQUISITION_DISTANCE := 0.18
+const GRAB_CONTACT_MAINTENANCE_DISTANCE := 0.12
 
 enum AnimationEvent {
 	POP,
@@ -114,6 +117,7 @@ var _grab_left_reach_error := 0.0
 var _grab_right_reach_error := 0.0
 var _grab_left_target_active := false
 var _grab_right_target_active := false
+var _grab_reach_requests: Array[SkierGrabReachRequest] = []
 var _style_definitions_by_pose: Dictionary = {}
 var _style_definition: Resource
 var _style_pose_id := TrickController.StylePose.NONE
@@ -283,7 +287,8 @@ func apply_frame(frame: SkierAnimationFrame, delta: float) -> void:
 	_enforce_joint_limits()
 	_blend_targets(delta)
 	if rig_adapter != null:
-		rig_adapter.sync_pose(delta)
+		rig_adapter.sync_pose(delta, _grab_reach_requests)
+		_sync_grab_visual_metrics()
 
 func trigger(event: int, strength: float = 1.0, side: float = 0.0) -> void:
 	_reaction_event = event
@@ -313,6 +318,12 @@ func is_landing_idle() -> bool:
 	return not _landing_active and not _stomp_active and _landing_compression < 0.02 and _landing_alignment < 0.02 and _landing_anticipation < 0.02
 
 func debug_snapshot() -> Dictionary:
+	var adapter_grab_debug := rig_adapter.grab_debug_snapshot() if rig_adapter != null else {}
+	var visual_left_hand := left_hand.global_position
+	var visual_right_hand := right_hand.global_position
+	if rig_adapter != null:
+		visual_left_hand = rig_adapter.grab_contact_point(&"left")
+		visual_right_hand = rig_adapter.grab_contact_point(&"right")
 	return {
 		"rig_adapter": rig_adapter.adapter_name() if rig_adapter != null else "none",
 		"rig_requested": requested_rig_adapter,
@@ -446,6 +457,12 @@ func debug_snapshot() -> Dictionary:
 		"grab_target_right": _grab_right_target_world,
 		"grab_hand_left": left_hand.global_position,
 		"grab_hand_right": right_hand.global_position,
+		"grab_hand_left_visual": visual_left_hand,
+		"grab_hand_right_visual": visual_right_hand,
+		"grab_contact_point_left": adapter_grab_debug.get("left_contact_point", visual_left_hand),
+		"grab_contact_point_right": adapter_grab_debug.get("right_contact_point", visual_right_hand),
+		"grab_solver": adapter_grab_debug.get("solver", "CANONICAL"),
+		"grab_adapter_debug": adapter_grab_debug,
 		"grab_reach_error": _grab_primary_reach_error(),
 		"grab_reach_error_left": _grab_left_reach_error,
 		"grab_reach_error_right": _grab_right_reach_error,
@@ -1307,6 +1324,7 @@ func _crossover_release() -> float:
 func _reset_targets() -> void:
 	_rotation_targets.clear()
 	_position_targets.clear()
+	_grab_reach_requests.clear()
 	_rotation_targets[balance_root] = Vector3.ZERO
 	_rotation_targets[pelvis] = Vector3.ZERO
 	_rotation_targets[spine] = Vector3.ZERO
@@ -2064,6 +2082,7 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 		* (1.0 - _landing_anticipation * (1.0 - profile.grab_landing_leg_retention))
 	)
 	var arm_weight := arm_stage * profile.grab_silhouette_scale
+	var owns_visual_reach := rig_adapter != null and rig_adapter.owns_grab_reach()
 	_current_pose_name = "%s / %s" % [definition.display_name, _grab_phase_name.capitalize()]
 	_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + definition.pelvis_offset * body_weight
 	var shared_compact := maxf(_spin_compactness, _grab_compactness)
@@ -2090,15 +2109,53 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 		if left_marker != null:
 			_grab_left_target_active = true
 			_grab_left_target_world = left_marker.global_position
-			_grab_left_reach_error = left_hand.global_position.distance_to(_grab_left_target_world)
-			_aim_arm_at(left_shoulder, left_elbow, left_hand, _grab_left_target_world, reach_weight, -1.0)
+			if owns_visual_reach:
+				var left_request := GrabReachRequestModule.new() as SkierGrabReachRequest
+				_grab_reach_requests.append(left_request.configure(&"left", left_marker, reach_weight))
+			else:
+				_grab_left_reach_error = left_hand.global_position.distance_to(_grab_left_target_world)
+				_aim_arm_at(left_shoulder, left_elbow, left_hand, _grab_left_target_world, reach_weight, -1.0)
 	if definition.hand == GrabDefinition.Hand.RIGHT or definition.hand == GrabDefinition.Hand.BOTH:
 		var right_marker := _grab_target_marker(GrabDefinition.Ski.RIGHT if definition.target_ski == GrabDefinition.Ski.BOTH else definition.target_ski, definition.target)
 		if right_marker != null:
 			_grab_right_target_active = true
 			_grab_right_target_world = right_marker.global_position
-			_grab_right_reach_error = right_hand.global_position.distance_to(_grab_right_target_world)
-			_aim_arm_at(right_shoulder, right_elbow, right_hand, _grab_right_target_world, reach_weight, 1.0)
+			if owns_visual_reach:
+				var right_request := GrabReachRequestModule.new() as SkierGrabReachRequest
+				_grab_reach_requests.append(right_request.configure(&"right", right_marker, reach_weight))
+			else:
+				_grab_right_reach_error = right_hand.global_position.distance_to(_grab_right_target_world)
+				_aim_arm_at(right_shoulder, right_elbow, right_hand, _grab_right_target_world, reach_weight, 1.0)
+
+func _sync_grab_visual_metrics() -> void:
+	if rig_adapter == null or not rig_adapter.owns_grab_reach():
+		return
+	var visual_contact_valid := true
+	var active_target_count := 0
+	if _grab_left_target_active:
+		active_target_count += 1
+		_grab_left_target_world = rig_adapter.grab_target_world(&"left")
+		_grab_left_reach_error = rig_adapter.grab_reach_error(&"left")
+		var left_contact_cap := GRAB_CONTACT_MAINTENANCE_DISTANCE if _grab_contact_latched else GRAB_CONTACT_ACQUISITION_DISTANCE
+		visual_contact_valid = visual_contact_valid and _grab_left_reach_error <= left_contact_cap
+	if _grab_right_target_active:
+		active_target_count += 1
+		_grab_right_target_world = rig_adapter.grab_target_world(&"right")
+		_grab_right_reach_error = rig_adapter.grab_reach_error(&"right")
+		var right_contact_cap := GRAB_CONTACT_MAINTENANCE_DISTANCE if _grab_contact_latched else GRAB_CONTACT_ACQUISITION_DISTANCE
+		visual_contact_valid = visual_contact_valid and _grab_right_reach_error <= right_contact_cap
+	if active_target_count > 0 and not visual_contact_valid:
+		_grab_contact_latched = false
+		_grab_contact_weight = minf(_grab_contact_weight, 0.68)
+	if _grab_definition != null and active_target_count > 0:
+		_grab_phase_name = _grab_pose_layer.phase_name(
+			_grab_definition,
+			_grab_pose_weight,
+			_grab_input_strength,
+			_grab_release_time,
+			_grab_contact_weight,
+			_grab_contact_latched
+		)
 
 func _apply_style_layer(frame: SkierAnimationFrame) -> void:
 	if frame.locomotion_state != STATE_AIR or _style_definition == null or _style_pose_weight <= 0.005:
@@ -2570,6 +2627,7 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_grab_contact_latched = false
 	_grab_left_target_active = false
 	_grab_right_target_active = false
+	_grab_reach_requests.clear()
 	_grab_left_reach_error = 0.0
 	_grab_right_reach_error = 0.0
 	_style_definition = null
@@ -2667,7 +2725,7 @@ func _build_articulated_rig() -> void:
 	_select_rig_adapter()
 	_reset_pose_immediately()
 	if rig_adapter != null:
-		rig_adapter.sync_pose(0.0)
+		rig_adapter.sync_pose(0.0, [])
 
 func _select_rig_adapter() -> void:
 	var selected_mode := rig_mode
