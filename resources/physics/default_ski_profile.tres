@@ -4,6 +4,11 @@
 
 [resource]
 script = ExtResource("1")
+left_front_probe_offset = Vector3(-0.34, 0, -0.84)
+left_rear_probe_offset = Vector3(-0.34, 0, 0.84)
+right_front_probe_offset = Vector3(0.34, 0, -0.84)
+right_rear_probe_offset = Vector3(0.34, 0, 0.84)
+tip_grip_gain = 0.3
 feature_collision_min_speed = 6.0
 feature_collision_min_normal_speed = 4.5
 feature_collision_max_speed_retention = 0.65

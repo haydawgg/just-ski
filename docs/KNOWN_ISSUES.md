@@ -2,9 +2,12 @@
 
 This file tracks unresolved behavior, missing production work, and checks that still require human validation. Completed validation notes and historical implementation milestones are documented elsewhere.
 
+## Recently resolved
+
+- **Crest unweighting is covered and tuned.** Production roller geometry now has deterministic front/rear contact, tip-load, vertical-response, partial-support, and runout-recontact coverage in `tests/crest_unweighting_acceptance.tscn`. The active profile uses symmetric `0.84m` front/rear probe offsets; `tip_grip_gain` remains at its existing value.
+
 ## Ski feel and controls
 
-- **Crest unweighting is weaker than intended.** The current front/rear contact-probe spacing undersamples some roller crests at the production seat height, so tip-load unweighting can read too softly. Relevant tuning lives in the ski contact geometry and `tip_grip_gain`.
 - **Controller feel still needs broader hardware validation.** Xbox, PlayStation, and generic controllers use Godot/SDL input abstraction, but glyph-family detection, hot-plug behavior, deadzone feel, and rumble strength should be verified on physical devices.
 - **Long-session feel still needs human playtesting.** Camera comfort, landing/crash threshold preference, rail-balance drift, and high-speed handling are covered by automated behavior checks but still need longer subjective play sessions.
 - **Thin-feature rail capture needs an extended stress test.** Automated coverage exercises live rail capture and normal feature traversal, but it does not replace a long high-speed session across narrow rails, boxes, and tubes.
