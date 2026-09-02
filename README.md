@@ -40,9 +40,11 @@ Smoke-test an exported build on a machine with the required graphics driver:
 & .\builds\windows\SummitSessions.exe --headless --quit-after 120
 ```
 
-The repository does not yet assert a project-level distribution license. The
-included external sources remain governed by their local CC0 provenance
-records; decide and add a project license before publishing a distributable.
+Project-authored code and content are released under the [MIT License](LICENSE).
+The included external sources remain governed by their local CC0/OFL
+provenance and notice records; the project license does not relicense those
+materials. New binary content follows [Asset Growth Policy](docs/ASSET_POLICY.md),
+and the decision record is retained in [Licensing Decision](docs/LICENSING_DECISION.md).
 
 ## Controls
 

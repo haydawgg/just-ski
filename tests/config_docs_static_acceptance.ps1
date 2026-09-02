@@ -13,6 +13,10 @@ $runtimeGate = Get-Content -Raw (Join-Path $RepoRoot "tests/runtime_quality_gate
 $gitignore = (Get-Content -Raw (Join-Path $RepoRoot ".gitignore")) -replace "`r", ""
 $baselinePath = Join-Path $RepoRoot "docs/BASELINE.md"
 $controllerValidationPath = Join-Path $RepoRoot "docs/CONTROLLER_VALIDATION.md"
+$themePath = Join-Path $RepoRoot "ui/theme/summit_theme.tres"
+$fontPath = Join-Path $RepoRoot "assets/ui/fonts/Inter-4.1-Variable.ttf"
+$fontSourcePath = Join-Path $RepoRoot "assets/ui/fonts/SOURCE.md"
+$fontLicensePath = Join-Path $RepoRoot "assets/ui/fonts/OFL-1.1.txt"
 $failures = [System.Collections.Generic.List[string]]::new()
 
 function Get-ProjectValue([string]$key) {
@@ -50,6 +54,26 @@ if ($resort -notmatch 'resolve_effective_gi' -or $resort -notmatch 'effective_gi
 }
 if ($graphics -notmatch 'gi_enabled' -or $graphics -notmatch 'Low and Medium forbid it') {
 	$failures.Add("GRAPHICS.md does not document the profile/user/preset GI ownership model.")
+}
+if ($project -notmatch 'theme/custom="res://ui/theme/summit_theme\.tres"') {
+	$failures.Add("project.godot does not select the project-wide UI theme.")
+}
+foreach ($requiredUiAsset in @($themePath, $fontPath, $fontSourcePath, $fontLicensePath)) {
+	if (-not (Test-Path -LiteralPath $requiredUiAsset -PathType Leaf)) {
+		$failures.Add("Missing required UI theme/font asset: $requiredUiAsset")
+	}
+}
+if (Test-Path -LiteralPath $fontPath -PathType Leaf) {
+	$fontHash = (Get-FileHash -LiteralPath $fontPath -Algorithm SHA256).Hash
+	if ($fontHash -ne "4989B125924991B90D05B2D16E0E388C48F7D5BB8B30539BBF9C755278D0CCAF") {
+		$failures.Add("Pinned Inter 4.1 font checksum changed unexpectedly.")
+	}
+}
+if (Test-Path -LiteralPath $fontSourcePath -PathType Leaf) {
+	$fontSource = Get-Content -Raw -LiteralPath $fontSourcePath
+	if ($fontSource -notmatch 'Inter 4\.1' -or $fontSource -notmatch 'SIL Open Font License 1\.1' -or $fontSource -notmatch '4989B125924991B90D05B2D16E0E388C48F7D5BB8B30539BBF9C755278D0CCAF') {
+		$failures.Add("UI font source record is missing its pinned version, license, or checksum.")
+	}
 }
 if ($workflow -notmatch 'windows-2025' -or $workflow -notmatch 'actions/cache@v4' -or $workflow -notmatch '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953') {
 	$failures.Add("Quality Gate workflow is missing the pinned Windows/Godot cache contract.")

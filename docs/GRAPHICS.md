@@ -38,6 +38,8 @@ Low / Medium use the Fast snow tier by default. High / Ultra use Premium snow. E
 
 The current options menu intentionally exposes a practical subset of Godot's renderer controls rather than every Forward+ feature. It includes a staged GI toggle. GI is effective only when the selected environment profile exposes GI, the user setting `gi_enabled` is true, and the graphics preset permits GI (High, Ultra, or Custom; Low and Medium forbid it). The profile is the upper-level capability gate, the user setting is the preference, and the preset is the hardware-capability policy. Apply updates the live environment before persistence; a save failure is reported without rolling back the applied runtime state.
 
+Time of day follows the same staged settings model. `environment_preset` selects one of three authored `ResortEnvironmentProfile` resources: Day, Golden Hour, or Sunset. `resort.gd` owns the small preset-to-resource seam and applies the selected profile to the existing sky, sun, fill, fog, post-processing, and GI configuration without another autoload. Dedicated QA scenes such as `sunset_resort.tscn` opt out of the user preference so their authored lighting remains deterministic.
+
 ## Snow shading
 
 Snow uses world-space triplanar sampling so terrain, banks, rotated jump surfaces, and landings do not depend on authored mesh UVs.
@@ -68,6 +70,8 @@ Snow materials listen for applied settings and can switch shader tier without re
 
 The resort environment uses a procedural sky, directional sun, shadows, scene reflections, atmospheric fog, and optional screen-space effects controlled by the graphics settings.
 
+The transparent high-haze card is retained as a fog-off atmospheric fallback. When environment fog is enabled, the haze mesh is hidden before rendering because matched non-headless captures showed no visible contribution from stacking both effects and measurable full-screen fragment cost.
+
 Environment resources own the maintained presentation values rather than scattering them through documentation. Important visual goals are:
 
 - snow remains readable in sun and shade;
@@ -95,6 +99,8 @@ The visible presentation includes the skinned body/clothing treatment plus proje
 
 `default_skier_outfit_profile.tres` and the animation/rig resources are the maintained source of truth for outfit palette, material response, proportions, and attachment calibration.
 
+The five original `Outfit_*` body regions retain UV0 data; generated jacket, pants, and glove shells intentionally do not. Material polish therefore uses per-region roughness, metallic, and specular response across the existing skeleton/outfit pipeline instead of adding a texture that only some overlapping surfaces can sample.
+
 Do not rely on historical mesh/surface counts in documentation; those are implementation details and change as presentation is refined.
 
 ## HUD and VFX
@@ -102,6 +108,8 @@ Do not rely on historical mesh/surface counts in documentation; those are implem
 Normal-play HUD hierarchy prioritizes speed and scoring, then contextual trick, landing, rail, and session information.
 
 The control onboarding, right-stick visualizer, and trick/landing callouts are intentionally contextual rather than permanently occupying the screen.
+
+The project-wide control theme uses the pinned Inter 4.1 variable font and a restrained shared panel/button/focus treatment. HUD labels keep their local size and contrast overrides. Font provenance, checksum, and the bundled OFL license are recorded under `assets/ui/fonts/`.
 
 Snow VFX uses existing gameplay/contact signals to differentiate continuous ski spray, stronger skid/brake spray, landings, and bail scraping. Audio and rumble consume the same broad gameplay state but are separate systems.
 

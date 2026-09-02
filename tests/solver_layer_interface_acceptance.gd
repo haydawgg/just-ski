@@ -42,6 +42,11 @@ func _test_motion_interfaces() -> void:
 	)
 	if not constrained.is_finite():
 		failures.append("Ground solver returned a non-finite constrained heading")
+	var ground_handling := ground.resolve_handling(18.0, 0.8, 0.0, 0.0, 0.25, 0.1, 1.0, 1.0, PHYSICS_PROFILE)
+	if ground_handling.effective_steer_rate <= 0.0 or ground_handling.available_grip <= 0.0:
+		failures.append("Ground solver did not resolve positive steering and grip authority")
+	if ground_handling.carve_ratio < 0.0 or ground_handling.carve_ratio > 1.0:
+		failures.append("Ground solver returned an unbounded carve ratio")
 
 	var air := AirMotionSolver.new()
 	var air_step := air.step_gravity(Vector3(0.0, -100.0, 0.0), 1.0 / 60.0, PHYSICS_PROFILE.air_gravity, PHYSICS_PROFILE.air_terminal_speed)
@@ -49,6 +54,10 @@ func _test_motion_interfaces() -> void:
 		failures.append("Air solver exceeded its terminal speed")
 	if air.landing_assist_availability(0.0, PHYSICS_PROFILE.air_landing_window) != 0.0:
 		failures.append("Air solver landing assist window did not start at zero")
+	var open_damping := air.angular_damping(0.0, -1.0, 0.35, true, PHYSICS_PROFILE)
+	var landing_damping := air.angular_damping(0.0, PHYSICS_PROFILE.air_landing_window * 0.1, 1.0, true, PHYSICS_PROFILE)
+	if landing_damping <= open_damping:
+		failures.append("Air solver did not increase angular damping near landing")
 
 	var rail := RailMotionSolver.new()
 	var rail_step := rail.advance(4.0, 1.0, 1.0, 20.0, -2.0, 0.5, 0.1)
@@ -57,6 +66,18 @@ func _test_motion_interfaces() -> void:
 	var rail_balance := rail.update_balance(0.0, 1.0, 0.5, 0.2, 1.0, 0.1)
 	if rail_balance >= 0.1:
 		failures.append("Rail solver did not apply balance input")
+	var stable_drift := rail.instability(0.0, 0, PHYSICS_PROFILE)
+	var kinked_boardslide_drift := rail.instability(0.5, 1, PHYSICS_PROFILE)
+	if kinked_boardslide_drift <= stable_drift or not rail.has_failed(PHYSICS_PROFILE.rail_balance_fail, PHYSICS_PROFILE.rail_balance_fail):
+		failures.append("Rail solver did not own kink/boardslide instability and failure policy")
+
+	var bail := BailMotionSolver.new()
+	var bail_motion := bail.step_motion(Vector3(8.0, -2.0, 0.0), Vector3.ONE, Vector3.UP, true, CrashContext.Stage.FALL, 0.1, PHYSICS_PROFILE)
+	if bail_motion.velocity.length() >= Vector3(8.0, 0.0, 0.0).length() or bail_motion.angular_velocity.length() >= Vector3.ONE.length():
+		failures.append("Bail solver did not damp grounded linear and angular motion")
+	var rest := bail.resolve_rest(true, PHYSICS_PROFILE.crash_min_duration, 0.0, 0.0, false, 0.0, PHYSICS_PROFILE.crash_rest_confirm_time, 0.05, 0.05, PHYSICS_PROFILE)
+	if not rest.rest_detected or rest.stage != CrashContext.Stage.REST:
+		failures.append("Bail solver did not confirm a bounded rest state")
 
 	var landing := LandingTransition.new()
 	var landing_result := landing.evaluate(Vector3.UP, Vector3.FORWARD, Vector3.UP, Vector3(0.0, 0.0, -4.0), Vector3.ZERO, PHYSICS_PROFILE)

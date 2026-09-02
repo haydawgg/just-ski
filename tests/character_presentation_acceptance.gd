@@ -38,18 +38,24 @@ func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 	var found: Dictionary = {}
 	var region_counts: Dictionary = {}
 	var body_surfaces := 0
+	var uv_mapped_surfaces := 0
 	for node: Node in adapter.body_root.find_children("*", "MeshInstance3D", true, false):
 		var instance := node as MeshInstance3D
 		if instance.skin == null and instance.skeleton.is_empty():
 			continue
 		for surface_index: int in instance.mesh.get_surface_count():
 			body_surfaces += 1
+			var arrays := instance.mesh.surface_get_arrays(surface_index)
+			var uv_data: Variant = arrays[Mesh.ARRAY_TEX_UV] if arrays.size() > Mesh.ARRAY_TEX_UV else null
+			if typeof(uv_data) == TYPE_PACKED_VECTOR2_ARRAY and not uv_data.is_empty():
+				uv_mapped_surfaces += 1
 			var surface := instance.get_surface_override_material(surface_index) as StandardMaterial3D
 			_check(surface != null, "Skinned body surface %d has no explicit override material" % surface_index)
 			if surface != null:
 				found[surface.resource_name] = surface
 				region_counts[surface.resource_name] = int(region_counts.get(surface.resource_name, 0)) + 1
 	_check(body_surfaces >= REQUIRED_BODY_REGIONS.size() + REQUIRED_CLOTHING_SHELLS.size(), "Expected at least %d skinned body surfaces (regions plus shells), found %d" % [REQUIRED_BODY_REGIONS.size() + REQUIRED_CLOTHING_SHELLS.size(), body_surfaces])
+	_check(uv_mapped_surfaces >= REQUIRED_BODY_REGIONS.size(), "Production body lost UV0 coverage on its authored outfit regions")
 	for region: String in REQUIRED_BODY_REGIONS:
 		_check(found.has(region), "Missing explicit skinned region " + region)
 	for shell_region: String in REQUIRED_CLOTHING_SHELLS:
@@ -61,6 +67,13 @@ func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 		_check(color_distance >= 0.18, "Jacket and pants do not provide readable color blocking")
 		_check(maxf(jacket.r, maxf(jacket.g, jacket.b)) < 0.9, "Jacket is still near-white")
 		_check(maxf(pants.r, maxf(pants.g, pants.b)) < 0.9, "Pants are still near-white")
+	if found.has("Outfit_Jacket") and found.has("Outfit_Skin") and found.has("Outfit_BootUnderlay"):
+		var jacket_surface := found["Outfit_Jacket"] as StandardMaterial3D
+		var skin_surface := found["Outfit_Skin"] as StandardMaterial3D
+		var boot_surface := found["Outfit_BootUnderlay"] as StandardMaterial3D
+		_check(jacket_surface.roughness > skin_surface.roughness, "Cloth and skin no longer have distinct authored roughness")
+		_check(boot_surface.metallic > jacket_surface.metallic, "Boot underlay no longer has a distinct hardgoods response")
+		_check(jacket_surface.metallic_specular < boot_surface.metallic_specular, "Cloth and hardgoods no longer have distinct specular response")
 
 func _check_rigid_parts(adapter: SkeletonSkierRig) -> void:
 	for part_name: String in REQUIRED_RIGID_PARTS:

@@ -1,5 +1,7 @@
 extends Node
 
+const ResortModule := preload("res://world/resort.gd")
+
 var frame_count := 0
 @onready var resort: Node3D = $Resort
 
@@ -18,6 +20,7 @@ func _physics_process(_delta: float) -> void:
 			failures.append("SSAO escaped the local-contact budget (radius %.2f, intensity %.2f)" % [tuned_environment.ssao_radius, tuned_environment.ssao_intensity])
 		if tuned_environment.fog_density > 0.003:
 			failures.append("Course fog is dense enough to obscure midground terrain (%.4f)" % tuned_environment.fog_density)
+		_test_environment_preset_application(tuned_environment, sun, failures)
 	if sun == null:
 		failures.append("Resort did not create its single directional sun")
 	else:
@@ -134,8 +137,8 @@ func _physics_process(_delta: float) -> void:
 		var asset_instances := resort.find_children("*", "Node3D", true, false).filter(func(node: Node) -> bool: return str(node.get_meta("asset_id", "")) == asset_id)
 		var near_shadow_mesh_found := false
 		for asset_node: Node in asset_instances:
-			for mesh_node: Node in asset_node.find_children("*", "MeshInstance3D", true, false):
-				var mesh_instance := mesh_node as MeshInstance3D
+			for mesh_node: Node in asset_node.find_children("*", "GeometryInstance3D", true, false):
+				var mesh_instance := mesh_node as GeometryInstance3D
 				if mesh_instance != null and mesh_instance.visibility_range_begin <= 0.01 and mesh_instance.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
 					near_shadow_mesh_found = true
 					break
@@ -168,6 +171,8 @@ func _physics_process(_delta: float) -> void:
 				failures.append("Normal resort travel did not produce both bounded ski tracks")
 			if int(snapshot.left_track_samples) > int(snapshot.track_cap) or int(snapshot.right_track_samples) > int(snapshot.track_cap):
 				failures.append("Persistent track history exceeded its hard cap")
+			if int(snapshot.track_rebuild_count) <= 0 or int(snapshot.track_rebuild_count) >= frame_count:
+				failures.append("Track mesh rebuilds are no longer gated below the physics-frame rate")
 			if int(snapshot.continuous_particle_cap) > 200:
 				failures.append("Continuous snow particle budget exceeded the acceptance ceiling")
 			if not vfx.find_children("*", "RayCast3D", true, false).is_empty():
@@ -203,3 +208,33 @@ func _physics_process(_delta: float) -> void:
 			push_error("ENVIRONMENT_VISUAL_FAIL: " + failure)
 		AudioManager.shutdown_audio()
 		get_tree().quit(1)
+
+func _test_environment_preset_application(env: Environment, active_sun: DirectionalLight3D, failures: Array[String]) -> void:
+	if active_sun == null:
+		return
+	var original_active := GameSettings.active.duplicate(true)
+	var original_pending := GameSettings.pending.duplicate(true)
+	GameSettings.begin_edit()
+	GameSettings.set_pending("environment_preset", 0)
+	GameSettings.apply_pending()
+	GameSettings.begin_edit()
+	GameSettings.set_pending("environment_preset", 2)
+	GameSettings.apply_pending()
+	var expected_profile := ResortModule.profile_for_preset(2)
+	var selected_profile := resort.get("environment_profile") as ResortEnvironmentProfile
+	if selected_profile != expected_profile:
+		failures.append("Applying time of day did not select its authored environment profile")
+	var sky_material := env.sky.sky_material as ProceduralSkyMaterial
+	if sky_material == null or sky_material.sky_horizon_color != expected_profile.sky_horizon_color:
+		failures.append("Applying time of day did not update the live procedural sky")
+	if active_sun.light_color != expected_profile.sun_color:
+		failures.append("Applying time of day did not update the live directional sun")
+	var skier := resort.get_node_or_null("Skier") as SkierController
+	if skier != null:
+		for node: Node in skier.find_children("*", "GeometryInstance3D", true, false):
+			if (node as GeometryInstance3D).gi_mode == GeometryInstance3D.GI_MODE_STATIC:
+				failures.append("Live Sunset switching marked moving skier geometry as static GI")
+				break
+	GameSettings.active = original_active
+	GameSettings.pending = original_pending
+	GameSettings.apply_pending()

@@ -52,12 +52,23 @@ func _test_game_ui_teaching_surfaces() -> void:
 	var guide_button := ui.find_child("TrickGuideButton", true, false) as Button
 	if guide_button == null or guide_button.focus_mode == Control.FOCUS_NONE:
 		failures.append("Trick guide is not controller-focusable")
+	elif guide_button.get_theme_font("font").resource_path != "res://assets/ui/fonts/Inter-4.1-Variable.ttf":
+		failures.append("Gameplay UI is not inheriting the pinned project font")
+	elif not guide_button.get_theme_stylebox("normal") is StyleBoxFlat:
+		failures.append("Gameplay UI is not inheriting the project control theme")
+	var resume_button := ui.find_child("ResumeButton", true, false) as Button
+	var options_button := ui.find_child("OptionsButton", true, false) as Button
+	var restart_button := ui.find_child("RestartButton", true, false) as Button
+	if resume_button == null or resume_button.icon == null or options_button == null or options_button.icon == null or restart_button == null or restart_button.icon == null:
+		failures.append("Pause menu is missing the restrained project icon set")
 	if ui.find_child("AntiAliasing", true, false) == null:
 		failures.append("Options menu is missing anti-aliasing control")
 	if ui.find_child("ShadowQuality", true, false) == null:
 		failures.append("Options menu is missing shadow quality control")
 	if ui.find_child("GI", true, false) == null:
 		failures.append("Options menu is missing global illumination control")
+	if ui.find_child("EnvironmentPreset", true, false) == null:
+		failures.append("Options menu is missing the Day / Golden Hour / Sunset control")
 	if ui.find_child("RunResultsPanel", true, false) == null:
 		failures.append("Gameplay UI is missing the run results panel")
 	var guide_text := ""
@@ -68,6 +79,7 @@ func _test_game_ui_teaching_surfaces() -> void:
 	if "Recenter before each additional flick" in guide_text:
 		failures.append("Trick guide still teaches repeated airborne flicks")
 	var original_gi := bool(GameSettings.active["gi_enabled"])
+	var original_environment_preset := int(GameSettings.active["environment_preset"])
 	ui._open_options()
 	var gi_control := ui.find_child("GI", true, false) as CheckButton
 	if gi_control != null:
@@ -76,9 +88,18 @@ func _test_game_ui_teaching_surfaces() -> void:
 			failures.append("Options GI edit changed active settings before Apply")
 		if bool(GameSettings.pending["gi_enabled"]) == original_gi:
 			failures.append("Options GI edit was not staged")
+	var environment_control := ui.find_child("EnvironmentPreset", true, false) as OptionButton
+	if environment_control != null:
+		environment_control.item_selected.emit((original_environment_preset + 1) % 3)
+		if int(GameSettings.active["environment_preset"]) != original_environment_preset:
+			failures.append("Options time-of-day edit changed active settings before Apply")
+		if int(GameSettings.pending["environment_preset"]) == original_environment_preset:
+			failures.append("Options time-of-day edit was not staged")
 	ui._cancel_options()
 	if bool(GameSettings.pending["gi_enabled"]) != bool(GameSettings.active["gi_enabled"]):
 		failures.append("Options GI Cancel did not restore the pending value")
+	if int(GameSettings.pending["environment_preset"]) != int(GameSettings.active["environment_preset"]):
+		failures.append("Options time-of-day Cancel did not restore the pending value")
 	if ui._quality_name(LandingSolver.Outcome.CLEAN) != "CLEAN" or ui._quality_name(LandingSolver.Outcome.SKETCHY) != "SKETCHY" or ui._quality_name(LandingSolver.Outcome.HARD) != "HARD":
 		failures.append("Landing labels did not use explicit outcomes")
 	ui._process(10.0)

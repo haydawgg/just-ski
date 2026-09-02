@@ -37,3 +37,10 @@ func update_balance(
 		balance += authored_drift_bias * drift * delta
 	balance += -input_value * input_gain * delta
 	return clampf(balance, -1.35, 1.35)
+
+func instability(kink: float, rail_pose: int, profile: SkiPhysicsProfile) -> float:
+	var boardslide_factor := 1.0 + absf(float(rail_pose)) * profile.rail_boardslide_instability
+	return (profile.rail_balance_drift + maxf(kink, 0.0) * profile.rail_kink_instability) * boardslide_factor
+
+func has_failed(balance: float, failure_threshold: float) -> bool:
+	return absf(balance) >= maxf(failure_threshold, 0.0)

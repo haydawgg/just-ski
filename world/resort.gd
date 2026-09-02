@@ -7,26 +7,36 @@ const ParkLayout := preload("res://world/park_features/park_layout.gd")
 const ParkCourseBuilderModule := preload("res://world/course/park_course_builder.gd")
 const CourseRecoveryModule := preload("res://world/course/course_recovery.gd")
 const SummitEnvironmentBuilderModule := preload("res://world/summit_environment_builder.gd")
+const ParkTreeBatchModule := preload("res://world/environment/park_tree_batch.gd")
 const EnvironmentAssetDefinition := preload("res://resources/environment/environment_asset_definition.gd")
 const EnvironmentAssetCatalog := preload("res://resources/environment/environment_asset_catalog.gd")
 const DISTANT_MOUNTAIN_SHADER: Shader = preload("res://shaders/distant_mountain.gdshader")
+const DAY_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/default_resort_environment_profile.tres")
+const GOLDEN_HOUR_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/golden_hour_resort_environment_profile.tres")
+const SUNSET_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/sunset_resort_environment_profile.tres")
 
 @export var course_profile: ParkCourseProfile = preload("res://resources/course/default_course_profile.tres")
 @export var physics_profile: SkiPhysicsProfile = preload("res://resources/physics/default_ski_profile.tres")
-@export var environment_profile: ResortEnvironmentProfile = preload("res://resources/environment/default_resort_environment_profile.tres")
+@export var environment_profile: ResortEnvironmentProfile = DAY_ENVIRONMENT_PROFILE
+@export var follow_environment_setting := true
 @export var environment_asset_catalog: EnvironmentAssetCatalog = preload("res://resources/environment/default_environment_asset_catalog.tres")
 @export var summit_environment_profile: SummitEnvironmentProfile = preload("res://resources/environment/default_summit_environment_profile.tres")
 @export var force_production_assets := false
 
 var player: SkierController
+var tree_batch: Node3D
 var camera_rig: SkiCameraController
 var environment: WorldEnvironment
 var sun: DirectionalLight3D
+var fill_light: DirectionalLight3D
+var high_haze: MeshInstance3D
 var course_features: Dictionary = {}
 var course_recovery: CourseRecovery
 var finish_trigger: Area3D
 
 func _ready() -> void:
+	if follow_environment_setting:
+		environment_profile = profile_for_preset(int(GameSettings.active.get("environment_preset", 0)))
 	if environment_asset_catalog != null and (force_production_assets or OS.get_cmdline_user_args().has("--production-assets")):
 		environment_asset_catalog.mode = EnvironmentAssetCatalog.AssetMode.PRODUCTION
 	_validate_environment_asset_catalog()
@@ -51,35 +61,66 @@ func _validate_environment_asset_catalog() -> void:
 func _build_environment() -> void:
 	environment = WorldEnvironment.new()
 	var env := Environment.new()
-	var profile := environment_profile
 	var sky := Sky.new()
 	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = profile.sky_top_color
-	sky_mat.sky_horizon_color = profile.sky_horizon_color
-	sky_mat.sky_curve = profile.sky_curve
-	sky_mat.sky_energy_multiplier = profile.sky_energy
-	sky_mat.ground_bottom_color = profile.ground_bottom_color
-	sky_mat.ground_horizon_color = profile.ground_horizon_color
-	sky_mat.ground_curve = profile.ground_curve
-	sky_mat.ground_energy_multiplier = profile.ground_energy
 	sky_mat.sun_angle_max = 18.0
 	sky_mat.sun_curve = 0.07
 	sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.adjustment_enabled = true
+	env.glow_enabled = true
+	environment.environment = env
+	add_child(environment)
+	sun = DirectionalLight3D.new()
+	sun.name = "Sun"
+	sun.shadow_enabled = true
+	sun.shadow_bias = 0.028
+	sun.shadow_normal_bias = 0.82
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	sun.directional_shadow_max_distance = 320.0
+	sun.directional_shadow_blend_splits = true
+	add_child(sun)
+	fill_light = DirectionalLight3D.new()
+	fill_light.name = "EnvironmentFill"
+	fill_light.light_indirect_energy = 0.0
+	fill_light.light_specular = 0.0
+	fill_light.shadow_enabled = false
+	fill_light.set_meta("gi_exclude", true)
+	add_child(fill_light)
+	_apply_environment_profile(environment_profile)
+
+static func profile_for_preset(preset: int) -> ResortEnvironmentProfile:
+	match clampi(preset, 0, 2):
+		1: return GOLDEN_HOUR_ENVIRONMENT_PROFILE
+		2: return SUNSET_ENVIRONMENT_PROFILE
+		_: return DAY_ENVIRONMENT_PROFILE
+
+func _apply_environment_profile(profile: ResortEnvironmentProfile) -> void:
+	if profile == null or environment == null or environment.environment == null or sun == null:
+		return
+	var env := environment.environment
+	var sky_mat := env.sky.sky_material as ProceduralSkyMaterial
+	if sky_mat != null:
+		sky_mat.sky_top_color = profile.sky_top_color
+		sky_mat.sky_horizon_color = profile.sky_horizon_color
+		sky_mat.sky_curve = profile.sky_curve
+		sky_mat.sky_energy_multiplier = profile.sky_energy
+		sky_mat.ground_bottom_color = profile.ground_bottom_color
+		sky_mat.ground_horizon_color = profile.ground_horizon_color
+		sky_mat.ground_curve = profile.ground_curve
+		sky_mat.ground_energy_multiplier = profile.ground_energy
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY if profile.use_sky_ambient else Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = profile.ambient_color
 	env.ambient_light_sky_contribution = profile.ambient_sky_contribution
 	env.ambient_light_energy = profile.ambient_energy
-	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = profile.exposure
 	env.tonemap_white = profile.white_point
-	env.adjustment_enabled = true
 	env.adjustment_brightness = profile.brightness
 	env.adjustment_contrast = profile.contrast
 	env.adjustment_saturation = profile.saturation
-	env.fog_enabled = true
 	env.fog_light_color = profile.fog_color
 	env.fog_sun_scatter = profile.fog_sun_scatter
 	env.fog_density = profile.fog_density
@@ -87,7 +128,6 @@ func _build_environment() -> void:
 	env.fog_sky_affect = profile.fog_sky_affect
 	env.fog_height = profile.fog_height
 	env.fog_height_density = profile.fog_height_density
-	env.glow_enabled = true
 	env.glow_intensity = profile.glow_intensity
 	env.glow_strength = profile.glow_strength
 	env.glow_bloom = profile.glow_bloom
@@ -98,10 +138,6 @@ func _build_environment() -> void:
 	env.ssao_detail = profile.ssao_detail
 	env.ssao_horizon = profile.ssao_horizon
 	env.ssao_light_affect = profile.ssao_light_affect
-	# SDFGI is the appropriate real-time GI path for this procedural resort. The
-	# profile owns its sunset tuning; graphics presets can disable it later for
-	# lower-end hardware without changing the authored scene.
-	env.sdfgi_enabled = effective_gi_enabled()
 	env.sdfgi_energy = profile.gi_energy
 	env.sdfgi_bounce_feedback = clampf(profile.gi_bounce_feedback, 0.0, 0.5)
 	env.sdfgi_cascades = clampi(profile.gi_cascades, 1, 8)
@@ -109,10 +145,6 @@ func _build_environment() -> void:
 	env.sdfgi_max_distance = maxf(profile.gi_max_distance, 32.0)
 	env.sdfgi_use_occlusion = profile.gi_use_occlusion
 	env.sdfgi_read_sky_light = profile.gi_read_sky_light
-	environment.environment = env
-	add_child(environment)
-	sun = DirectionalLight3D.new()
-	sun.name = "Sun"
 	sun.rotation_degrees = profile.sun_rotation_degrees
 	sun.light_color = profile.sun_color
 	sun.light_energy = profile.sun_energy
@@ -121,28 +153,12 @@ func _build_environment() -> void:
 	sun.shadow_opacity = profile.shadow_opacity
 	sun.shadow_blur = profile.shadow_blur
 	sun.light_angular_distance = profile.sun_angular_distance
-	sun.shadow_enabled = true
-	sun.shadow_bias = 0.028
-	sun.shadow_normal_bias = 0.82
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 320.0
-	sun.directional_shadow_blend_splits = true
 	sun.directional_shadow_fade_start = profile.shadow_fade_start
-	add_child(sun)
-	if profile.fill_light_enabled and profile.fill_light_energy > 0.0:
-		# A low-energy, shadowless sky fill keeps the snow readable when the
-		# warm sunset key light is grazing the terrain from behind the camera.
-		# It is profile-driven so daytime keeps its existing single-light look.
-		var fill := DirectionalLight3D.new()
-		fill.name = "EnvironmentFill"
-		fill.rotation_degrees = profile.fill_light_rotation_degrees
-		fill.light_color = profile.fill_light_color
-		fill.light_energy = profile.fill_light_energy
-		fill.light_indirect_energy = 0.0
-		fill.light_specular = 0.0
-		fill.shadow_enabled = false
-		fill.set_meta("gi_exclude", true)
-		add_child(fill)
+	if fill_light != null:
+		fill_light.rotation_degrees = profile.fill_light_rotation_degrees
+		fill_light.light_color = profile.fill_light_color
+		fill_light.light_energy = profile.fill_light_energy
+		fill_light.visible = profile.fill_light_enabled and profile.fill_light_energy > 0.0
 
 func _configure_gi_geometry() -> void:
 	if environment_profile == null or not environment_profile.gi_enabled:
@@ -153,6 +169,8 @@ func _configure_gi_geometry() -> void:
 	for node: Node in find_children("*", "GeometryInstance3D", true, false):
 		var geometry := node as GeometryInstance3D
 		if geometry == null or bool(geometry.get_meta("gi_exclude", false)):
+			continue
+		if player != null and (geometry == player or player.is_ancestor_of(geometry)):
 			continue
 		geometry.gi_mode = GeometryInstance3D.GI_MODE_STATIC
 
@@ -185,6 +203,8 @@ func _build_player() -> void:
 	player.position = ParkLayout.spawn_position()
 	player.basis = ParkLayout.downhill_basis()
 	add_child(player)
+	for node: Node in player.find_children("*", "GeometryInstance3D", true, false):
+		(node as GeometryInstance3D).gi_mode = GeometryInstance3D.GI_MODE_DYNAMIC
 	SessionManager.set_default_spawn(player.global_transform)
 	course_recovery = CourseRecoveryModule.new()
 	course_recovery.name = "CourseRecovery"
@@ -280,6 +300,8 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 	return body
 
 func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: float = 0.0, variant: int = 0) -> void:
+	if tree_batch != null and _add_batched_tree(position, scale_multiplier, yaw_degrees, variant):
+		return
 	if _try_add_environment_asset("park_tree", position, yaw_degrees, Vector3.ONE * scale_multiplier, Color.TRANSPARENT, variant):
 		return
 	if _production_assets_required():
@@ -364,6 +386,10 @@ func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: fl
 
 func _add_tree_clusters() -> void:
 	# Deterministic clusters leave deliberate openings between vegetation masses.
+	var tree_definition := environment_asset_catalog.definition_for("park_tree") if environment_asset_catalog != null else null
+	if tree_definition != null and tree_definition.visual_scene != null and tree_definition.collision_scene != null and environment_asset_catalog.mode != EnvironmentAssetCatalog.AssetMode.GRAYBOX_FALLBACK:
+		tree_batch = ParkTreeBatchModule.new()
+		add_child(tree_batch)
 	var tree_specs: Array[Vector4] = [
 		Vector4(-43.0, 139.0, 1.18, -12.0), Vector4(-47.0, 134.0, 0.82, 34.0), Vector4(-41.5, 128.0, 1.04, 8.0),
 		Vector4(43.5, 121.0, 0.94, -28.0), Vector4(48.0, 116.0, 1.25, 11.0), Vector4(42.0, 110.0, 0.76, 42.0), Vector4(51.0, 107.0, 0.9, -5.0),
@@ -382,6 +408,35 @@ func _add_tree_clusters() -> void:
 		var x_offset := jitter.randf_range(-1.8, 1.8)
 		var z_offset := jitter.randf_range(-2.6, 2.6)
 		_add_tree(ParkLayout.snow_at(spec.x + x_offset, spec.y + z_offset), spec.z * jitter.randf_range(0.92, 1.08), spec.w + jitter.randf_range(-7.0, 7.0), index % 3)
+	if tree_batch != null:
+		tree_batch.commit()
+
+func _add_batched_tree(position: Vector3, scale_multiplier: float, yaw_degrees: float, variant: int) -> bool:
+	var definition := environment_asset_catalog.definition_for("park_tree") if environment_asset_catalog != null else null
+	if definition == null or definition.collision_scene == null:
+		return false
+	var root := Node3D.new()
+	root.name = "park_tree"
+	root.position = position
+	root.rotation_degrees.y = yaw_degrees
+	root.scale = Vector3.ONE * scale_multiplier
+	root.add_to_group("park_trees")
+	root.set_meta("asset_id", "park_tree")
+	root.set_meta("asset_source", "production_multimesh")
+	root.set_meta("style_variant", variant)
+	root.set_meta("asset_class", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
+	root.set_meta("collision_policy", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
+	root.set_meta("nominal_size_m", definition.nominal_size_m * scale_multiplier)
+	root.set_meta("readability_category", definition.readability_category)
+	var collision_root := definition.collision_scene.instantiate()
+	if collision_root == null:
+		return false
+	collision_root.name = "park_tree_Collision"
+	root.add_child(collision_root)
+	add_child(root)
+	_configure_environment_collisions(collision_root, definition.asset_class, "park_tree")
+	tree_batch.add_tree(root.transform)
+	return true
 
 func _add_distant_terrain_skirt() -> void:
 	var columns := 11
@@ -409,6 +464,7 @@ func _add_distant_terrain_skirt() -> void:
 	skirt_mesh.generate_normals()
 	var instance := MeshInstance3D.new()
 	instance.name = "DistantTerrainSkirt"
+	instance.add_to_group("environment_backdrop")
 	instance.mesh = skirt_mesh.commit()
 	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	instance.visibility_range_end = 900.0
@@ -453,6 +509,7 @@ func _add_high_haze() -> void:
 	mat.set_shader_parameter("haze_scale", 0.008)
 	haze.material_override = mat
 	add_child(haze)
+	high_haze = haze
 
 func _add_mountain_peak(label: String, position: Vector3, radius: float, height: float, color: Color, yaw_degrees: float, seed: int) -> void:
 	var root := Node3D.new()
@@ -691,6 +748,10 @@ func _try_add_environment_asset(asset_id: String, position: Vector3, yaw_degrees
 	instance.set_meta("asset_id", asset_id)
 	instance.set_meta("asset_source", "production_scene")
 	instance.set_meta("style_variant", style_variant)
+	if asset_id == "park_tree":
+		instance.add_to_group("park_trees")
+	elif asset_id in ["lift_tower", "course_boundary", "snowmaker", "trail_board"]:
+		instance.add_to_group("course_landmarks")
 	if accent_color.a > 0.0:
 		instance.set_meta("accent_color", accent_color)
 	var definition := environment_asset_catalog.definition_for(asset_id)
@@ -763,11 +824,22 @@ func _add_lodge(position: Vector3) -> void:
 func _apply_graphics_settings() -> void:
 	if environment == null or environment.environment == null:
 		return
+	if follow_environment_setting:
+		var selected_profile := profile_for_preset(int(GameSettings.active.get("environment_preset", 0)))
+		if selected_profile != environment_profile:
+			environment_profile = selected_profile
+			_apply_environment_profile(environment_profile)
+			_configure_gi_geometry()
 	var env := environment.environment
 	env.ssao_enabled = bool(GameSettings.active.get("ssao_enabled", true))
 	env.ssil_enabled = bool(GameSettings.active.get("ssil_enabled", false))
 	env.ssr_enabled = bool(GameSettings.active.get("ssr_enabled", true))
 	env.fog_enabled = bool(GameSettings.active.get("fog_enabled", true))
+	if high_haze != null:
+		# The high card and environment fog serve the same distant-atmosphere role.
+		# Avoid paying for the full-screen transparent noise pass when fog already
+		# provides that depth cue; retain the card as the user's fog-off fallback.
+		high_haze.visible = environment_profile.high_haze_enabled and not env.fog_enabled
 	env.sdfgi_enabled = effective_gi_enabled()
 	_apply_shadow_quality(int(GameSettings.active.get("shadow_quality", 2)))
 

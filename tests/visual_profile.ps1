@@ -2,6 +2,12 @@ param(
 	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
 	[string]$GodotPath = "",
 	[string]$UserDataRoot = "",
+	[string]$IsolationMode = "baseline",
+	[string[]]$IsolationModes = @(),
+	[string[]]$Environments = @("daytime", "sunset"),
+	[int[]]$Presets = @(0, 1, 2, 3),
+	[int]$GpuIndex = -1,
+	[double]$RenderScale = -1.0,
 	[int]$TimeoutSeconds = 120
 )
 
@@ -33,9 +39,23 @@ New-Item -ItemType Directory -Path $captureDirectory -Force | Out-Null
 $logDirectory = Join-Path $RepoRoot ".godot_logs"
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $quotedRoot = '"' + $RepoRoot.Replace('"', '\"') + '"'
+$commitSha = (& git -C $RepoRoot rev-parse HEAD 2>$null).Trim()
+if ([string]::IsNullOrWhiteSpace($commitSha)) { $commitSha = "unknown" }
+$workingTreeDirty = -not [string]::IsNullOrWhiteSpace((& git -C $RepoRoot status --porcelain --untracked-files=normal 2>$null | Out-String).Trim())
+$effectiveIsolationModes = if ($IsolationModes.Count -gt 0) { $IsolationModes } else { @($IsolationMode) }
 
-foreach ($quality in @(0, 1)) {
-	$tag = if ($quality -eq 0) { "fast" } else { "premium" }
+foreach ($environment in $Environments) {
+	$environmentTag = $environment.ToLowerInvariant()
+	$scene = switch ($environmentTag) {
+		"daytime" { "res://tests/daytime_visual_inspection.tscn" }
+		"sunset" { "res://tests/sunset_visual_inspection.tscn" }
+		default { throw "Unknown environment '$environment'. Expected daytime or sunset." }
+	}
+	foreach ($effectiveIsolationMode in $effectiveIsolationModes) {
+	foreach ($preset in $Presets) {
+	if ($preset -lt 0 -or $preset -gt 3) { throw "Preset must be 0 (Low), 1 (Medium), 2 (High), or 3 (Ultra)." }
+	$presetTag = @("low", "medium", "high", "ultra")[$preset]
+	$tag = "{0}_{1}_{2}" -f $environmentTag,$presetTag,$effectiveIsolationMode
 	$capturePath = Join-Path $captureDirectory ("profile_{0}.png" -f $tag)
 	$profilePath = Join-Path $captureDirectory ("profile_{0}.json" -f $tag)
 	$projectCapturePath = "res://.godot_user/captures/profile_{0}.png" -f $tag
@@ -43,15 +63,26 @@ foreach ($quality in @(0, 1)) {
 	$stdoutPath = Join-Path $logDirectory ("visual_profile_{0}.stdout.log" -f $tag)
 	$stderrPath = Join-Path $logDirectory ("visual_profile_{0}.stderr.log" -f $tag)
 	Remove-Item -LiteralPath $capturePath,$profilePath,$stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
+	$godotArguments = @("--path", $quotedRoot)
+	if ($GpuIndex -ge 0) {
+		$godotArguments += @("--gpu-index", $GpuIndex)
+	}
+	$godotArguments += @(
+		$scene,
+		"--",
+		("--sunset-isolation=" + $effectiveIsolationMode),
+		("--capture-path=" + $projectCapturePath),
+		("--profile-preset=" + $preset),
+		("--profile-path=" + $projectProfilePath),
+		("--profile-environment=" + $environmentTag),
+		("--profile-commit=" + $commitSha),
+		("--profile-dirty=" + $workingTreeDirty.ToString().ToLowerInvariant())
+	)
+	if ($RenderScale -ge 0.0) {
+		$godotArguments += ("--profile-render-scale=" + $RenderScale.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+	}
 	$process = Start-Process -FilePath $godot `
-		-ArgumentList @(
-			"--path", $quotedRoot,
-			"res://tests/sunset_visual_inspection.tscn",
-			"--",
-			("--capture-path=" + $projectCapturePath),
-			("--profile-snow-quality=" + $quality),
-			("--profile-path=" + $projectProfilePath)
-		) `
+		-ArgumentList $godotArguments `
 		-WindowStyle Hidden `
 		-PassThru `
 		-RedirectStandardOutput $stdoutPath `
@@ -72,4 +103,6 @@ foreach ($quality in @(0, 1)) {
 	Get-Content -LiteralPath $stdoutPath
 	if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath }
 	Write-Output (Get-Content -LiteralPath $profilePath -Raw)
+}
+}
 }

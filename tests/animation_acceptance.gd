@@ -312,18 +312,18 @@ func _test_trick_resolution() -> void:
 	var tricks := TrickController.new()
 	add_child(tricks)
 	tricks.begin_air(false)
-	Input.action_press("grab_left", 1.0)
-	tricks.update_air(Vector3.ZERO, 0.016)
+	var grab_command := TrickCommand.new()
+	grab_command.grab_pose = TrickController.GrabPose.SAFETY_LEFT
+	grab_command.grab_amount = 1.0
+	tricks.update_air(Vector3.ZERO, 0.016, grab_command)
 	if tricks.grab_pose != TrickController.GrabPose.SAFETY_LEFT:
-		failures.append("Left grab input did not resolve to Safety Left")
-	Input.action_press("grab_right", 1.0)
-	Input.action_press("trick_up", 1.0)
-	tricks.update_air(Vector3.ZERO, 0.016)
+		failures.append("Safety Left command did not reach the trick controller")
+	var style_command := TrickCommand.new()
+	style_command.style_pose = TrickController.StylePose.SPREAD_EAGLE
+	style_command.style_amount = 1.0
+	tricks.update_air(Vector3.ZERO, 0.016, style_command)
 	if tricks.style_pose != TrickController.StylePose.SPREAD_EAGLE:
-		failures.append("Dual grab plus up input did not resolve to Spread Eagle")
-	Input.action_release("grab_left")
-	Input.action_release("grab_right")
-	Input.action_release("trick_up")
+		failures.append("Spread Eagle command did not reach the trick controller")
 
 func _step(count: int) -> void:
 	for _index: int in count:

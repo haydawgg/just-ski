@@ -688,14 +688,14 @@ func _canonical_rest_world(semantic: StringName) -> Vector3:
 	return value
 
 func _build_attachments() -> void:
-	var dark := SkierEquipment.material(outfit_profile.boot_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic)
-	var boot_accent := SkierEquipment.material(outfit_profile.ski_accent_color.darkened(0.32), 0.48, 0.18)
-	var ski_base := SkierEquipment.material(outfit_profile.ski_base_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic)
-	var accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic)
-	var pole_surface := SkierEquipment.material(outfit_profile.pole_color, outfit_profile.hardgoods_roughness, 0.28)
-	var helmet_surface := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic)
-	var frame_surface := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18)
-	var lens_surface := SkierEquipment.material(outfit_profile.goggle_lens_color, outfit_profile.lens_roughness, outfit_profile.lens_metallic, 0.82)
+	var dark := SkierEquipment.material(outfit_profile.boot_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
+	var boot_accent := SkierEquipment.material(outfit_profile.ski_accent_color.darkened(0.32), 0.48, 0.18, outfit_profile.hardgoods_specular)
+	var ski_base := SkierEquipment.material(outfit_profile.ski_base_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
+	var accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
+	var pole_surface := SkierEquipment.material(outfit_profile.pole_color, outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
+	var helmet_surface := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
+	var frame_surface := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18, outfit_profile.hardgoods_specular)
+	var lens_surface := SkierEquipment.material(outfit_profile.goggle_lens_color, outfit_profile.lens_roughness, outfit_profile.lens_metallic, outfit_profile.lens_specular)
 	var head_attachment := _bone_attachment(&"head", "HeadAttachment")
 	var head_mount := Node3D.new()
 	head_mount.name = "HeadMount"
@@ -744,16 +744,24 @@ func _apply_body_materials(node: Node) -> void:
 			var region := imported.resource_name.trim_prefix("Outfit_") if imported != null else ""
 			var color := outfit_profile.jacket_color
 			var roughness := outfit_profile.cloth_roughness
+			var metallic := 0.0
+			var specular := outfit_profile.cloth_specular
 			match region:
 				"Pants": color = outfit_profile.pants_color
-				"Skin": color = outfit_profile.skin_color
+				"Skin":
+					color = outfit_profile.skin_color
+					roughness = outfit_profile.skin_roughness
+					specular = outfit_profile.skin_specular
 				"Gloves":
 					color = outfit_profile.glove_color
 					roughness = outfit_profile.hardgoods_roughness
+					specular = outfit_profile.hardgoods_specular
 				"BootUnderlay":
 					color = outfit_profile.boot_color
 					roughness = outfit_profile.hardgoods_roughness
-			var surface := SkierEquipment.material(color, roughness, 0.0)
+					metallic = outfit_profile.hardgoods_metallic
+					specular = outfit_profile.hardgoods_specular
+			var surface := SkierEquipment.material(color, roughness, metallic, specular)
 			surface.resource_name = "Outfit_" + (region if region != "" else "Jacket")
 			instance.set_surface_override_material(surface_index, surface)
 	for child: Node in node.get_children():

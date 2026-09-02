@@ -1,16 +1,23 @@
 extends Node
 
 const OUTPUT_PATH := "res://.godot_user/captures/sunset_resort.png"
+const ProfileMetrics := preload("res://tests/performance_profile_metrics.gd")
 
 var frame_count := 0
 var frame_time_sum := 0.0
 var frame_time_samples := 0
+var frame_times_ms: Array[float] = []
 var landing_captured := false
 var isolation_mode := "baseline"
 var feature_isolation_name := ""
 var capture_path := OUTPUT_PATH
 var profile_snow_quality := -1
+var profile_graphics_preset := -1
 var profile_output_path := "res://.godot_user/captures/sunset_visual_profile.json"
+var profile_environment := "sunset"
+var profile_commit_sha := "unknown"
+var profile_working_tree_dirty := false
+var profile_render_scale := -1.0
 
 func _ready() -> void:
 	_parse_visual_arguments()
@@ -30,16 +37,40 @@ func _parse_visual_arguments() -> void:
 			capture_path = argument.trim_prefix("--capture-path=")
 		elif argument.begins_with("--profile-snow-quality="):
 			profile_snow_quality = clampi(int(argument.trim_prefix("--profile-snow-quality=")), 0, 1)
+		elif argument.begins_with("--profile-preset="):
+			profile_graphics_preset = clampi(int(argument.trim_prefix("--profile-preset=")), 0, 3)
 		elif argument.begins_with("--profile-path="):
 			profile_output_path = argument.trim_prefix("--profile-path=")
+		elif argument.begins_with("--profile-environment="):
+			profile_environment = argument.trim_prefix("--profile-environment=").to_lower()
+		elif argument.begins_with("--profile-commit="):
+			profile_commit_sha = argument.trim_prefix("--profile-commit=")
+		elif argument.begins_with("--profile-dirty="):
+			profile_working_tree_dirty = argument.trim_prefix("--profile-dirty=").to_lower() == "true"
+		elif argument.begins_with("--profile-render-scale="):
+			profile_render_scale = clampf(float(argument.trim_prefix("--profile-render-scale=")), 0.5, 1.5)
 
 func _apply_profile_settings() -> void:
-	if profile_snow_quality < 0:
+	if profile_snow_quality < 0 and profile_graphics_preset < 0:
 		return
 	var active := GameSettings.active.duplicate(true)
-	active["snow_quality"] = profile_snow_quality
+	if profile_graphics_preset >= 0:
+		GameSettings.pending = active.duplicate(true)
+		GameSettings.apply_preset(profile_graphics_preset)
+		active = GameSettings.pending.duplicate(true)
+		profile_snow_quality = int(active.get("snow_quality", 0))
+	else:
+		active["snow_quality"] = profile_snow_quality
+	active["fps_cap"] = 0
+	active["vsync_mode"] = 0
+	if profile_render_scale >= 0.0:
+		active["render_scale"] = profile_render_scale
 	GameSettings.active = active
 	GameSettings.pending = active.duplicate(true)
+	get_viewport().scaling_3d_scale = float(active.get("render_scale", 1.0))
+	get_viewport().use_taa = int(active.get("anti_aliasing", 0)) > 0
+	Engine.max_fps = 0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	GameSettings.settings_applied.emit()
 	AudioManager.reset_profiling()
 
@@ -59,6 +90,24 @@ func _apply_isolation() -> void:
 				world_environment.environment.sdfgi_enabled = false
 		"summit":
 			_set_group_visibility(resort, &"environment_summit_visual", false)
+		"high_haze":
+			_set_node_visibility(resort.get_node_or_null("HighHaze"), false)
+		"audio":
+			AudioManager.stop_feedback()
+			AudioManager.set_process(false)
+		"trees":
+			_set_group_visibility(resort, &"park_trees", false)
+		"course_dressing":
+			_set_group_visibility(resort, &"course_landmarks", false)
+		"distant_ridges":
+			_set_group_visibility(resort, &"environment_backdrop", false)
+			_set_node_visibility(resort.get_node_or_null("DistantTerrainSkirt"), false)
+		"character":
+			_set_node_visibility(resort.get_node_or_null("Skier"), false)
+		"shadows":
+			_disable_shadows(resort)
+		"environment_effects":
+			_disable_environment_effects(resort)
 		"profiled_features":
 			_hide_profiled_feature_meshes(resort)
 		"profiled_feature_shadows":
@@ -92,6 +141,26 @@ func _set_node_visibility(node: Node, visible: bool) -> void:
 	var node_3d := node as Node3D
 	if node_3d != null:
 		node_3d.visible = visible
+
+func _disable_shadows(resort: Node3D) -> void:
+	for node: Node in resort.find_children("*", "Light3D", true, false):
+		var light := node as Light3D
+		if light != null:
+			light.shadow_enabled = false
+	for node: Node in resort.find_children("*", "GeometryInstance3D", true, false):
+		var geometry := node as GeometryInstance3D
+		if geometry != null:
+			geometry.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+func _disable_environment_effects(resort: Node3D) -> void:
+	_set_node_visibility(resort.get_node_or_null("HighHaze"), false)
+	var world_environment := resort.get("environment") as WorldEnvironment
+	if world_environment == null or world_environment.environment == null:
+		return
+	world_environment.environment.sdfgi_enabled = false
+	world_environment.environment.fog_enabled = false
+	world_environment.environment.volumetric_fog_enabled = false
+	world_environment.environment.glow_enabled = false
 
 func _hide_profiled_feature_meshes(resort: Node3D, feature_name: String = "") -> void:
 	for body_node: Node in resort.find_children("*", "StaticBody3D", true, false):
@@ -129,6 +198,7 @@ func _process(delta: float) -> void:
 	if frame_count > 90:
 		frame_time_sum += delta
 		frame_time_samples += 1
+		frame_times_ms.append(delta * 1000.0)
 
 func _physics_process(_delta: float) -> void:
 	frame_count += 1
@@ -188,22 +258,39 @@ func _capture() -> void:
 func _finish(exit_code: int) -> void:
 	var average_fps := float(frame_time_samples) / maxf(frame_time_sum, 0.001)
 	var average_frame_ms := 1000.0 / maxf(average_fps, 0.001)
-	var render_profile := {
-		"is_headless": OS.has_feature("headless"),
-		"display_server": DisplayServer.get_name(),
-		"snow_quality": profile_snow_quality,
-		"isolation_mode": isolation_mode,
-		"frame_samples": frame_time_samples,
-		"average_rendered_fps": average_fps,
-		"average_frame_ms": average_frame_ms,
+	var render_metrics := {
+		"viewport_width": get_viewport().get_visible_rect().size.x,
+		"viewport_height": get_viewport().get_visible_rect().size.y,
+		"render_scale": float(GameSettings.active.get("render_scale", 1.0)),
+		"graphics_preset": profile_graphics_preset,
 		"objects": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_OBJECTS_IN_FRAME),
 		"primitives": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME),
 		"draw_calls": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
 		"video_memory_bytes": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED),
 		"texture_memory_bytes": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED),
 		"buffer_memory_bytes": RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED),
-		"audio": AudioManager.profiling_snapshot(),
 	}
+	var preset_names: Array[String] = ["low", "medium", "high", "ultra"]
+	var preset_name: String = preset_names[profile_graphics_preset] if profile_graphics_preset >= 0 else ("fast" if profile_snow_quality == 0 else ("premium" if profile_snow_quality == 1 else "configured"))
+	var render_profile := ProfileMetrics.make_profile(
+		profile_environment,
+		preset_name,
+		isolation_mode,
+		profile_commit_sha,
+		profile_working_tree_dirty,
+		frame_times_ms,
+		render_metrics,
+		AudioManager.profiling_snapshot()
+	)
+	render_profile["legacy"] = {
+		"average_rendered_fps": average_fps,
+		"average_frame_ms": average_frame_ms,
+		"snow_quality": profile_snow_quality,
+	}
+	var validation := ProfileMetrics.validate_profile(render_profile)
+	if not bool(validation.get("valid", false)):
+		push_error("SUNSET_VISUAL_PROFILE_SCHEMA_FAIL: %s" % str(validation.get("errors", [])))
+		exit_code = 1
 	var profile_absolute_path := ProjectSettings.globalize_path(profile_output_path)
 	DirAccess.make_dir_recursive_absolute(profile_absolute_path.get_base_dir())
 	var profile_file := FileAccess.open(profile_absolute_path, FileAccess.WRITE)

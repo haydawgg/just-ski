@@ -1,0 +1,47 @@
+name: Setup pinned Godot
+description: Restore, verify, and expose the pinned Windows Godot console binary.
+
+inputs:
+  version:
+    description: Godot stable version without the stable suffix.
+    required: true
+  archive-sha256:
+    description: Expected SHA-256 for the official Windows archive.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cache pinned Godot binary
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/summit-sessions-godot-cache
+        key: windows-godot-${{ inputs.version }}-console-${{ inputs.archive-sha256 }}
+
+    - name: Download and verify pinned Godot console binary
+      shell: pwsh
+      run: |
+        $version = '${{ inputs.version }}'
+        $expectedSha256 = '${{ inputs.archive-sha256 }}'.ToLowerInvariant()
+        $cacheRoot = Join-Path $env:RUNNER_TEMP 'summit-sessions-godot-cache'
+        $archive = Join-Path $cacheRoot "Godot_v$version-stable_win64.exe.zip"
+        $url = "https://github.com/godotengine/godot/releases/download/$version-stable/Godot_v$version-stable_win64.exe.zip"
+        New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+        if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+          Invoke-WebRequest -Uri $url -OutFile $archive
+        }
+        $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+        if ($actualSha256 -ne $expectedSha256) {
+          throw "Godot archive checksum mismatch. Actual: $actualSha256"
+        }
+        $godotRoot = Join-Path $cacheRoot 'extracted'
+        New-Item -ItemType Directory -Path $godotRoot -Force | Out-Null
+        $godotExecutable = Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse -File | Select-Object -First 1
+        if ($null -eq $godotExecutable) {
+          Expand-Archive -LiteralPath $archive -DestinationPath $godotRoot -Force
+          $godotExecutable = Get-ChildItem -LiteralPath $godotRoot -Filter '*console.exe' -Recurse -File | Select-Object -First 1
+        }
+        if ($null -eq $godotExecutable) {
+          throw 'Pinned Godot archive did not contain a console executable.'
+        }
+        "GODOT_PATH=$($godotExecutable.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

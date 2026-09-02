@@ -49,6 +49,12 @@ func _profile_world_and_session() -> void:
 		sample_sum_usec += frame_usec
 		sample_max_usec = maxi(sample_max_usec, frame_usec)
 	var memory := int(Performance.get_monitor(Performance.MEMORY_STATIC))
+	var track_snapshot: Dictionary = {}
+	var skier := resort.get_node_or_null("Skier") as SkierController
+	if skier != null:
+		var snow_vfx := skier.get_node_or_null("SkiSnowVFX") as SkiSnowVFX
+		if snow_vfx != null:
+			track_snapshot = snow_vfx.debug_snapshot()
 	print("PROFILE_WORLD build_ms=%.2f first_frame_ms=%.2f session_avg_ms=%.2f session_max_ms=%.2f memory_static_bytes=%d nodes=%d" % [
 		float(build_usec) / 1000.0,
 		float(first_frame_usec) / 1000.0,
@@ -56,6 +62,13 @@ func _profile_world_and_session() -> void:
 		float(sample_max_usec) / 1000.0,
 		memory,
 		resort.find_children("*", "Node", true, false).size(),
+	])
+	print("PROFILE_TRACKS rebuilds=%d average_us=%.2f max_us=%d left_samples=%d right_samples=%d" % [
+		int(track_snapshot.get("track_rebuild_count", 0)),
+		float(track_snapshot.get("track_rebuild_average_usec", 0.0)),
+		int(track_snapshot.get("track_rebuild_max_usec", 0)),
+		int(track_snapshot.get("left_track_samples", 0)),
+		int(track_snapshot.get("right_track_samples", 0)),
 	])
 	resort.queue_free()
 	await get_tree().process_frame

@@ -19,6 +19,9 @@ var track_sample_time := 0.0
 var last_left_position := Vector3.ZERO
 var last_right_position := Vector3.ZERO
 var last_track_valid := false
+var track_rebuild_count := 0
+var track_rebuild_total_usec := 0
+var track_rebuild_max_usec := 0
 var contact_presentation := SkiContactPresentation.new()
 
 var carve_spray: GPUParticles3D
@@ -87,6 +90,9 @@ func debug_snapshot() -> Dictionary:
 		"left_track_samples": track_samples_left.size(),
 		"right_track_samples": track_samples_right.size(),
 		"track_cap": MAX_TRACK_SAMPLES,
+		"track_rebuild_count": track_rebuild_count,
+		"track_rebuild_average_usec": float(track_rebuild_total_usec) / maxf(float(track_rebuild_count), 1.0),
+		"track_rebuild_max_usec": track_rebuild_max_usec,
 		"continuous_particle_cap": MAX_CONTINUOUS_PARTICLES,
 		"mode": last_mode,
 		"landing_severity": last_landing_severity,
@@ -231,11 +237,16 @@ func _append_track_sample(samples: Array[Dictionary], position: Vector3, normal:
 			samples[0].connected = false
 
 func _rebuild_track_mesh() -> void:
+	var start_usec := Time.get_ticks_usec()
 	var surface := SurfaceTool.new()
 	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 	_add_track_ribbon(surface, track_samples_left)
 	_add_track_ribbon(surface, track_samples_right)
 	track_mesh_instance.mesh = surface.commit()
+	var elapsed_usec := Time.get_ticks_usec() - start_usec
+	track_rebuild_count += 1
+	track_rebuild_total_usec += elapsed_usec
+	track_rebuild_max_usec = maxi(track_rebuild_max_usec, elapsed_usec)
 
 func _add_track_ribbon(surface: SurfaceTool, samples: Array[Dictionary]) -> void:
 	if samples.size() < 2:

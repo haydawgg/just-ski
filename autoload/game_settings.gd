@@ -30,6 +30,7 @@ const DEFAULTS := {
 	"ssr_enabled": true,
 	"fog_enabled": true,
 	"gi_enabled": true,
+	"environment_preset": 0,
 	"master_volume_db": -3.0,
 	"music_volume_db": -8.0,
 	"sfx_volume_db": -2.0,
@@ -94,7 +95,10 @@ func apply_preset(preset: int) -> void:
 	pending["graphics_preset"] = selected_preset
 	if selected_preset == 4:
 		return
-	var scales := [0.65, 0.8, 1.0, 1.0]
+	# Medium keeps its additional lighting/atmosphere features but uses the
+	# target-class integrated-GPU render scale so the 1080p frame budget remains
+	# attainable without changing gameplay or scene geometry.
+	var scales := [0.65, 0.65, 1.0, 1.0]
 	pending["render_scale"] = scales[selected_preset]
 	pending["anti_aliasing"] = 0 if selected_preset == 0 else 1
 	pending["shadow_quality"] = selected_preset
@@ -125,6 +129,7 @@ func _validated(key: String, value: Variant) -> Variant:
 		"shadow_quality": return _validated_int(key, value, 0, 3)
 		"snow_quality": return _validated_int(key, value, 0, 1)
 		"graphics_preset": return _validated_int(key, value, 0, 4)
+		"environment_preset": return _validated_int(key, value, 0, 2)
 		"master_volume_db", "music_volume_db", "sfx_volume_db": return _validated_float(key, value, -30.0, 0.0)
 		"controller_rumble", "landing_assist": return _validated_float(key, value, 0.0, 1.0)
 		"stick_deadzone": return _validated_float(key, value, 0.0, 0.45)

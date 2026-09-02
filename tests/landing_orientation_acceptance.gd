@@ -40,7 +40,6 @@ func _ready() -> void:
 	get_tree().quit(1)
 
 func _run_case(scenario: String, hz: int) -> Dictionary:
-	Input.action_release("steer_left")
 	var setup := _scenario_setup(scenario)
 	var normal: Vector3 = setup.normal
 	var touchdown_basis: Basis = setup.basis
@@ -89,7 +88,10 @@ func _run_case(scenario: String, hz: int) -> Dictionary:
 	var final_target_error := _basis_angle(skier.global_basis, target_basis)
 	var steering_seen := false
 	if scenario == "immediate_steering":
-		Input.action_press("steer_left", 1.0)
+		skier.input_frame.steer_raw = -1.0
+		skier.input_frame.steer = -1.0
+		skier.input_frame.movement_stick = Vector2(-1.0, 0.0)
+		skier.input_frame.left_stick = skier.input_frame.movement_stick
 
 	for _frame: int in frame_count:
 		skier._update_ground(delta)
@@ -110,11 +112,10 @@ func _run_case(scenario: String, hz: int) -> Dictionary:
 		previous_basis = current_basis
 
 	if scenario == "immediate_steering":
-		Input.action_release("steer_left")
 		if not steering_seen:
-			failures.append("Immediate steering input was ignored during landing settle at %d Hz" % hz)
+			failures.append("Immediate steering snapshot was ignored during landing settle at %d Hz" % hz)
 		if _basis_angle(before_basis, skier.global_basis) < deg_to_rad(2.0):
-			failures.append("Immediate steering input did not produce responsive heading change at %d Hz" % hz)
+			failures.append("Immediate steering snapshot did not produce responsive heading change at %d Hz" % hz)
 	else:
 		if settle_time == INF:
 			failures.append("%s at %d Hz did not reach the ground target within %.3f seconds (final error %.3f degrees)" % [scenario, hz, elapsed, rad_to_deg(final_target_error)])

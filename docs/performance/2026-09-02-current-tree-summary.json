@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0-summary",
+  "captured_at_date": "2026-09-02",
+  "commit_sha": "012a0d40f6b7c91a53c80840794dacee5b651a29",
+  "working_tree_dirty": true,
+  "runtime": {
+    "godot_version": "4.7.2-stable (official)",
+    "platform": "Windows",
+    "processor_name": "12th Gen Intel(R) Core(TM) i7-12650H",
+    "video_adapter": "NVIDIA GeForce RTX 4050 Laptop GPU",
+    "viewport": [1920, 1080]
+  },
+  "profiles": [
+    {"environment":"daytime","preset":"low","render_scale":0.65,"average_ms":2.503,"p95_ms":4.031,"fps":399.5,"objects":691,"draw_calls":375,"primitives":193524,"audio_average_usec":57.86,"audio_max_usec":1396},
+    {"environment":"daytime","preset":"medium","render_scale":0.65,"average_ms":2.267,"p95_ms":4.313,"fps":441.1,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":55.21,"audio_max_usec":1028},
+    {"environment":"daytime","preset":"high","render_scale":1.0,"average_ms":3.512,"p95_ms":4.810,"fps":284.7,"objects":1045,"draw_calls":729,"primitives":400288,"audio_average_usec":79.97,"audio_max_usec":1227},
+    {"environment":"daytime","preset":"ultra","render_scale":1.0,"average_ms":3.970,"p95_ms":5.360,"fps":251.9,"objects":1068,"draw_calls":752,"primitives":413892,"audio_average_usec":89.49,"audio_max_usec":893},
+    {"environment":"sunset","preset":"low","render_scale":0.65,"average_ms":2.515,"p95_ms":4.093,"fps":397.6,"objects":691,"draw_calls":375,"primitives":193524,"audio_average_usec":58.75,"audio_max_usec":1063},
+    {"environment":"sunset","preset":"medium","render_scale":0.65,"average_ms":2.291,"p95_ms":4.299,"fps":436.5,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":55.96,"audio_max_usec":985},
+    {"environment":"sunset","preset":"high","render_scale":1.0,"average_ms":4.356,"p95_ms":5.780,"fps":229.6,"objects":1045,"draw_calls":729,"primitives":400288,"audio_average_usec":101.24,"audio_max_usec":1334},
+    {"environment":"sunset","preset":"ultra","render_scale":1.0,"average_ms":4.852,"p95_ms":6.271,"fps":206.1,"objects":1068,"draw_calls":752,"primitives":413892,"audio_average_usec":112.20,"audio_max_usec":1540}
+  ]
+}

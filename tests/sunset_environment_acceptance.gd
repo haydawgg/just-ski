@@ -62,6 +62,15 @@ func _ready() -> void:
 func _test_gi_policy(sunset_resort: Node3D, env: Environment) -> void:
 	var sunset_profile := sunset_resort.get("environment_profile") as ResortEnvironmentProfile
 	var default_profile := preload("res://resources/environment/default_resort_environment_profile.tres") as ResortEnvironmentProfile
+	var golden_profile := preload("res://resources/environment/golden_hour_resort_environment_profile.tres") as ResortEnvironmentProfile
+	if ResortModule.profile_for_preset(0) != default_profile:
+		failures.append("Day setting did not resolve to the authored daytime profile")
+	if ResortModule.profile_for_preset(1) != golden_profile:
+		failures.append("Golden Hour setting did not resolve to its authored profile")
+	if ResortModule.profile_for_preset(2) != sunset_profile:
+		failures.append("Sunset setting did not resolve to the authored sunset profile")
+	if bool(sunset_resort.get("follow_environment_setting")):
+		failures.append("Dedicated sunset scene no longer keeps its authored QA profile")
 	if ResortModule.resolve_effective_gi(default_profile, true, 3):
 		failures.append("A GI-disabled environment profile incorrectly enabled GI")
 	if not ResortModule.resolve_effective_gi(sunset_profile, true, 2):
