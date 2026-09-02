@@ -2,6 +2,13 @@ extends Node
 
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
 
+# A charged keyboard pop is a short hop, not a launch. Keep this behavioral
+# envelope tied to the route fixture so a physics-profile change cannot make
+# ordinary jumps silently regain the old, floaty feel.
+const REFERENCE_POP_MAX_PEAK_HEIGHT := 1.10
+const REFERENCE_POP_MAX_AIR_SECONDS := 0.90
+const REFERENCE_POP_MAX_TAKEOFF_UPWARD_SPEED := 3.80
+
 @onready var resort: Node = $Resort
 var skier: SkierController
 var frame := 0
@@ -18,6 +25,7 @@ var marker_position := Vector3.ZERO
 var pop_started := false
 var pop_completed := false
 var pop_takeoff_position := Vector3.ZERO
+var pop_takeoff_upward_speed := 0.0
 var pop_peak_height := 0.0
 var pop_air_frames := 0
 
@@ -74,6 +82,7 @@ func _physics_process(_delta: float) -> void:
 			if not pop_started:
 				pop_started = true
 				pop_takeoff_position = skier.global_position
+				pop_takeoff_upward_speed = skier.air_takeoff_upward_speed
 			pop_air_frames += 1
 			pop_peak_height = maxf(pop_peak_height, (skier.global_position - pop_takeoff_position).dot(ParkLayout.snow_normal()))
 		elif pop_started:
@@ -82,11 +91,13 @@ func _physics_process(_delta: float) -> void:
 		if not air_seen:
 			failures.append("Charged pop never entered Air state")
 		var pop_air_seconds := float(pop_air_frames) / float(Engine.physics_ticks_per_second)
-		print("POP_TELEMETRY peak_m=", pop_peak_height, " air_seconds=", pop_air_seconds, " completed=", pop_completed)
-		if pop_peak_height < 1.0 or pop_peak_height > 3.0:
-			failures.append("Reference pop peak %.2f m left the approved 1-3 m feel band" % pop_peak_height)
-		if pop_air_seconds < 0.65 or pop_air_seconds > 1.35:
-			failures.append("Reference pop airtime %.2f s left the approved 0.65-1.35 s feel band" % pop_air_seconds)
+		print("POP_TELEMETRY peak_m=", pop_peak_height, " air_seconds=", pop_air_seconds, " takeoff_upward_mps=", pop_takeoff_upward_speed, " completed=", pop_completed)
+		if pop_peak_height < 0.65 or pop_peak_height > REFERENCE_POP_MAX_PEAK_HEIGHT:
+			failures.append("Reference pop peak %.2f m left the approved 0.65-%.2f m short-hop band" % [pop_peak_height, REFERENCE_POP_MAX_PEAK_HEIGHT])
+		if pop_air_seconds < 0.55 or pop_air_seconds > REFERENCE_POP_MAX_AIR_SECONDS:
+			failures.append("Reference pop airtime %.2f s left the approved 0.55-%.2f s short-hop band" % [pop_air_seconds, REFERENCE_POP_MAX_AIR_SECONDS])
+		if pop_takeoff_upward_speed > REFERENCE_POP_MAX_TAKEOFF_UPWARD_SPEED:
+			failures.append("Reference pop takeoff %.2f m/s exceeded the %.2f m/s short-hop cap" % [pop_takeoff_upward_speed, REFERENCE_POP_MAX_TAKEOFF_UPWARD_SPEED])
 		marker_position = skier.global_position + Vector3.UP * 0.35
 		var marker_transform := skier.global_transform
 		marker_transform.origin = marker_position

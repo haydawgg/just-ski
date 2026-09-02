@@ -7,6 +7,7 @@ uniform float haze_scale : hint_range(0.001, 0.05) = 0.008;
 uniform float haze_speed : hint_range(0.0, 0.1) = 0.0;
 
 varying vec3 world_pos;
+varying vec3 view_dir;
 
 float hash12(vec2 p) {
 	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -27,6 +28,7 @@ float value_noise(vec2 p) {
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	view_dir = world_pos - CAMERA_POSITION_WORLD;
 }
 
 void fragment() {
@@ -40,8 +42,13 @@ void fragment() {
 	// Fade with distance to avoid hard edges at world bounds.
 	float dist = length(world_pos.xz) / 1800.0;
 	float dist_fade = 1.0 - smoothstep(0.55, 0.95, dist);
-	// Fade with view angle to keep horizon soft.
-	float view_fade = 1.0 - smoothstep(0.65, 0.92, abs(world_pos.y) / 400.0);
+	// Fade with view direction so the card reads at the horizon but does not
+	// lay a translucent sheet across nearby terrain when looking downhill.
+	// world_pos.y alone cannot express this: the plane sits at a fixed
+	// altitude, so its Y is constant regardless of camera pitch.
+	vec3 view_vec = view_dir / max(length(view_dir), 0.001);
+	float downhill = clamp(-view_vec.y, 0.0, 1.0);
+	float view_fade = 1.0 - smoothstep(0.18, 0.62, downhill);
 	ALBEDO = haze_color.rgb;
 	ALPHA = alpha * dist_fade * view_fade;
 }

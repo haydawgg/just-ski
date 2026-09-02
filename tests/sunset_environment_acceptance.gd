@@ -77,6 +77,7 @@ func _test_gi_policy(sunset_resort: Node3D, env: Environment) -> void:
 		failures.append("A GI-capable profile/high preset combination did not allow GI")
 	if ResortModule.resolve_effective_gi(sunset_profile, true, 1):
 		failures.append("A Medium preset incorrectly allowed GI")
+	_check_probe_policy()
 	if env == null:
 		return
 	var original_active := GameSettings.active.duplicate(true)
@@ -106,3 +107,26 @@ func _test_gi_policy(sunset_resort: Node3D, env: Environment) -> void:
 	GameSettings.active = original_active
 	GameSettings.pending = original_pending
 	GameSettings.apply_pending()
+
+func _check_probe_policy() -> void:
+	# PlayerProbe relocation policy: distance AND time throttle, separate teleport snap.
+	if not ResortModule.player_probe_allowed_for_preset(2):
+		failures.append("PlayerProbe incorrectly disabled on High preset")
+	if not ResortModule.player_probe_allowed_for_preset(3):
+		failures.append("PlayerProbe incorrectly disabled on Ultra preset")
+	if not ResortModule.player_probe_allowed_for_preset(4):
+		failures.append("PlayerProbe incorrectly disabled on Custom preset")
+	if ResortModule.player_probe_allowed_for_preset(1):
+		failures.append("PlayerProbe incorrectly allowed on Medium preset")
+	if ResortModule.player_probe_allowed_for_preset(0):
+		failures.append("PlayerProbe incorrectly allowed on Low preset")
+	if not ResortModule.probe_should_recapture(10.0, 0.33):
+		failures.append("PlayerProbe did not recapture at the 10m/0.33s gate")
+	if ResortModule.probe_should_recapture(9.9, 10.0):
+		failures.append("PlayerProbe recaptured below the 10m distance gate")
+	if ResortModule.probe_should_recapture(50.0, 0.32):
+		failures.append("PlayerProbe recaptured below the 0.33s interval gate")
+	if not ResortModule.probe_should_snap(40.0):
+		failures.append("PlayerProbe did not snap at the 40m teleport gate")
+	if ResortModule.probe_should_snap(39.9):
+		failures.append("PlayerProbe snapped below the 40m teleport gate")
