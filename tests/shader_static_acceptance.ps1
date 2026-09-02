@@ -11,7 +11,10 @@ function Read-RequiredFile([string]$RelativePath) {
 		$failures.Add("Missing required file: $RelativePath")
 		return ""
 	}
-	return Get-Content -LiteralPath $path -Raw
+	# GitHub's Windows runners may materialize the repository with CRLF while
+	# local checks use LF. Normalize here so line-anchored import assertions
+	# validate the setting rather than the checkout's newline convention.
+	return (Get-Content -LiteralPath $path -Raw) -replace "`r", ""
 }
 
 function Require-Match([string]$Text, [string]$Pattern, [string]$Message) {
