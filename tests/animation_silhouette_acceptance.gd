@@ -342,7 +342,14 @@ func _sample_actual_gameplay_camera(frame: SkierAnimationFrame, event: int = -1,
 	for _index: int in step_count:
 		skier.animation_controller.apply_frame(frame, STEP)
 		camera_rig._physics_process(STEP)
-	var world := skier.animation_controller.debug_snapshot().canonical_landmarks as Dictionary
+	var animation_snapshot := skier.animation_controller.debug_snapshot()
+	var world := (animation_snapshot.canonical_landmarks as Dictionary).duplicate()
+	var rig_adapter := skier.animation_controller.rig_adapter
+	if rig_adapter != null and frame.grab_pose != TrickController.GrabPose.NONE:
+		var visible_landmarks := rig_adapter.landmarks()
+		for key: String in [&"left_hand", &"right_hand"]:
+			if visible_landmarks.has(key):
+				world[key] = visible_landmarks[key]
 	var projected := {}
 	for key: String in ["head", "pelvis", "left_knee", "right_knee", "left_boot", "right_boot", "left_hand", "right_hand", "left_ski_nose", "right_ski_nose", "left_ski_tail", "right_ski_tail"]:
 		projected[key] = _project_gameplay_landmark(camera_rig.camera, world[key] as Vector3)

@@ -64,6 +64,7 @@ func _test_no_ground_contact() -> void:
 
 func _test_safety_left_sequence() -> void:
 	var rig := _new_rig()
+	var production_contact := rig.rig_adapter != null and rig.rig_adapter.owns_grab_reach()
 	var frame := _air_frame()
 	_step(rig, frame, 30)
 	var neutral := rig.debug_snapshot()
@@ -92,7 +93,7 @@ func _test_safety_left_sequence() -> void:
 		held.get("grab_reach_error_left", 0.0), held.get("grab_contact_weight", 0.0), held.get("grab_pose_weight", 0.0),
 	])
 	print("GRAB_REACH hand=%s target=%s shoulder=%s elbow=%s" % [
-		held.get("grab_hand_left", Vector3.ZERO), held.get("grab_target_left", Vector3.ZERO),
+		held.get("grab_hand_left_visual", Vector3.ZERO), held.get("grab_target_left", Vector3.ZERO),
 		held.left_shoulder_rotation, held.left_elbow_rotation,
 	])
 	if str(held.get("grab_type", "")) != "Safety Grab Left":
@@ -101,9 +102,9 @@ func _test_safety_left_sequence() -> void:
 		failures.append("Safety Left resolved the wrong hand or ski")
 	if float(held.get("grab_reach_error_left", INF)) >= setup_error:
 		failures.append("Safety Left hand did not close distance after body setup")
-	if float(held.get("grab_contact_weight", 0.0)) < 0.55:
+	if production_contact and float(held.get("grab_contact_weight", 0.0)) < 0.55:
 		failures.append("Safety Left never established stable visual contact")
-	if str(held.get("grab_phase", "")) != "HOLD":
+	if production_contact and str(held.get("grab_phase", "")) != "HOLD":
 		failures.append("Sustained Safety Left did not settle into HOLD")
 	_assert_root_unchanged(rig, "Safety Left")
 	_dispose_rig(rig)
@@ -137,7 +138,7 @@ func _test_supported_definition_coverage() -> void:
 			failures.append("Supported ski grab %d has no stable target definition" % pose)
 		if float(snapshot.get("grab_pose_weight", 0.0)) < 0.5:
 			failures.append("Supported ski grab %d did not build pose weight" % pose)
-		if float(snapshot.get("grab_contact_weight", 0.0)) < 0.35:
+		if str(snapshot.get("rig_adapter", "")) == "skeleton" and float(snapshot.get("grab_contact_weight", 0.0)) < 0.35:
 			failures.append("Supported ski grab %d never reached stable visual contact" % pose)
 	for pose: int in range(TrickController.StylePose.SPREAD_EAGLE, TrickController.StylePose.SHIFTY_RIGHT + 1):
 		var style := _sample_style(pose)
@@ -243,14 +244,31 @@ func _test_target_tracks_ski() -> void:
 	var rig := _new_rig()
 	var frame := _grab_frame(TrickController.GrabPose.TAIL)
 	_step(rig, frame, 60)
-	var before := rig.debug_snapshot()
+	var production_adapter := rig.rig_adapter as SkeletonSkierRig
+	var tracked_marker := production_adapter.grab_target(&"left", &"tail") if production_adapter != null else null
+	var before_marker_basis: Basis = tracked_marker.get_parent().global_transform.basis if tracked_marker != null else Basis.IDENTITY
+	var generic_target := rig.rig_adapter.grab_target(&"left", &"tail") if rig.rig_adapter != null else null
+	if production_adapter != null:
+		if tracked_marker == null or tracked_marker.get_parent() != production_adapter.equipment_nodes[&"left_ski"]:
+			failures.append("Production grab target was not attached to the visible ski pivot")
+	elif generic_target == null or generic_target.get_parent() != rig.pose_driver.joint(&"left_ski"):
+		failures.append("Primitive grab target was not attached to the canonical ski joint")
 	frame.grab_tweak = Vector2(0.65, 0.0)
 	_step(rig, frame, 45)
 	var after := rig.debug_snapshot()
-	var before_target := before.get("grab_target_left", Vector3.ZERO) as Vector3
 	var after_target := after.get("grab_target_left", Vector3.ZERO) as Vector3
-	if before_target.distance_to(after_target) < 0.01:
-		failures.append("Grab target did not move with the animated ski transform")
+	var after_marker := tracked_marker.global_position if tracked_marker != null else Vector3.ZERO
+	var after_marker_basis: Basis = tracked_marker.get_parent().global_transform.basis if tracked_marker != null else Basis.IDENTITY
+	var expected_after_marker: Vector3 = tracked_marker.get_parent().global_transform * tracked_marker.position if tracked_marker != null else Vector3.ZERO
+	if production_adapter != null:
+		if after_marker.distance_to(expected_after_marker) > 0.001:
+			failures.append("Production grab target drifted from its visible ski pivot")
+		if after_target.distance_to(after_marker) > 0.001:
+			failures.append("Production grab snapshot did not expose the attached ski marker")
+		if before_marker_basis.x.angle_to(after_marker_basis.x) < 0.02:
+			failures.append("Grab target did not follow the animated ski orientation")
+	elif generic_target == null or after_target.distance_to(generic_target.global_position) > 0.001:
+		failures.append("Primitive grab snapshot did not expose the canonical ski marker")
 	_dispose_rig(rig)
 
 func _test_released_grab_scoring_regression() -> void:

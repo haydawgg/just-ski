@@ -23,3 +23,20 @@ bone_names = {
 &"right_shoulder": &"upper_arm.R",
 &"spine": &"spine.001"
 }
+helper_bone_names = {
+&"left_clavicle": &"shoulder.L",
+&"right_clavicle": &"shoulder.R",
+&"upper_spine": &"spine.002"
+}
+hand_contact_offsets = {
+&"left": Vector3(0, 0, 0),
+&"right": Vector3(0, 0, 0)
+}
+hand_wrist_corrections = {
+&"left": Vector3(0, 0, 0),
+&"right": Vector3(0, 0, 0)
+}
+upper_spine_reach_assist = 1.0
+upper_spine_reach_limit = 2.0
+clavicle_reach_assist = 1.0
+clavicle_reach_limit = 1.5

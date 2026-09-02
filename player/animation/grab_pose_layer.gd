@@ -1,6 +1,10 @@
 class_name GrabPoseLayer
 extends RefCounted
 
+const CONTACT_ACQUIRE_CAP := 0.18
+const CONTACT_MAINTAIN_CAP := 0.12
+const CONTACT_HOLD_WEIGHT := 0.8
+
 ## Grab lifecycle policy. Reach and target transforms remain coordinator-owned
 ## because they depend on the selected rig adapter and live marker nodes.
 
@@ -22,6 +26,7 @@ func should_latch_contact(definition: Resource, input_strength_value: float, air
 	if definition == null or input_strength_value <= 0.0 or not airborne or pose_weight <= 0.48 or air_time < minimum_air_time:
 		return false
 	var threshold: float = float(definition.contact_maintain_distance) if already_latched else float(definition.contact_acquire_distance)
+	threshold = minf(threshold, CONTACT_MAINTAIN_CAP if already_latched else CONTACT_ACQUIRE_CAP)
 	return reach_error <= threshold
 
 func phase_name(definition: Resource, pose_weight: float, input_strength_value: float, release_time: float, contact_weight: float, contact_latched: bool) -> String:
@@ -31,7 +36,7 @@ func phase_name(definition: Resource, pose_weight: float, input_strength_value: 
 		return "RELEASE" if release_time > 0.0 and pose_weight > 0.16 else "RECOVER"
 	if pose_weight < 0.28:
 		return "SETUP"
-	if contact_weight > 0.72:
+	if contact_weight > CONTACT_HOLD_WEIGHT:
 		return "HOLD"
 	if contact_latched or contact_weight > 0.08:
 		return "CONTACT"

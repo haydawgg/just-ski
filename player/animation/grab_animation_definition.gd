@@ -9,6 +9,6 @@ enum Target { NONE, BINDING_OUTSIDE, BINDING_INSIDE, NOSE, TAIL }
 @export var target_ski: Ski = Ski.NONE
 @export var target: Target = Target.NONE
 @export var minimum_air_time: float = 0.08
-@export var contact_acquire_distance: float = 0.64
-@export var contact_maintain_distance: float = 0.72
+@export var contact_acquire_distance: float = 0.18
+@export var contact_maintain_distance: float = 0.12
 @export var reach_response_scale: float = 1.0
