@@ -64,7 +64,9 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export var groomed_grip_multiplier: float = 1.12
 
 @export_category("Jump and Air")
-@export var pop_impulse: float = 4.6
+# Keep a charged keyboard pop as a controllable short hop; course jump sizing
+# reads this same value so authored features and free pops stay calibrated.
+@export var pop_impulse: float = 3.6
 @export var maximum_jump_charge: float = 0.32
 @export var minimum_pop_strength: float = 0.72
 @export var coyote_time: float = 0.14

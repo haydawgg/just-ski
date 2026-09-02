@@ -19,8 +19,10 @@ extends Resource
 @export var pole_color := Color("#263d49")
 
 @export_group("Surface Response")
-@export_range(0.0, 1.0) var cloth_roughness := 0.82
-@export_range(0.0, 1.0) var cloth_specular := 0.32
+@export_range(0.0, 1.0) var cloth_roughness := 0.78
+@export_range(0.0, 1.0) var cloth_specular := 0.30
+@export_range(0.0, 1.0) var pants_roughness := 0.68
+@export_range(0.0, 1.0) var pants_specular := 0.40
 @export_range(0.0, 1.0) var skin_roughness := 0.56
 @export_range(0.0, 1.0) var skin_specular := 0.34
 @export_range(0.0, 1.0) var hardgoods_roughness := 0.42

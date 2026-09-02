@@ -17,7 +17,7 @@ func adapter_name() -> String:
 
 func _build_meshes() -> void:
 	var jacket := SkierEquipment.material(outfit_profile.jacket_color, outfit_profile.cloth_roughness, 0.0)
-	var pants := SkierEquipment.material(outfit_profile.pants_color, outfit_profile.cloth_roughness, 0.0)
+	var pants := SkierEquipment.material(outfit_profile.pants_color, outfit_profile.pants_roughness, 0.0)
 	var skin := SkierEquipment.material(outfit_profile.skin_color, 0.9, 0.0)
 	var dark := SkierEquipment.material(outfit_profile.boot_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic)
 	var accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic)

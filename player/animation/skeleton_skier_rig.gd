@@ -747,7 +747,10 @@ func _apply_body_materials(node: Node) -> void:
 			var metallic := 0.0
 			var specular := outfit_profile.cloth_specular
 			match region:
-				"Pants": color = outfit_profile.pants_color
+				"Pants":
+					color = outfit_profile.pants_color
+					roughness = outfit_profile.pants_roughness
+					specular = outfit_profile.pants_specular
 				"Skin":
 					color = outfit_profile.skin_color
 					roughness = outfit_profile.skin_roughness
