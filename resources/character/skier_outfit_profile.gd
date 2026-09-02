@@ -20,8 +20,13 @@ extends Resource
 
 @export_group("Surface Response")
 @export_range(0.0, 1.0) var cloth_roughness := 0.82
+@export_range(0.0, 1.0) var cloth_specular := 0.32
+@export_range(0.0, 1.0) var skin_roughness := 0.56
+@export_range(0.0, 1.0) var skin_specular := 0.34
 @export_range(0.0, 1.0) var hardgoods_roughness := 0.42
+@export_range(0.0, 1.0) var hardgoods_specular := 0.56
 @export_range(0.0, 1.0) var lens_roughness := 0.18
+@export_range(0.0, 1.0) var lens_specular := 0.82
 @export_range(0.0, 1.0) var ski_roughness := 0.38
 @export_range(0.0, 1.0) var hardgoods_metallic := 0.12
 @export_range(0.0, 1.0) var lens_metallic := 0.48

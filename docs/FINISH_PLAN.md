@@ -65,9 +65,8 @@ Quality Gate from isolated temporary Godot user directories:
   duplicate-frame compensation and streams MP4 samples to disk. Sustained
   drops and streaming output are acceptance-tested; the measured diagnostic
   is in `docs/CLIP_CAPTURE.md`.
-- M4.3 has a maintained Windows export preset and documented build/smoke-test
-  procedure. A project-level distribution license remains intentionally
-  undecided.
+- M4.3 has a maintained Windows export preset, documented build/smoke-test
+  procedure, and the project-authored MIT license recorded in `LICENSE`.
 
 The sharded hosted Quality Gate passed in PR [#2](https://github.com/haydawgg/just-ski/pull/2)
 and the post-merge `master` run [33564513153](https://github.com/haydawgg/just-ski/actions/runs/33564513153).
@@ -75,9 +74,10 @@ The `quality` check is configured as required on `master` with strict status
 checks and administrator enforcement.
 
 Remaining external work is explicit: physical Xbox/PlayStation/multi-device
-validation remains pending as documented in `docs/CONTROLLER_VALIDATION.md`,
-and the project license requires the owner's distribution decision. These are
-not inferred from headless tests.
+validation remains pending as documented in `docs/CONTROLLER_VALIDATION.md`.
+Target-class Medium performance is recorded for the local Intel UHD adapter;
+repeat the same matrix on each representative release hardware tier. Neither
+hardware requirement is inferred from headless tests.
 
 ---
 
@@ -497,10 +497,10 @@ A capture with dropped source frames has correct playback duration, and long cap
 
 ## M4.3 — Release/build hygiene
 
-- [ ] Add and maintain `export_presets.cfg` when the project is ready for reproducible builds.
-- [ ] Add an explicit project license when distribution policy is decided.
-- [ ] Document supported Godot version and build/export procedure.
-- [ ] Add a release smoke test around the exported build once exports become part of normal development.
+- [x] Add and maintain `export_presets.cfg` when the project is ready for reproducible builds.
+- [x] Add the project MIT license and retain third-party notices.
+- [x] Document supported Godot version and build/export procedure.
+- [x] Add a release smoke test around the exported build once exports become part of normal development.
 
 ---
 

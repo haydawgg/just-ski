@@ -10,6 +10,9 @@ const AirMotionSolverModule := preload("res://player/motion/air_motion_solver.gd
 const RailMotionSolverModule := preload("res://player/motion/rail_motion_solver.gd")
 const LandingTransitionModule := preload("res://player/motion/landing_transition.gd")
 const CollisionCrashEvaluatorModule := preload("res://player/motion/collision_crash_evaluator.gd")
+const BailMotionSolverModule := preload("res://player/motion/bail_motion_solver.gd")
+const SkierInputFrameModule := preload("res://player/input/skier_input_frame.gd")
+const SkierInputSamplerModule := preload("res://player/input/skier_input_sampler.gd")
 
 signal state_changed(state_name: String)
 signal telemetry_updated(data: Dictionary)
@@ -64,7 +67,8 @@ var animation_controller: SkierAnimationController
 var animation_frame := SkierAnimationFrame.new()
 var debug_mesh: ImmediateMesh
 var flick: FlickTrickInterpreter
-var trick_sample := TrickInputSample.new()
+var input_frame := SkierInputFrameModule.new()
+var _input_sampler := SkierInputSamplerModule.new()
 var trick_command: TrickCommand
 var trick_rotation_state := TrickRotationState.new()
 var active_trick_kind := TrickCommand.Kind.NONE
@@ -108,6 +112,7 @@ var _air_motion_solver := AirMotionSolverModule.new()
 var _rail_motion_solver := RailMotionSolverModule.new()
 var _landing_transition := LandingTransitionModule.new()
 var _collision_crash_evaluator := CollisionCrashEvaluatorModule.new()
+var _bail_motion_solver := BailMotionSolverModule.new()
 
 func _ready() -> void:
 	collision_layer = 2
@@ -144,14 +149,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 	if recovery_frozen:
 		return
-	if event.is_action_pressed("respawn"):
+
+func _physics_process(delta: float) -> void:
+	_input_sampler.sample_into(input_frame)
+	if input_frame.respawn_pressed:
 		SessionManager.request_respawn()
-	if event.is_action_pressed("set_marker") and state == State.GROUND and contact.grounded:
+	if input_frame.marker_pressed and state == State.GROUND and contact.grounded:
 		var safe_transform := global_transform
 		safe_transform.origin += contact.average_normal * 0.5
 		SessionManager.set_marker(safe_transform)
-
-func _physics_process(delta: float) -> void:
 	if recovery_frozen:
 		# Recovery freezes gameplay motion, not the observers that drive HUD,
 		# combo expiry, and surface audio. Keep those channels ticking so the
@@ -208,13 +214,13 @@ func _update_ground(delta: float) -> void:
 	if forward_on_slope.length_squared() < 0.0001:
 		return
 	var ski_forward := forward_on_slope.normalized()
-	steering_input_raw = InputManager.raw_axis(&"steer_left", &"steer_right")
-	steering_input = InputManager.axis(&"steer_left", &"steer_right")
+	steering_input_raw = input_frame.steer_raw
+	steering_input = input_frame.steer
 	var steer := steering_input
-	pressure_amount = InputManager.axis(&"steer_back", &"steer_forward")
-	brake_amount = Input.get_action_strength("brake")
+	pressure_amount = input_frame.pressure
+	brake_amount = input_frame.brake
 	braking = brake_amount > 0.01
-	tuck_amount = 0.0 if braking else Input.get_action_strength("tuck")
+	tuck_amount = 0.0 if braking else input_frame.tuck
 	var edge_rate := profile.edge_response if absf(steer) >= absf(edge_amount) - 0.001 else profile.edge_release
 	edge_amount = move_toward(edge_amount, steer, edge_rate * delta)
 
@@ -245,30 +251,17 @@ func _update_ground(delta: float) -> void:
 		velocity += ski_forward * (pointing_downhill * profile.glide_acceleration * pressure_glide * delta)
 		planar = velocity.slide(normal)
 		planar_speed = planar.length()
-	var speed_ratio := clampf(planar_speed / maxf(profile.steering_speed_reference, 1.0), 0.0, 1.0)
 	var surface_grip := _surface_grip_multiplier()
 	var surface_drag := _surface_drag_multiplier()
-	var steer_rate := lerpf(profile.low_speed_steering, profile.high_speed_steering, speed_ratio)
-	var speed_gate := clampf(planar_speed / maxf(profile.full_steer_speed, 1.0), profile.minimum_steer_speed_gate, 1.0)
-	if braking:
-		steer_rate *= lerpf(1.0, profile.brake_steer_multiplier, brake_amount)
-		speed_gate = lerpf(speed_gate, 1.0, brake_amount)
-	steer_rate *= speed_gate * lerpf(1.0, profile.tuck_steering_multiplier, tuck_amount)
-	effective_steer_rate = steer_rate + planar_speed * profile.sidecut
-	# Hard impacts briefly soften the complete turn response without locking the
-	# player out. Braking keeps full authority so recovery remains accessible.
-	effective_steer_rate *= lerpf(landing_control_multiplier, 1.0, brake_amount)
+	var handling := _ground_motion_solver.resolve_handling(planar_speed, edge_amount, brake_amount, tuck_amount, pressure_amount, contact.tip_load, landing_control_multiplier, surface_grip, profile)
+	var speed_ratio := handling.speed_ratio
+	effective_steer_rate = handling.effective_steer_rate
 	var requested_yaw := -edge_amount * effective_steer_rate * delta
-	var needed_centripetal := planar_speed * absf(edge_amount) * effective_steer_rate
-	centripetal_demand = needed_centripetal
-	var tip_scale := clampf(1.0 + (contact.tip_load + pressure_amount * 0.35) * profile.tip_grip_gain, 0.7, 1.22)
-	tip_scale *= clampf(1.0 + pressure_amount * profile.pressure_grip_gain, 0.78, 1.28)
-	var grip := (profile.lateral_friction + absf(edge_amount) * profile.maximum_edge_grip * lerpf(0.82, 1.0, speed_ratio)) * surface_grip
-	grip *= tip_scale
-	if braking:
-		grip = lerpf(grip, maxf(grip, profile.brake_friction), brake_amount)
-	available_grip = grip
-	var carve_ratio := 1.0 if needed_centripetal <= 0.05 else clampf(grip / needed_centripetal, 0.0, 1.0)
+	centripetal_demand = handling.centripetal_demand
+	available_grip = handling.available_grip
+	var grip := available_grip
+	var needed_centripetal := centripetal_demand
+	var carve_ratio := handling.carve_ratio
 	current_carve_ratio = carve_ratio
 	var velocity_yaw := requested_yaw * carve_ratio
 	if planar_speed > 0.08:
@@ -347,11 +340,11 @@ func _update_ground(delta: float) -> void:
 		jump_charge = maxf(jump_charge, trick_command.gesture_strength * profile.maximum_jump_charge)
 	if trick_command.pop_strength > 0.0:
 		_pop(normal, trick_command.pop_strength, trick_command.rotation_impulse, trick_command.kind, delta)
-	elif Input.is_action_pressed("jump"):
+	elif input_frame.jump_held:
 		jump_charge = minf(jump_charge + delta, profile.maximum_jump_charge)
-	if trick_command.pop_strength <= 0.0 and Input.is_action_just_released("jump"):
+	if trick_command.pop_strength <= 0.0 and input_frame.jump_released:
 		_pop(normal, -1.0, Vector3.ZERO, TrickCommand.Kind.POP, delta)
-	elif Input.is_action_just_pressed("jump") and last_physics_delta > 0.0:
+	elif input_frame.jump_pressed and last_physics_delta > 0.0:
 		jump_charge = maxf(jump_charge, 0.06)
 
 	AudioManager.skid_feedback(skid_amount)
@@ -457,8 +450,8 @@ func _update_air(delta: float) -> void:
 	if trick_rotation_state.active:
 		var assist_availability := _air_motion_solver.landing_assist_availability(predicted, profile.air_landing_window)
 		var trim_acceleration := Vector3(
-			-trick_sample.left_stick.y * profile.air_flip_trim_acceleration,
-			-trick_sample.left_stick.x * flick_profile.air_yaw_trim_acceleration,
+			-input_frame.left_stick.y * profile.air_flip_trim_acceleration,
+			-input_frame.left_stick.x * flick_profile.air_yaw_trim_acceleration,
 			0.0
 		) * assist_availability
 		angular_velocity += trick_rotation_state.consume_assist_acceleration(trim_acceleration, delta)
@@ -473,17 +466,8 @@ func _update_air(delta: float) -> void:
 			profile.air_compact_inertia_scale,
 			profile.air_inertia_response_rate
 		)
-	var body_damping_multiplier := lerpf(
-		profile.air_open_damping_multiplier,
-		profile.air_compact_damping_multiplier,
-		rotation_compactness
-	) if trick_rotation_state.active else 1.0
-	var damping := profile.air_angular_damping * body_damping_multiplier
 	var landing_assist := float(GameSettings.active.get("landing_assist", 0.35))
-	if predicted >= 0.0 and predicted < profile.air_landing_window:
-		var landing_proximity := 1.0 - predicted / maxf(profile.air_landing_window, 0.01)
-		var assist_weight := landing_proximity * landing_assist * profile.air_landing_assist_damping_weight
-		damping = lerpf(damping, profile.air_landing_damping, assist_weight)
+	var damping := _air_motion_solver.angular_damping(rotation_compactness, predicted, landing_assist, trick_rotation_state.active, profile)
 	angular_velocity *= exp(-damping * delta)
 	if trick_rotation_state.active:
 		var world_angular_velocity := AirRotationIntegrator.local_to_world_angular_velocity(global_basis, angular_velocity)
@@ -524,7 +508,7 @@ func _air_rotation_compactness(predicted_landing: float) -> float:
 				target = 0.38
 			_:
 				var projection := trick_rotation_state.control_projection(
-					trick_sample.right_stick,
+					input_frame.right_stick,
 					flick_profile.center_reset_threshold
 				)
 				if projection > flick_profile.continuous_axis_deadzone:
@@ -541,7 +525,7 @@ func _update_grind(delta: float) -> void:
 		_enter_air()
 		return
 	var tangent := active_rail.tangent_at(rail_offset) * rail_direction
-	rail_balance_input = trick_sample.left_stick.x
+	rail_balance_input = input_frame.left_stick.x
 	brake_amount = 0.0
 	skid_amount = 0.0
 	var slope_acceleration := Vector3.DOWN.dot(tangent) * profile.gravity
@@ -564,8 +548,7 @@ func _update_grind(delta: float) -> void:
 	if rail_prev_tangent.length_squared() > 0.01:
 		kink = 1.0 - clampf(rail_prev_tangent.normalized().dot(tangent.normalized()), 0.0, 1.0)
 	rail_prev_tangent = tangent
-	var boardslide_factor := 1.0 + absf(float(rail_pose)) * profile.rail_boardslide_instability
-	var drift := (profile.rail_balance_drift + kink * profile.rail_kink_instability) * boardslide_factor
+	var drift := _rail_motion_solver.instability(kink, rail_pose, profile)
 	rail_balance = _rail_motion_solver.update_balance(
 		rail_balance,
 		rail_balance_input,
@@ -574,7 +557,7 @@ func _update_grind(delta: float) -> void:
 		profile.rail_balance_input_gain,
 		delta
 	)
-	if absf(rail_balance) >= profile.rail_balance_fail:
+	if _rail_motion_solver.has_failed(rail_balance, profile.rail_balance_fail):
 		_slip_off_rail()
 		return
 	var rail_target := active_rail.sample_world(rail_offset)
@@ -597,7 +580,7 @@ func _update_grind(delta: float) -> void:
 		rail_pose = 1
 	trick.update_grind(delta, rail_pose)
 	AudioManager.rail_feedback(absf(rail_speed))
-	if trick_command.kind == TrickCommand.Kind.RAIL_POP or Input.is_action_just_pressed("jump"):
+	if trick_command.kind == TrickCommand.Kind.RAIL_POP or input_frame.jump_pressed:
 		_exit_rail(true)
 
 func _update_bail(delta: float) -> void:
@@ -606,24 +589,10 @@ func _update_bail(delta: float) -> void:
 	skid_amount = 0.0
 	crash_context.elapsed += delta
 	bail_time = maxf(0.0, profile.crash_max_duration - crash_context.elapsed)
-	velocity += Vector3.DOWN * profile.air_gravity * delta
+	var bail_motion := _bail_motion_solver.step_motion(velocity, angular_velocity, contact.average_normal, contact.grounded, crash_context.stage, delta, profile)
+	velocity = bail_motion.velocity
+	angular_velocity = bail_motion.angular_velocity
 	if contact.grounded:
-		velocity = velocity.slide(contact.average_normal)
-		var ground_damping := profile.bail_ground_damping
-		var angular_damping := profile.crash_ground_angular_damping
-		if crash_context.stage == CrashContext.Stage.FALL:
-			ground_damping *= 0.55
-			angular_damping *= 0.6
-		elif crash_context.stage == CrashContext.Stage.REST:
-			ground_damping *= 0.38
-			angular_damping *= 0.45
-		velocity *= exp(-ground_damping * delta)
-		angular_velocity *= exp(-angular_damping * delta)
-		# Rest stage retains a faint velocity-driven secondary wobble instead of freezing.
-		if crash_context.stage == CrashContext.Stage.REST and velocity.length() > 0.15:
-			var wobble_axis := Vector3.UP.cross(velocity.normalized())
-			if wobble_axis.length_squared() > 0.001:
-				angular_velocity += wobble_axis.normalized() * 0.08 * clampf(velocity.length() / 5.0, 0.0, 1.0) * delta
 		var aligned_up := global_basis.y.lerp(contact.average_normal, 1.0 - exp(-profile.bail_ground_align_rate * delta)).normalized()
 		var forward := (-global_basis.z).slide(contact.average_normal)
 		if forward.length_squared() < 0.0001:
@@ -631,7 +600,6 @@ func _update_bail(delta: float) -> void:
 		if forward.length_squared() > 0.0001:
 			global_basis = Basis.looking_at(forward.normalized(), aligned_up)
 	else:
-		angular_velocity *= exp(-profile.crash_air_angular_damping * delta)
 		rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta)
 		rotate_object_local(Vector3.UP, angular_velocity.y * delta)
 		rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
@@ -1025,34 +993,23 @@ func _landing_crash_context(result: Dictionary) -> CrashContext:
 	return context
 
 func _update_crash_stage_and_rest(delta: float) -> void:
-	var release_end := animation_controller.profile.crash_release_duration
-	var impact_end := release_end + animation_controller.profile.crash_impact_duration
-	if crash_context.elapsed < release_end:
-		crash_context.stage = CrashContext.Stage.RELEASE
-	elif crash_context.elapsed < impact_end:
-		crash_context.stage = CrashContext.Stage.IMPACT
-	elif not crash_context.rest_detected:
-		crash_context.stage = CrashContext.Stage.FALL
-	var resting_candidate := (
-		contact.grounded
-		and crash_context.elapsed >= profile.crash_min_duration
-		and velocity.length() <= profile.crash_rest_speed
-		and angular_velocity.length() <= profile.crash_rest_angular_speed
+	var rest := _bail_motion_solver.resolve_rest(
+		contact.grounded,
+		crash_context.elapsed,
+		velocity.length(),
+		angular_velocity.length(),
+		crash_context.rest_detected,
+		crash_context.rest_elapsed,
+		delta,
+		animation_controller.profile.crash_release_duration,
+		animation_controller.profile.crash_impact_duration,
+		profile
 	)
-	if not crash_context.rest_detected:
-		if resting_candidate:
-			crash_context.rest_elapsed += delta
-		else:
-			crash_context.rest_elapsed = 0.0
-		if crash_context.rest_elapsed >= profile.crash_rest_confirm_time or (contact.grounded and crash_context.elapsed >= profile.crash_max_duration):
-			crash_context.rest_detected = true
-			crash_context.rest_elapsed = 0.0
-			crash_context.stage = CrashContext.Stage.REST
-	else:
-		crash_context.stage = CrashContext.Stage.REST
-		crash_context.rest_elapsed += delta
-		if crash_context.rest_elapsed >= profile.crash_rest_hold_time:
-			_recover_from_bail()
+	crash_context.stage = rest.stage
+	crash_context.rest_detected = rest.rest_detected
+	crash_context.rest_elapsed = rest.rest_elapsed
+	if rest.should_recover:
+		_recover_from_bail()
 
 func _clear_crash_state() -> void:
 	crash_context.reset()
@@ -1214,7 +1171,7 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	last_collision_diagnostics.clear()
 	last_collision_colliders.clear()
 	last_speed_discontinuity = {}
-	trick_sample.reset()
+	input_frame.clear_values()
 	trick_command.reset()
 	trick.reset()
 	flick.reset()
@@ -1340,12 +1297,12 @@ func telemetry() -> Dictionary:
 		"line_link": scoring.link_remaining > 0.0,
 		"scoring": scoring.snapshot(),
 		"flick": {
-			"stick": trick_sample.right_stick,
+			"stick": input_frame.right_stick,
 			"kind": TrickCommand.Kind.keys()[active_trick_kind],
 			"phase": TrickCommand.PresentationPhase.keys()[trick_phase],
 			"strength": gesture_strength,
-			"left_trigger": trick_sample.left_trigger,
-			"right_trigger": trick_sample.right_trigger,
+			"left_trigger": input_frame.left_trigger,
+			"right_trigger": input_frame.right_trigger,
 			"grab": TrickController.GRAB_NAMES[trick.grab_pose],
 			"style": TrickController.STYLE_NAMES[trick.style_pose],
 			"trick_text": trick.live_name() if trick != null else "",
@@ -1482,14 +1439,8 @@ func _build_debug_draw() -> void:
 	add_child(instance)
 
 func _sample_trick_input(delta: float) -> void:
-	trick_sample.right_stick = InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down")
-	trick_sample.left_stick = InputManager.vector(&"steer_left", &"steer_right", &"steer_forward", &"steer_back")
-	trick_sample.left_trigger = Input.get_action_strength("grab_left")
-	trick_sample.right_trigger = Input.get_action_strength("grab_right")
-	trick_sample.keyboard_pop_pressed = Input.is_action_pressed("jump")
-	trick_sample.keyboard_pop_released = Input.is_action_just_released("jump")
 	var previous_grab := grab_amount
-	trick_command = flick.step(trick_sample, _flick_context(), delta)
+	trick_command = flick.step(input_frame, _flick_context(), delta)
 	gesture_strength = trick_command.gesture_strength if trick_command.gesture_strength > 0.0 else move_toward(gesture_strength, 0.0, delta * 3.0)
 	grab_amount = trick_command.grab_amount
 	grab_tweak = trick_command.grab_tweak
@@ -1628,9 +1579,9 @@ func _update_animation(delta: float) -> void:
 	animation_frame.trick_kind = active_trick_kind
 	animation_frame.trick_phase = TrickCommand.PresentationPhase.LANDING if landing_release > 0.58 else trick_phase
 	animation_frame.gesture_strength = gesture_strength
-	animation_frame.gesture_direction = trick_sample.right_stick
-	animation_frame.left_trigger = trick_sample.left_trigger
-	animation_frame.right_trigger = trick_sample.right_trigger
+	animation_frame.gesture_direction = input_frame.right_stick
+	animation_frame.left_trigger = input_frame.left_trigger
+	animation_frame.right_trigger = input_frame.right_trigger
 	animation_frame.grab_amount = grab_amount
 	animation_frame.grab_input_strength = grab_amount
 	animation_frame.grab_hold_time = trick.grab_seconds

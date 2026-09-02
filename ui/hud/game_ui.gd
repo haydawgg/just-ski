@@ -1,6 +1,10 @@
 class_name GameUI
 extends CanvasLayer
 
+const RESUME_ICON: Texture2D = preload("res://assets/ui/icons/resume.svg")
+const OPTIONS_ICON: Texture2D = preload("res://assets/ui/icons/options.svg")
+const RESTART_ICON: Texture2D = preload("res://assets/ui/icons/restart.svg")
+
 var player: SkierController
 var camera_rig: SkiCameraController
 var hud_overlay: Control
@@ -341,7 +345,7 @@ func _build_options_menu() -> void:
 	options_panel.visible = false
 	options_panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	options_panel.position = Vector2(365, 58)
-	options_panel.size = Vector2(870, 785)
+	options_panel.size = Vector2(870, 815)
 	add_child(options_panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
@@ -350,7 +354,7 @@ func _build_options_menu() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var tabs := TabContainer.new()
-	tabs.custom_minimum_size = Vector2(820, 620)
+	tabs.custom_minimum_size = Vector2(820, 650)
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(tabs)
 
@@ -399,6 +403,12 @@ func _build_options_menu() -> void:
 		GameSettings.apply_preset(index)
 		_sync_options()
 	)
+	var environment_preset := OptionButton.new()
+	environment_preset.name = "EnvironmentPreset"
+	for text: String in ["Day", "Golden Hour", "Sunset"]:
+		environment_preset.add_item(text)
+	graphics_tab.add_child(_row("Time of day", environment_preset))
+	environment_preset.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("environment_preset", index))
 	var scale := HSlider.new()
 	scale.name = "RenderScale"
 	scale.min_value = 0.5
@@ -565,6 +575,12 @@ func _label(text: String, size: int) -> Label:
 func _named_button(button_name: String, text: String, callback: Callable) -> Button:
 	var button := _button(text, callback)
 	button.name = button_name
+	if button_name in ["ResumeButton", "ResultsContinueButton"]:
+		button.icon = RESUME_ICON
+	elif button_name == "OptionsButton":
+		button.icon = OPTIONS_ICON
+	elif button_name in ["RestartButton", "ResultsRetryButton"]:
+		button.icon = RESTART_ICON
 	return button
 
 func _button(text: String, callback: Callable) -> Button:
@@ -684,6 +700,7 @@ func _sync_options() -> void:
 	(options_panel.find_child("VSync", true, false) as OptionButton).select(clampi(int(GameSettings.pending["vsync_mode"]), 0, 2))
 	(options_panel.find_child("FPSCap", true, false) as SpinBox).set_value_no_signal(float(GameSettings.pending["fps_cap"]))
 	(options_panel.find_child("Preset", true, false) as OptionButton).select(int(GameSettings.pending["graphics_preset"]))
+	(options_panel.find_child("EnvironmentPreset", true, false) as OptionButton).select(clampi(int(GameSettings.pending["environment_preset"]), 0, 2))
 	(options_panel.find_child("RenderScale", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["render_scale"]))
 	(options_panel.find_child("AntiAliasing", true, false) as OptionButton).select(clampi(int(GameSettings.pending["anti_aliasing"]), 0, 1))
 	(options_panel.find_child("ShadowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["shadow_quality"]), 0, 3))

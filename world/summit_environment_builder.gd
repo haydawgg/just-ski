@@ -244,6 +244,7 @@ static func _add_ridge(parent: Node3D, profile: SummitEnvironmentProfile, spec: 
 	root.position = spec.position
 	root.rotation_degrees.y = float(spec.yaw)
 	root.set_meta("environment_backdrop", true)
+	root.add_to_group("environment_backdrop")
 	var mountain := MeshInstance3D.new()
 	mountain.name = "RidgeBody"
 	mountain.mesh = _create_ridge_mesh(float(spec.radius), float(spec.height), int(spec.seed))

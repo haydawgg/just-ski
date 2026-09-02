@@ -1,5 +1,7 @@
 # Post-Initial-Decomposition Baseline
 
+> Historical baseline. The uncapped current-tree refresh, isolation evidence, and active comparison contract are in `docs/PERFORMANCE_BASELINE_1080P.md`. The earlier ~15 FPS result below was caused by a non-comparable capped cadence and must not be used as the current performance reference.
+
 This is the named stabilization baseline for future refactors. It is intentionally a **post-initial-decomposition baseline**: the first animation, camera, and skier helper seams landed before this measurement point, so these numbers cannot prove complete numerical equivalence between `820def3` and `56f858`.
 
 ## Identity and environment

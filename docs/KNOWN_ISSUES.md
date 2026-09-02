@@ -20,13 +20,15 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 ## Graphics and performance
 
+- **Target-class integrated-GPU validation passed on the local Intel UHD adapter.** Medium now uses a measured 0.65 render scale and records roughly 13.6 ms average / 14.5 ms p95 at 1080p on Vulkan GPU index 2; repeat the same matrix on each supported hardware tier before release.
+
 - **Snow presentation still needs representative GPU profiling.** Fast and Premium snow compile and run, but near/far detail blending, crystal response, subsurface strength, and production GPU cost need a dedicated profiling pass.
 - **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, FPS cap, and a profile-gated GI toggle. FSR2, HDR, reflection-quality controls, and risky-resolution confirmation are not implemented.
 - **The resort is not final production art.** The summit-to-first-landing slice now has authored deterministic terrain shoulders, ridge backdrop, lift-line dressing, and cataloged boulder decorations. The lower run and hub remain graybox-oriented and still need a separate art/LOD pass plus a profiler-driven 1080p High optimization pass.
 
 ## Audio and capture
 
-- **Most gameplay audio is procedural.** Speed, skid, rail, wind, pop, and impact feedback are synthesized at runtime. Authored powder, ice, ambience, wind, and spatial feature recordings are not yet included.
+- **Most gameplay audio is procedural, but its measured average is within budget.** The refreshed uncapped profile records roughly 0.08–0.10 ms average processing; work is capped to prevent the old multi-millisecond first-fill spike. Authored powder, ice, ambience, wind, and spatial feature recordings remain future content work rather than a current performance blocker.
 - **Gameplay clips use MJPEG-in-MP4 and contain no game audio.** F9 arms the next summit run for capture. The recorder writes JPEG video frames into an MP4 container, which produces larger files and has weaker browser/Discord compatibility than H.264. H.264 encoding and synchronized game audio are future work.
 
 ## Recovery presentation

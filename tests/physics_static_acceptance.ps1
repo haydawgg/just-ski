@@ -27,6 +27,8 @@ function Reject-Match([string]$Text, [string]$Pattern, [string]$Message) {
 }
 
 $inputManager = Read-RequiredFile "autoload/input_manager.gd"
+$inputFrame = Read-RequiredFile "player/input/skier_input_frame.gd"
+$inputSampler = Read-RequiredFile "player/input/skier_input_sampler.gd"
 $profile = Read-RequiredFile "resources/physics/ski_physics_profile.gd"
 $controller = Read-RequiredFile "player/skier_controller.gd"
 $crashContext = Read-RequiredFile "player/crash_context.gd"
@@ -48,6 +50,7 @@ $airMotion = Read-RequiredFile "player/motion/air_motion_solver.gd"
 $railMotion = Read-RequiredFile "player/motion/rail_motion_solver.gd"
 $landingTransition = Read-RequiredFile "player/motion/landing_transition.gd"
 $collisionCrashEvaluator = Read-RequiredFile "player/motion/collision_crash_evaluator.gd"
+$bailMotion = Read-RequiredFile "player/motion/bail_motion_solver.gd"
 $groundPose = Read-RequiredFile "player/animation/ground_pose_layer.gd"
 $airTrickPose = Read-RequiredFile "player/animation/air_trick_pose_layer.gd"
 $grabPose = Read-RequiredFile "player/animation/grab_pose_layer.gd"
@@ -67,6 +70,11 @@ Require-Match $inputManager 'active_joypad_id' "InputManager must retain the act
 Require-Match $inputManager 'active_controller_family' "InputManager must retain the active controller family for glyph presentation."
 Require-Match $inputManager 'func _rumble_target\(\) -> int' "Rumble must resolve its target through the active-device identity seam."
 Reject-Match $inputManager 'Input\.start_joy_vibration\(0\s*,' "Rumble cannot target a hard-coded joypad ID."
+Require-Match $inputFrame 'class_name SkierInputFrame' "The skier input snapshot must remain a typed public seam."
+Require-Match $inputSampler 'class_name SkierInputSampler' "Input reads must remain centralized in the physics-tick sampler."
+Reject-Match $controller '(?m)^\s*[^#\r\n]*\b(?:InputManager|Input)\.' "SkierController cannot read live input outside its sampled frame."
+Reject-Match $trick '(?m)^\s*[^#\r\n]*\b(?:InputManager|Input)\.' "TrickController cannot retain a live-input fallback."
+Reject-Match "$groundMotion`n$airMotion`n$railMotion`n$bailMotion" '(?m)^\s*[^#\r\n]*\b(?:InputManager|Input)\.' "Pure motion policy cannot read live input."
 
 Require-Match $groundMotion 'class_name GroundMotionSolver' "Ground motion policy must be exposed through its typed solver module."
 Require-Match $groundMotion 'func resolve_contact\(' "Ground motion solver must own contact/coyote transition policy."
@@ -82,6 +90,8 @@ Require-Match $landingTransition 'func evaluate\(' "Landing transition evaluatio
 Require-Match $landingTransition 'func apply_assist\(' "Landing assist classification must be module-owned."
 Require-Match $collisionCrashEvaluator 'class_name CollisionCrashEvaluator' "Feature crash evaluation must be exposed through a typed module."
 Require-Match $collisionCrashEvaluator 'func evaluate\(' "Feature crash diagnostics must be module-owned."
+Require-Match $bailMotion 'class_name BailMotionSolver' "Bail motion and recovery policy must be exposed through a typed solver module."
+Require-Match $bailMotion 'func resolve_rest\(' "Bail solver must own rest and recovery readiness policy."
 
 Require-Match $groundPose 'class_name GroundPoseLayer' "Ground animation policy must be exposed through a typed layer."
 Require-Match $groundPose 'func crouch_target\(' "Ground pose layer must own crouch targeting."
@@ -195,9 +205,8 @@ Require-Match $trick 'func set_grab_contact' "Trick scoring must consume visual 
 Require-Match $trick 'grab_qualified' "Grab scoring must require a qualified visual contact latch."
 Require-Match $trick 'air_presentation_eligible' "Straight Air presentation must distinguish meaningful takeoffs from reseats."
 
-Require-Match $controller 'brake_amount\s*=\s*Input\.get_action_strength\("brake"\)' "Ground braking must preserve analog action strength."
-Reject-Match $controller 'braking\s*=\s*Input\.is_action_pressed\("brake"\)' "Braking cannot collapse analog input to a boolean."
-Require-Match $controller 'profile\.brake_steer_multiplier' "Analog brake steering must use the profile."
+Require-Match $inputSampler 'frame\.brake\s*=\s*Input\.get_action_strength' "The sampled frame must preserve analog brake strength."
+Require-Match $groundMotion 'profile\.brake_steer_multiplier' "Ground handling policy must use profile-owned analog brake steering."
 Require-Match $controller 'profile\.brake_speed_scrub_multiplier\s*\*\s*brake_amount' "Brake speed scrub must scale with analog input."
 Require-Match $groundMotion 'constrain_heading_to_travel' "Ground handling must constrain excessive heading/travel separation."
 

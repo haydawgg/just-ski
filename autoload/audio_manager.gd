@@ -1,5 +1,8 @@
 extends Node
 
+const AudioMixSolverModule := preload("res://audio/audio_mix_solver.gd")
+const MAX_GENERATED_FRAMES_PER_PROCESS := 1024
+
 var feedback_player: AudioStreamPlayer
 var playback: AudioStreamGeneratorPlayback
 var target_speed := 0.0
@@ -27,6 +30,7 @@ var _headless_audio := false
 var _profile_process_samples := 0
 var _profile_process_total_usec := 0
 var _profile_process_max_usec := 0
+var _mix_solver := AudioMixSolverModule.new()
 
 func _ready() -> void:
 	# Headless acceptance runs do not have a listener or an audio device. Avoid
@@ -45,7 +49,7 @@ func _ready() -> void:
 		return
 	var generator := AudioStreamGenerator.new()
 	generator.mix_rate = 22050.0
-	generator.buffer_length = 0.22
+	generator.buffer_length = 0.12
 	feedback_player = AudioStreamPlayer.new()
 	feedback_player.stream = generator
 	feedback_player.bus = "SFX"
@@ -65,13 +69,14 @@ func _process(delta: float) -> void:
 	target_air = lerpf(target_air, desired_air, 1.0 - exp(-9.0 * delta))
 	pop_envelope *= exp(-8.0 * delta)
 	impact_envelope *= exp(-13.0 * delta)
-	var frame_count := playback.get_frames_available()
+	# Avoid a multi-millisecond first-fill hitch. One tick still generates more
+	# than a 60 Hz frame consumes at 22,050 Hz, so the buffer catches up quickly.
+	var frame_count := mini(playback.get_frames_available(), MAX_GENERATED_FRAMES_PER_PROCESS)
 	var mix_rate := 22050.0
-	var speed_mix := clampf(target_speed / 32.0, 0.0, 1.0)
-	var surface_loudness := 1.12 if target_surface_kind == 0 else (0.9 if target_surface_kind == 1 else 0.78)
-	var ground_mix := 1.0 - target_air * 0.88
-	var surface_amplitude := (speed_mix * 0.025 + target_skid * 0.052) * surface_loudness * ground_mix
-	var wind_amplitude := 0.0035 + speed_mix * 0.018 + target_air * 0.034
+	var mix := _mix_solver.resolve(target_speed, target_skid, target_air, target_surface_kind)
+	var speed_mix := float(mix.speed_mix)
+	var surface_amplitude := float(mix.surface_amplitude)
+	var wind_amplitude := float(mix.wind_amplitude)
 	var output_gain := 0.0 if get_tree().paused else 1.0
 	for _frame: int in frame_count:
 		phase = fmod(phase + (72.0 + target_speed * 7.0) / mix_rate, 1.0)

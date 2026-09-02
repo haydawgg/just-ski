@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0-summary",
+  "captured_at_date": "2026-09-02",
+  "commit_sha": "012a0d40f6b7c91a53c80840794dacee5b651a29",
+  "working_tree_dirty": true,
+  "runtime": {
+    "godot_version": "4.7.2-stable (official)",
+    "platform": "Windows",
+    "processor_name": "12th Gen Intel(R) Core(TM) i7-12650H",
+    "video_adapter": "Intel(R) UHD Graphics",
+    "vulkan_gpu_index": 2,
+    "viewport": [1920, 1080]
+  },
+  "profile_contract": {
+    "preset": "medium",
+    "render_scale": 0.65,
+    "target_frame_ms_p95": 16.67,
+    "target_audio_average_usec": 1000
+  },
+  "profiles": [
+    {"environment":"daytime","scenario":"baseline","average_ms":13.311,"p95_ms":14.134,"fps":75.1,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":266.92,"audio_max_usec":846},
+    {"environment":"daytime","scenario":"trees","average_ms":13.340,"p95_ms":14.427,"fps":75.0,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":277.08,"audio_max_usec":926},
+    {"environment":"daytime","scenario":"environment_effects","average_ms":11.276,"p95_ms":12.129,"fps":88.7,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":261.06,"audio_max_usec":925},
+    {"environment":"daytime","scenario":"shadows","average_ms":11.853,"p95_ms":12.784,"fps":84.4,"objects":540,"draw_calls":224,"primitives":100336,"audio_average_usec":271.88,"audio_max_usec":1578},
+    {"environment":"sunset","scenario":"baseline","average_ms":13.349,"p95_ms":14.202,"fps":74.9,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":303.91,"audio_max_usec":1464},
+    {"environment":"sunset","scenario":"trees","average_ms":13.335,"p95_ms":14.207,"fps":75.0,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":269.43,"audio_max_usec":924},
+    {"environment":"sunset","scenario":"environment_effects","average_ms":11.366,"p95_ms":12.178,"fps":88.0,"objects":778,"draw_calls":462,"primitives":234748,"audio_average_usec":254.46,"audio_max_usec":1385},
+    {"environment":"sunset","scenario":"shadows","average_ms":11.935,"p95_ms":12.605,"fps":83.8,"objects":540,"draw_calls":224,"primitives":100336,"audio_average_usec":267.89,"audio_max_usec":1133}
+  ]
+}

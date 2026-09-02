@@ -106,33 +106,31 @@ func _update_air(
 ) -> void:
 	if not active:
 		return
+	if command == null:
+		command = TrickCommand.new()
 	var previous_grab_name := grab_name
 	air_seconds += delta
 	if use_authoritative_rotation:
 		accumulated_rotation = authoritative_rotation
 	else:
 		accumulated_rotation += local_angular_velocity * delta
-	if command != null:
-		if command.rotation_axis_local.length_squared() > 0.0001:
-			committed_axis_local = command.rotation_axis_local.normalized()
-			rotation_axis_weights = presentation_classifier.axis_weights(committed_axis_local)
-			dominant_kind = presentation_classifier.classify(committed_axis_local, dominant_kind)
-		if command.committed and command.kind not in [TrickCommand.Kind.NONE, TrickCommand.Kind.POP]:
-			dominant_kind = presentation_classifier.classify(committed_axis_local, command.kind)
-			had_trick_intent = true
-		grab_pose = command.grab_pose
-		style_pose = command.style_pose
-		if grab_pose != GrabPose.NONE:
-			grab_seconds += delta * command.grab_amount
-			tweak_integral += command.grab_tweak.length() * delta
-			had_trick_intent = true
-		if style_pose != StylePose.NONE:
-			style_seconds += delta * command.style_amount
-			tweak_integral += command.grab_tweak.length() * delta
-			had_trick_intent = true
-	else:
-		grab_pose = _resolve_legacy_grab_pose()
-		style_pose = _resolve_legacy_style_pose()
+	if command.rotation_axis_local.length_squared() > 0.0001:
+		committed_axis_local = command.rotation_axis_local.normalized()
+		rotation_axis_weights = presentation_classifier.axis_weights(committed_axis_local)
+		dominant_kind = presentation_classifier.classify(committed_axis_local, dominant_kind)
+	if command.committed and command.kind not in [TrickCommand.Kind.NONE, TrickCommand.Kind.POP]:
+		dominant_kind = presentation_classifier.classify(committed_axis_local, command.kind)
+		had_trick_intent = true
+	grab_pose = command.grab_pose
+	style_pose = command.style_pose
+	if grab_pose != GrabPose.NONE:
+		grab_seconds += delta * command.grab_amount
+		tweak_integral += command.grab_tweak.length() * delta
+		had_trick_intent = true
+	if style_pose != StylePose.NONE:
+		style_seconds += delta * command.style_amount
+		tweak_integral += command.grab_tweak.length() * delta
+		had_trick_intent = true
 	# The live pose can return to neutral before touchdown, but the completed
 	# trick still owns any grab that was held during the air. Keep the last
 	# non-neutral name for scoring and the landing callout.
@@ -334,37 +332,6 @@ func _rotation_quality_factor() -> float:
 		var t := (residual - CLEAN_ROTATION_RESIDUAL_DEGREES) / maxf(SKETCHY_ROTATION_RESIDUAL_DEGREES - CLEAN_ROTATION_RESIDUAL_DEGREES, 0.001)
 		return lerpf(1.0, 0.6, t)
 	return clampf(0.6 - (residual - SKETCHY_ROTATION_RESIDUAL_DEGREES) / 180.0, 0.25, 0.6)
-
-func _resolve_legacy_grab_pose() -> GrabPose:
-	var left := Input.is_action_pressed("grab_left")
-	var right := Input.is_action_pressed("grab_right")
-	var style := InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down")
-	if left and right:
-		if _style_pose_from_vector(style) != StylePose.NONE:
-			return GrabPose.NONE
-		return GrabPose.DOUBLE
-	if left:
-		if style.x > 0.45:
-			return GrabPose.MUTE_LEFT
-		if style.y < -0.45:
-			return GrabPose.JAPAN_LEFT
-		if style.y > 0.45:
-			return GrabPose.TAIL
-		return GrabPose.SAFETY_LEFT
-	if right:
-		if style.x < -0.45:
-			return GrabPose.MUTE_RIGHT
-		if style.y < -0.45:
-			return GrabPose.JAPAN_RIGHT
-		if style.y > 0.45:
-			return GrabPose.NOSE
-		return GrabPose.SAFETY_RIGHT
-	return GrabPose.NONE
-
-func _resolve_legacy_style_pose() -> StylePose:
-	if not Input.is_action_pressed("grab_left") or not Input.is_action_pressed("grab_right"):
-		return StylePose.NONE
-	return _style_pose_from_vector(InputManager.vector(&"trick_left", &"trick_right", &"trick_up", &"trick_down"))
 
 func _style_pose_from_vector(style: Vector2) -> StylePose:
 	if absf(style.x) > 0.45 and absf(style.x) >= absf(style.y):

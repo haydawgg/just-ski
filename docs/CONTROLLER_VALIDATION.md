@@ -14,6 +14,8 @@ This document separates automated input-contract coverage from the physical-devi
 - keyboard/mouse input changes presentation without discarding a connected controller;
 - rumble is resolved to the active connected ID and never hard-codes joypad `0`.
 
+`tests/skier_input_frame_acceptance.tscn` additionally sends a gameplay event from joypad ID `7`, verifies that every gameplay joypad binding accepts all devices, and confirms steering/trick compatibility data arrives in one sequenced `SkierInputFrame`. `SkierController` reads this frame once per physics tick; it no longer reads live action state from its ground, air, rail, or trick policies.
+
 The current rumble policy is deliberate: keyboard presentation changes the displayed control glyphs, but does not discard the connected active controller. Feedback may therefore still rumble that controller until it disconnects or another controller becomes active. `stop_rumble()` stops all known connected pads during connection changes.
 
 Run the deterministic check with:
@@ -43,3 +45,13 @@ Run the deterministic check with:
 6. Sweep both sticks slowly through center, the inner deadzone edge, and full travel. Repeat at several frame rates if possible and record any drift or abrupt response changes.
 
 The hardware results should be appended to this matrix with the OS, Godot version, device name, connection order, and date. Automated CI does not claim to replace this physical pass.
+
+## Validation log
+
+### 2026-09-02 — host availability check (physical pass blocked)
+
+- OS: Microsoft Windows 11 Pro 10.0.26200 (64-bit)
+- Godot: 4.7.2.stable.official.ed1daf0bf
+- Device names: no present Xbox/XInput, DualShock/DualSense, or other gamepad device was detected
+- Connection order: not applicable; no gamepad was connected
+- Observed mappings: none; the physical matrix remains pending

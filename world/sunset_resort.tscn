@@ -6,3 +6,4 @@
 [node name="SunsetResort" type="Node3D"]
 script = ExtResource("1")
 environment_profile = ExtResource("2")
+follow_environment_setting = false

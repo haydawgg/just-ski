@@ -29,7 +29,8 @@ smoke-test the exported executable:
 ```
 
 An exported build should reach its main scene and exit without script,
-shader, or asset-loading errors. The current repository does not include a
-project-level license because the distribution policy has not yet been
-selected. The CC0 external assets are documented separately in
-`docs/ASSET_SOURCES.md` and do not substitute for that decision.
+shader, or asset-loading errors. Project-authored code and content are
+licensed under the repository-root `LICENSE` (MIT). Distribute that file with
+the source or export documentation. The CC0/OFL external assets are documented
+separately in `docs/ASSET_SOURCES.md` and retain their own notices and license
+files. New binary assets must also follow `docs/ASSET_POLICY.md`.

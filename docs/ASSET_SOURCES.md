@@ -30,8 +30,22 @@ Model-specific retarget mapping lives in `resources/animation/default_skier_skel
 
 Full record: [`assets/characters/skier/SOURCE.md`](../assets/characters/skier/SOURCE.md)
 
+## UI font
+
+**Source:** Inter 4.1
+
+**Creator:** Rasmus Andersson / The Inter Project Authors
+
+**License:** SIL Open Font License 1.1
+
+The project-wide UI theme uses the pinned upright Inter variable font. Its exact release archive, project filename, checksum, and bundled license are recorded locally.
+
+Full record: [`assets/ui/fonts/SOURCE.md`](../assets/ui/fonts/SOURCE.md)
+
 ## Project-created content
 
 Unless a source is listed above or documented by another local provenance record, the prototype's gameplay code, procedural park geometry, rigid ski equipment/accessories, particles, signs, UI, shaders, and generated presentation assets are project-created.
+
+The three SVG menu icons under `assets/ui/icons/` are project-created and use the same palette as the global UI theme.
 
 The primitive skier is a project-generated fallback/debug presentation. Normal runtime prefers the imported Skeleton3D production body when its rig contract validates.

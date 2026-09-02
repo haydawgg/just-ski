@@ -168,6 +168,7 @@ $sceneShards = [ordered]@{
 		"res://tests/environment_visual_acceptance.tscn",
 		"res://tests/environment_asset_contract_acceptance.tscn",
 		"res://tests/environment_asset_production_acceptance.tscn",
+		"res://tests/environment_tree_batch_acceptance.tscn",
 		"res://tests/summit_environment_acceptance.tscn",
 		"res://tests/sunset_environment_acceptance.tscn",
 		"res://tests/camera_low_speed_acceptance.tscn",
@@ -216,9 +217,12 @@ $sceneShards = [ordered]@{
 	"systems-media" = @(
 		"res://tests/runtime_smoke.tscn",
 		"res://tests/profiling_acceptance.tscn",
+		"res://tests/performance_profile_schema_acceptance.tscn",
+		"res://tests/audio_mix_solver_acceptance.tscn",
 		"res://tests/clip_recorder_worker_acceptance.tscn",
 		"res://tests/settings_acceptance.tscn",
 		"res://tests/input_manager_acceptance.tscn",
+		"res://tests/skier_input_frame_acceptance.tscn",
 		"res://tests/solver_layer_interface_acceptance.tscn",
 		"res://tests/mp4_encoder_acceptance.tscn"
 	)

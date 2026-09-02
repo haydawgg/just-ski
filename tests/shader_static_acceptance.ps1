@@ -11,7 +11,10 @@ function Read-RequiredFile([string]$RelativePath) {
 		$failures.Add("Missing required file: $RelativePath")
 		return ""
 	}
-	return Get-Content -LiteralPath $path -Raw
+	# GitHub's Windows runners may materialize the repository with CRLF while
+	# local checks use LF. Normalize here so line-anchored import assertions
+	# validate the setting rather than the checkout's newline convention.
+	return (Get-Content -LiteralPath $path -Raw) -replace "`r", ""
 }
 
 function Require-Match([string]$Text, [string]$Pattern, [string]$Message) {
@@ -39,7 +42,14 @@ $settings = Read-RequiredFile "autoload/game_settings.gd"
 $ui = Read-RequiredFile "ui/hud/game_ui.gd"
 $attribution = Read-RequiredFile "assets/materials/snow_02/SOURCE.md"
 $importer = Read-RequiredFile "tools/import_snow_02.py"
+$diffuseImport = Read-RequiredFile "assets/materials/snow_02/snow_02_diff_2k.jpg.import"
+$detailImport = Read-RequiredFile "assets/materials/snow_02/snow_02_detail_2k.png.import"
 $shaderText = "$common`n$fast`n$premium"
+
+Require-Match $diffuseImport '(?m)^mipmaps/generate=true$' "Snow diffuse import must generate mipmaps for distant 3D sampling."
+Require-Match $detailImport '(?m)^mipmaps/generate=true$' "Packed snow detail import must generate mipmaps for distant 3D sampling."
+Require-Match $diffuseImport '(?m)^mipmaps/limit=-1$' "Snow diffuse import must retain the full generated mip chain."
+Require-Match $detailImport '(?m)^mipmaps/limit=-1$' "Packed snow detail import must retain the full generated mip chain."
 
 Require-Match $shaderText 'MODEL_NORMAL_MATRIX\s*\*\s*NORMAL' "Snow shaders must transform normals with MODEL_NORMAL_MATRIX."
 Require-Match $shaderText 'mat3\s*\(\s*VIEW_MATRIX\s*\)' "Each tier must provide the current view rotation to shared snow shading."
@@ -103,6 +113,7 @@ Require-Match $material 'corduroy_amount"\s*,\s*0\.018' "Groomed corduroy must r
 Require-Match $material 'corduroy_frequency"\s*,\s*1\.8' "Groomed corduroy frequency must stay broad and low-noise."
 Require-Match $resort 'MainSnowFace[^\r\n]+SnowSurface\.Kind\.POWDER[^\r\n]+SnowSurface\.Kind\.GROOMED' "The main resort face must read as groomed snow without changing established ski physics."
 Require-Match $resort 'default_resort_environment_profile\.tres' "The resort must source environment readability tuning from an editable resource."
+Require-Match $resort 'high_haze\.visible\s*=\s*environment_profile\.high_haze_enabled\s+and\s+not\s+env\.fog_enabled' "High haze must skip its transparent noise pass while environment fog already supplies atmospheric depth."
 Require-Match $tracks 'distance_fade_start' "Persistent tracks must fade before the far view becomes noisy."
 Require-Match $tracks 'ROUGHNESS\s*=\s*mix\(0\.64,\s*0\.92,\s*disturbed\)' "Carved and disturbed ski tracks must have distinct reflection responses."
 Require-Match $tracks 'COLOR\.a\s*\*\s*distance_visibility' "Track age and distance visibility must both bound screen persistence."
