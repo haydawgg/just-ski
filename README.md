@@ -83,14 +83,27 @@ The playable slice includes:
 
 ## Documentation
 
+Active direction and validation:
+
+- [Content Design Plan](docs/CONTENT_DESIGN_PLAN.md) — active course/content implementation roadmap.
+- [Performance Backlog](docs/PERFORMANCE_BACKLOG.md) — current measured performance work and evidence requirements.
+- [Known Issues](docs/KNOWN_ISSUES.md) — unresolved production work and remaining human validation.
+- [Controller Validation](docs/CONTROLLER_VALIDATION.md) — physical controller/hardware validation matrix.
+- [Production Ski Run QA](docs/PRODUCTION_SKI_RUN_QA.md) — maintained end-to-end human gameplay QA.
+
+Technical reference:
+
 - [Controls](docs/CONTROLS.md) — input mapping, Flick-It gestures, grabs, rails, and clip capture.
 - [Physics](docs/PHYSICS.md) — locomotion state ownership, ski handling, landings, crashes, rails, and tuning.
+- [Trick Control Target](docs/TRICK_CONTROL_TARGET.md) — durable trick-system design principles and current implementation alignment.
 - [Animation](docs/ANIMATION.md) — presentation architecture, rig adapters, procedural layers, and animation test coverage.
 - [Graphics](docs/GRAPHICS.md) — renderer settings, snow, environment, character presentation, HUD, and visual verification.
+- [Performance Baseline](docs/PERFORMANCE_BASELINE_1080P.md) — reproducible 1080p benchmark contract and current measurements.
+- [World Authoring](docs/WORLD_AUTHORING.md) — deterministic course/world authoring and preview workflow.
 - [Asset Sources](docs/ASSET_SOURCES.md) — third-party source index and provenance.
 - [Clip capture](docs/CLIP_CAPTURE.md) — timing compensation, worker shutdown, and streaming mux behavior.
 - [Release](docs/RELEASE.md) — supported engine, export preset, and smoke-test procedure.
-- [Known Issues](docs/KNOWN_ISSUES.md) — automated coverage boundaries and remaining human validation work.
+- [Historical documents](docs/history/README.md) — completed plans, dated QA reports, and superseded roadmaps retained for decision history.
 
 ## Verification
 
