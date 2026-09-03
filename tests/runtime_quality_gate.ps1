@@ -189,6 +189,7 @@ $sceneShards = [ordered]@{
 		"res://tests/animation_acceptance.tscn",
 		"res://tests/character_equipment_scale_acceptance.tscn",
 		"res://tests/character_presentation_acceptance.tscn",
+		"res://tests/head_presentation_acceptance.tscn",
 		"res://tests/skeleton_rig_acceptance.tscn",
 		"res://tests/jump_animation_acceptance.tscn",
 		"res://tests/landing_animation_acceptance.tscn",

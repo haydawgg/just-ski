@@ -165,6 +165,15 @@ func sync_pose(_delta: float, grab_requests: Array[SkierGrabReachRequest] = []) 
 	skeleton.force_update_all_bone_transforms()
 	_sync_equipment_pose()
 	_apply_grab_reach(grab_requests)
+	# BoneAttachment3D normally refreshes during the scene's notification pass.
+	# Gameplay and capture callers can sample immediately after apply_frame,
+	# though, so force the attachments to consume the same pose in this tick.
+	# Without this explicit refresh, equipment mounted to moving hands/limbs can
+	# remain at its previous-frame transform and read as detached during grabs,
+	# flips, and rail transitions. This runs after optional production IK as well,
+	# because the reach solve can move the hand bones a second time.
+	_refresh_bone_attachments()
+	_stabilize_equipment_poles()
 
 func adapter_name() -> String:
 	return "skeleton"
@@ -392,10 +401,13 @@ func _apply_grab_reach(requests: Array[SkierGrabReachRequest]) -> void:
 			_grab_solver_state = "TRACKING"
 		return
 	_grab_solver_state = "ACTIVE"
+	var head_index := int(bone_indices[&"head"])
+	var head_before := _bone_world_index(head_index).basis.orthonormalized().get_rotation_quaternion()
 	_apply_upper_spine_assist(valid_requests)
 	for request: SkierGrabReachRequest in valid_requests:
 		_apply_clavicle_assist(request)
 	skeleton.force_update_all_bone_transforms()
+	_compensate_head_for_spine_assist(head_index, head_before)
 	for request: SkierGrabReachRequest in valid_requests:
 		_solve_production_arm(request)
 	skeleton.force_update_all_bone_transforms()
@@ -409,6 +421,19 @@ func _apply_grab_reach(requests: Array[SkierGrabReachRequest]) -> void:
 		_grab_reach_errors[request.side] = reach_error
 		all_in_contact = all_in_contact and reach_error <= 0.12
 	_grab_solver_state = "CONTACT" if all_in_contact else "SOLVED"
+
+func _compensate_head_for_spine_assist(head_index: int, head_before: Quaternion) -> void:
+	# The upper-spine assist yanks the whole thorax and the head rides along
+	# as a descendant, dragging the gaze toward the ski. Blend the head back
+	# halfway toward its pre-assist world orientation so it keeps tracking the
+	# canonical head: full restoration would look neck-broken against the
+	# folded torso. Anchoring on the head's own before/after avoids any
+	# assumption about which ancestor moved or in which rest frame it composes.
+	# Blend is strong (0.85): like a real vestibulo-ocular reflex the gaze
+	# stabilizes while the torso folds underneath it.
+	var head_after := _bone_world_index(head_index).basis.orthonormalized().get_rotation_quaternion()
+	_set_bone_world_rotation(head_index, head_after.slerp(head_before, 0.85).normalized())
+	skeleton.force_update_all_bone_transforms()
 
 func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 	if not _helper_bone_indices.has(&"upper_spine"):
@@ -692,6 +717,9 @@ func _build_attachments() -> void:
 	var boot_accent := SkierEquipment.material(outfit_profile.ski_accent_color.darkened(0.32), 0.48, 0.18, outfit_profile.hardgoods_specular)
 	var ski_base := SkierEquipment.material(outfit_profile.ski_base_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
+	var jacket := SkierEquipment.material(outfit_profile.jacket_color, outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
+	var jacket_trim := SkierEquipment.material(outfit_profile.jacket_color.darkened(0.28), outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
+	var jacket_accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.cloth_roughness, 0.02, outfit_profile.cloth_specular)
 	var pole_surface := SkierEquipment.material(outfit_profile.pole_color, outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
 	var helmet_surface := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var frame_surface := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18, outfit_profile.hardgoods_specular)
@@ -702,7 +730,38 @@ func _build_attachments() -> void:
 	head_mount.transform = _neutral_mount_transform(&"head")
 	head_attachment.add_child(head_mount)
 	SkierEquipment.build_headwear(head_mount, helmet_surface, frame_surface, lens_surface)
+	# Shaded mouth line on the base-mesh chin (measured seating, not a guess).
+	# Darkened skin reads as a mouth at gameplay distance without face texture.
+	var mouth_surface := SkierEquipment.material(outfit_profile.skin_color.darkened(0.45), outfit_profile.skin_roughness, 0.0, outfit_profile.skin_specular)
+	SkierEquipment.build_face(head_mount, mouth_surface, Vector3(0.0, 0.03, -0.112))
+	var spine_attachment := _bone_attachment(&"spine", "JacketSpineAttachment")
+	var spine_mount := Node3D.new()
+	spine_mount.name = "JacketSpineMount"
+	spine_mount.transform = _neutral_mount_transform(&"spine")
+	spine_attachment.add_child(spine_mount)
+	var chest_attachment := _bone_attachment(&"chest", "JacketChestAttachment")
+	var chest_mount := Node3D.new()
+	chest_mount.name = "JacketChestMount"
+	chest_mount.transform = _neutral_mount_transform(&"chest")
+	chest_attachment.add_child(chest_mount)
+	# Jacket-detail depths seated against the imported base-mesh torso wall
+	# (measured, not eyeballed): stripe/zip inner faces ~2-4mm embedded, pocket
+	# on the chest wall. Primitive-calibrated values would float centimeters
+	# off this body, hence per-rig calibration.
+	SkierEquipment.build_jacket_details(spine_mount, chest_mount, jacket_accent, dark, jacket_trim,
+		0.143, -0.128, Vector3(-0.085, 0.06, -0.097))
 	for side: StringName in [&"left", &"right"]:
+		var shoulder_attachment := _bone_attachment(StringName(side + "_shoulder"), side.capitalize() + "SleeveShoulderAttachment")
+		var shoulder_mount := Node3D.new()
+		shoulder_mount.name = side.capitalize() + "SleeveShoulderMount"
+		shoulder_mount.transform = _neutral_mount_transform(StringName(side + "_shoulder"))
+		shoulder_attachment.add_child(shoulder_mount)
+		var elbow_attachment := _bone_attachment(StringName(side + "_elbow"), side.capitalize() + "SleeveElbowAttachment")
+		var elbow_mount := Node3D.new()
+		elbow_mount.name = side.capitalize() + "SleeveElbowMount"
+		elbow_mount.transform = _neutral_mount_transform(StringName(side + "_elbow"))
+		elbow_attachment.add_child(elbow_mount)
+		SkierEquipment.build_sleeves(shoulder_mount, elbow_mount, side, jacket, dark)
 		var boot_attachment := _bone_attachment(StringName(side + "_boot"), side.capitalize() + "BootAttachment")
 		var boot_mount := Node3D.new()
 		boot_mount.name = side.capitalize() + "BootMount"
@@ -731,7 +790,7 @@ func _build_attachments() -> void:
 		SkierEquipment.build_pole(pole_pivot, side, pole_surface, dark)
 		var tip := Node3D.new()
 		tip.name = side.capitalize() + "PoleTip"
-		tip.position = Vector3(0.0, -1.08, 0.08)
+		tip.position = Vector3(0.0, -1.185, 0.0)
 		pole_pivot.add_child(tip)
 		equipment_nodes[StringName(side + "_pole")] = pole_pivot
 		equipment_tips[side] = tip
@@ -742,31 +801,7 @@ func _apply_body_materials(node: Node) -> void:
 		for surface_index: int in instance.mesh.get_surface_count():
 			var imported := instance.mesh.surface_get_material(surface_index)
 			var region := imported.resource_name.trim_prefix("Outfit_") if imported != null else ""
-			var color := outfit_profile.jacket_color
-			var roughness := outfit_profile.cloth_roughness
-			var metallic := 0.0
-			var specular := outfit_profile.cloth_specular
-			match region:
-				"Pants":
-					color = outfit_profile.pants_color
-					roughness = outfit_profile.pants_roughness
-					specular = outfit_profile.pants_specular
-				"Skin":
-					color = outfit_profile.skin_color
-					roughness = outfit_profile.skin_roughness
-					specular = outfit_profile.skin_specular
-				"Gloves":
-					color = outfit_profile.glove_color
-					roughness = outfit_profile.hardgoods_roughness
-					specular = outfit_profile.hardgoods_specular
-				"BootUnderlay":
-					color = outfit_profile.boot_color
-					roughness = outfit_profile.hardgoods_roughness
-					metallic = outfit_profile.hardgoods_metallic
-					specular = outfit_profile.hardgoods_specular
-			var surface := SkierEquipment.material(color, roughness, metallic, specular)
-			surface.resource_name = "Outfit_" + (region if region != "" else "Jacket")
-			instance.set_surface_override_material(surface_index, surface)
+			instance.set_surface_override_material(surface_index, SkierEquipment.region_surface(region, outfit_profile))
 	for child: Node in node.get_children():
 		_apply_body_materials(child)
 
@@ -782,7 +817,7 @@ func _build_equipment_targets(ski_pivot: Node3D, side: StringName) -> void:
 		[&"binding_outside", Vector3(0.075 * side_sign, 0.04, 0.05)],
 		[&"binding_inside", Vector3(-0.075 * side_sign, 0.04, 0.02)],
 		[&"nose", Vector3(0.0, 0.04, -0.72)],
-		[&"tail", Vector3(0.0, 0.04, 0.42)],
+		[&"tail", SkierPoseDriver.GRAB_TAIL_OFFSET],
 	]:
 		var marker := Node3D.new()
 		marker.name = "%s_%s" % [side, definition[0]]
@@ -794,6 +829,52 @@ func _sync_equipment_pose() -> void:
 	for side: StringName in [&"left", &"right"]:
 		(equipment_nodes[StringName(side + "_ski")] as Node3D).rotation = driver.joint(StringName(side + "_ski")).rotation
 		(equipment_nodes[StringName(side + "_pole")] as Node3D).rotation = driver.joint(StringName(side + "_pole")).rotation
+
+func _refresh_bone_attachments() -> void:
+	if skeleton == null:
+		return
+	for child: Node in skeleton.get_children():
+		var attachment := child as BoneAttachment3D
+		if attachment != null:
+			attachment.on_skeleton_update()
+
+func _stabilize_equipment_poles() -> void:
+	# Pole joints are authored relative to each hand, but a large grab/flip can
+	# rotate a hand far enough that the local -Y shaft points above the skier.
+	# Preserve authored angles while they are readable; only replace an inverted
+	# presentation direction with a stable, slightly outward/downhill one.
+	var forward := -skeleton.global_basis.z
+	forward.y = 0.0
+	if forward.length_squared() < 0.0001:
+		forward = Vector3.FORWARD
+	else:
+		forward = forward.normalized()
+	var lateral := skeleton.global_basis.x
+	lateral.y = 0.0
+	if lateral.length_squared() < 0.0001:
+		lateral = Vector3.RIGHT
+	else:
+		lateral = lateral.normalized()
+	for side: StringName in [&"left", &"right"]:
+		var pivot := equipment_nodes.get(StringName(side + "_pole")) as Node3D
+		var tip := equipment_tips.get(side) as Node3D
+		if pivot == null or tip == null:
+			continue
+		var current_direction := (tip.global_position - pivot.global_position).normalized()
+		if current_direction.dot(Vector3.DOWN) >= 0.58:
+			continue
+		var side_sign := -1.0 if side == &"left" else 1.0
+		var target_direction := (Vector3.DOWN * 0.88 + forward * 0.08 + lateral * side_sign * 0.28).normalized()
+		var y_axis := -target_direction
+		var z_axis := forward.slide(y_axis)
+		if z_axis.length_squared() < 0.0001:
+			z_axis = lateral.slide(y_axis)
+		if z_axis.length_squared() < 0.0001:
+			z_axis = Vector3.FORWARD.slide(y_axis)
+		z_axis = z_axis.normalized()
+		var x_axis := y_axis.cross(z_axis).normalized()
+		z_axis = x_axis.cross(y_axis).normalized()
+		pivot.global_basis = Basis(x_axis, y_axis, z_axis)
 
 func _bone_attachment(semantic: StringName, node_name: String) -> BoneAttachment3D:
 	var attachment := BoneAttachment3D.new()
