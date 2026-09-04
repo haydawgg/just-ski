@@ -15,6 +15,10 @@ func _ready() -> void:
 	if finish_trigger == null:
 		failures.append("Finish trigger was not created")
 		_finish()
+	if resort.get_node_or_null("ParkContentTracker") == null:
+		failures.append("Resort did not create the content observer")
+	if ui.find_child("ChallengesButton", true, false) == null or ui.find_child("SpotChallengePanel", true, false) == null:
+		failures.append("Pause UI did not expose spot challenges")
 
 func _physics_process(_delta: float) -> void:
 	frame += 1

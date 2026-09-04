@@ -12,6 +12,7 @@ This file tracks unresolved behavior, missing production work, and checks that s
 - **Controller feel still needs broader hardware validation.** Xbox, PlayStation, and generic controllers use Godot/SDL input abstraction, but glyph-family detection, hot-plug behavior, deadzone feel, and rumble strength should be verified on physical devices.
 - **Long-session feel still needs human playtesting.** Camera comfort, landing/crash threshold preference, rail-balance drift, and high-speed handling are covered by automated behavior checks but still need longer subjective play sessions.
 - **Thin-feature rail capture needs an extended stress test.** Automated coverage exercises live rail capture and normal feature traversal, but it does not replace a long high-speed session across narrow rails, boxes, and tubes.
+- **The content pass still needs clean-player human acceptance.** Six stable spots, three route tiers, optional challenges, an opt-in Session Yard, and local telemetry are implemented and covered structurally. Human sessions must still confirm route readability, voluntary retries, practical markers, second-line discovery, and recovery from misses before typed feature migration or Session Yard menu exposure.
 
 ## Animation and character presentation
 

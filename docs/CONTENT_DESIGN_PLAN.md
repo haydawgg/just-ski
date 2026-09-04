@@ -1,5 +1,7 @@
 # Summit Sessions — Content Design Implementation Plan
 
+> Implementation status (2026-09-04): the six-spot data pass, semantic metadata, runtime propagation, optional challenges, opt-in Session Yard profile, local telemetry, and automated content acceptance coverage are implemented. The capability audit found no M1 criterion that requires a new geometry kind: the existing profiled side hit, berm, tabletop, and multi-point rail builders cover the current layouts. Clean-player human playtests and reviewed preview screenshots remain acceptance gates; typed `ParkFeatureSpec` migration and default-menu exposure of Session Yard intentionally wait for those results. See `docs/CONTENT_PASS_IMPLEMENTATION.md`.
+
 This plan defines the next content-design phase for Summit Sessions. The goal is to get more value out of the existing skiing, trick, rail, landing, scoring, marker, and procedural-course systems before expanding into large new product systems.
 
 The guiding product loop is:
