@@ -24,6 +24,7 @@ const REST_POSITIONS := {
 	&"left_pole": Vector3.ZERO,
 	&"right_pole": Vector3.ZERO,
 }
+const GRAB_TAIL_OFFSET := Vector3(0.0, 0.04, 0.30)
 
 var joints: Dictionary = {}
 var grab_targets: Dictionary = {}
@@ -55,8 +56,8 @@ func build() -> void:
 	var right_hand := _joint(&"right_hand", "RightHand", right_elbow)
 	var left_pole := _joint(&"left_pole", "LeftPole", left_hand)
 	var right_pole := _joint(&"right_pole", "RightPole", right_hand)
-	pole_tips[&"left"] = _marker("LeftPoleTip", left_pole, Vector3(0.0, -1.08, 0.08))
-	pole_tips[&"right"] = _marker("RightPoleTip", right_pole, Vector3(0.0, -1.08, 0.08))
+	pole_tips[&"left"] = _marker("LeftPoleTip", left_pole, Vector3(0.0, -1.185, 0.0))
+	pole_tips[&"right"] = _marker("RightPoleTip", right_pole, Vector3(0.0, -1.185, 0.0))
 
 func joint(semantic: StringName) -> Node3D:
 	return joints.get(semantic) as Node3D
@@ -69,7 +70,7 @@ func grab_target(side: StringName, target: StringName) -> Node3D:
 
 func canonical_landmarks() -> Dictionary:
 	return {
-		"head": joint(&"head").to_global(Vector3(0.0, 0.22, 0.0)),
+		"head": joint(&"head").to_global(Vector3(0.0, 0.29, 0.0)),
 		"pelvis": joint(&"pelvis").global_position,
 		"left_knee": joint(&"left_knee").global_position,
 		"right_knee": joint(&"right_knee").global_position,
@@ -99,7 +100,11 @@ func _build_ski_targets(ski: Node3D, side: String, side_sign: float) -> void:
 	grab_targets[StringName(side + "_binding_outside")] = _marker(side.capitalize() + "GrabBindingOutside", ski, Vector3(outside_x, 0.04, 0.05))
 	grab_targets[StringName(side + "_binding_inside")] = _marker(side.capitalize() + "GrabBindingInside", ski, Vector3(inside_x, 0.04, 0.02))
 	grab_targets[StringName(side + "_nose")] = _marker(side.capitalize() + "GrabNose", ski, Vector3(0.0, 0.04, -0.72))
-	grab_targets[StringName(side + "_tail")] = _marker(side.capitalize() + "GrabTail", ski, Vector3(0.0, 0.04, 0.42))
+	# Keep the tail contact just inside the upturned tail so the measured
+	# production arm envelope can hold it after the ski pivot follows the animated
+	# boot. The old +0.42m point sat too far behind the boot during a deep tail
+	# grab and made the hand visibly lose contact.
+	grab_targets[StringName(side + "_tail")] = _marker(side.capitalize() + "GrabTail", ski, GRAB_TAIL_OFFSET)
 
 func _marker(node_name: String, parent: Node3D, local_position: Vector3) -> Node3D:
 	var marker := Node3D.new()

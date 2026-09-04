@@ -4,10 +4,14 @@ const SKIER_VISUAL_SCENE := preload("res://player/animation/skier_visual.tscn")
 const REQUIRED_BODY_REGIONS := ["Outfit_Jacket", "Outfit_Pants", "Outfit_Skin", "Outfit_Gloves", "Outfit_BootUnderlay"]
 const REQUIRED_CLOTHING_SHELLS := ["Outfit_Jacket", "Outfit_Pants", "Outfit_Gloves"]
 const REQUIRED_RIGID_PARTS := [
-	"HelmetShell", "HelmetBrim", "GoggleFrame", "GoggleLens",
+	"HelmetShell", "HelmetBrim", "HelmetEarPadLeft", "HelmetEarPadRight", "GoggleFrame", "GoggleLens", "GoggleNoseBridge",
+	"JacketBackStripe", "JacketFrontZip", "JacketChestPocket",
+	"LeftUpperSleeve", "LeftForearmSleeve", "LeftSleeveCuff",
+	"RightUpperSleeve", "RightForearmSleeve", "RightSleeveCuff",
 	"LeftBootCuff", "RightBootCuff", "LeftSkiAccent", "RightSkiAccent",
 	"LeftPoleGrip", "RightPoleGrip", "LeftPolePoint", "RightPolePoint",
 ]
+const FORBIDDEN_NECK_ARTIFACTS := ["JacketBackYoke", "JacketCollar"]
 
 var failures: Array[String] = []
 
@@ -78,10 +82,21 @@ func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 func _check_rigid_parts(adapter: SkeletonSkierRig) -> void:
 	for part_name: String in REQUIRED_RIGID_PARTS:
 		_check(adapter.find_child(part_name, true, false) is MeshInstance3D, "Missing rigid visual part " + part_name)
+	for part_name: String in FORBIDDEN_NECK_ARTIFACTS:
+		_check(adapter.find_child(part_name, true, false) == null, "Removed neck artifact was reintroduced: " + part_name)
 	var head_attachment := adapter.find_child("HeadAttachment", true, false) as BoneAttachment3D
 	_check(head_attachment != null, "Helmet and goggles are not mounted through a head BoneAttachment3D")
 	if head_attachment != null:
 		_check(head_attachment.bone_name == adapter.skeleton.get_bone_name(int(adapter.bone_indices[&"head"])), "Headwear attachment targets the wrong bone")
+	var chest_attachment := adapter.find_child("JacketChestAttachment", true, false) as BoneAttachment3D
+	_check(chest_attachment != null, "Front jacket details are not mounted through a chest BoneAttachment3D")
+	if chest_attachment != null:
+		_check(chest_attachment.bone_name == adapter.skeleton.get_bone_name(int(adapter.bone_indices[&"chest"])), "Front jacket attachment targets the wrong bone")
+		var chest_mount := chest_attachment.find_child("JacketChestMount", true, false) as Node3D
+		_check(chest_mount != null, "Front jacket chest mount is missing")
+		for part_name: String in ["JacketFrontZip", "JacketChestPocket"]:
+			var part := adapter.find_child(part_name, true, false) as MeshInstance3D
+			_check(part != null and chest_mount.is_ancestor_of(part), "%s is not attached to the calibrated chest mount" % part_name)
 
 func _print_inventory(adapter: SkeletonSkierRig) -> void:
 	var mesh_instances := adapter.find_children("*", "MeshInstance3D", true, false)

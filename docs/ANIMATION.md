@@ -97,6 +97,20 @@ Presentation can add:
 
 The HUD can show continuous in-progress rotation while landed scoring resolves to the established trick buckets. Both read the same gameplay-owned rotation history.
 
+## Head, gaze, and headwear
+
+The head is a full animation citizen, not a static attachment. Every locomotion layer declares a head attitude so the gaze reads intentionally and transitions never snap:
+
+- **Ground/tuck:** the head counter-pitches the torso fold (`neutral_torso_pitch`, `speed_torso_pitch`, `tuck * 0.44`) so full tuck looks down the hill (~-35°) instead of at the skis (~-55°). Carve adds yaw/roll leveling (`chest_counter_yaw`, `carve_head_level`).
+- **Straight air:** keeps a small look-toward-landing pitch plus the takeoff style-side bias, so the head carries its attitude across the lip instead of resetting to zero.
+- **Spins:** the head leads into the rotation. `spin_head_spot` is the lead gain (wired into the trick-layer head yaw); `trick_head_yaw_limit` (0.48) bounds the total including landing-spot and residual terms.
+- **Grabs:** no grab definition authors a head look, so the layer procedurally counter-pitches 45% of the torso fold — deep folds (Japan spine -0.4 / chest -0.24) keep the face out of the knees.
+- **Rails:** the head counter-rolls half the torso counter-lean (`rail_torso_counter_lean * 0.5`) instead of inheriting the balance lean.
+- **Landing/crash:** anticipation aims the head (`landing_anticipation_head_pitch`), impact nods it (`landing_head_nod`), and bail stages carry tumbling head poses.
+- **Limits:** head pitch clamps at ±0.70 to admit the full-tuck compensation; yaw/roll stay at ±(`trick_head_yaw_limit`/0.48). Joint response (`head_joint_response` 8.5) smooths every transition.
+
+Headwear (helmet shell, visor lip, goggle frame/lens/bridge/strap, ear pads) is procedural geometry in `SkierEquipment.build_headwear`, mounted on the head bone through `HeadAttachment`/`HeadMount`, so it tracks the animated head exactly. Fit conventions: the stack is centered on the skull axis; slim liner pads fill the head-to-shell gap; the strap tapers from shell-clearing radius over the dome to skull-hugging radius below the rim; the visor lip rests on the brow without interpenetrating the frame. `tests/head_presentation_acceptance.tscn` gates fit (symmetry, seating, clearances, no interpenetration) and head behavior (air attitude, spot wiring, grab counter, rail leveling, tuck gaze) with failing-first thresholds.
+
 ## Grabs and style poses
 
 Physical grabs and style-only poses are data-driven resources.

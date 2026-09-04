@@ -5,7 +5,7 @@ extends Resource
 @export var model_transform := Transform3D.IDENTITY
 @export var require_skinned_mesh := true
 @export var pose_translation_scale := 1.0
-@export var head_landmark_offset := Vector3(0.0, 0.22, 0.0)
+@export var head_landmark_offset := Vector3(0.0, 0.29, 0.0)
 @export var bone_names: Dictionary = {
 	&"pelvis": &"Hips",
 	&"spine": &"Spine",

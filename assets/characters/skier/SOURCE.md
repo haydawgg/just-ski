@@ -33,9 +33,27 @@ Processing is performed in this order:
    - appends skinned clothing shells for the jacket, pants, and gloves regions;
    - duplicates the source triangles and offsets them along vertex normals;
    - uses per-bone volume and geodesic border taper for the shell shape;
+   - extends the jacket shell above the collar cut (`COLLAR_SKIRT_TOP_Y`)
+     with a guaranteed minimum offset (`COLLAR_SKIRT_MIN_OFFSET`) so the
+     shell overlaps the jacket/skin seam as a turtleneck lip;
    - copies `JOINTS_0` and `WEIGHTS_0` directly so the added shells deform with the original body.
 
 The project file is therefore not a pristine byte-for-byte copy of the upstream GLB. The skeleton and skinning contract are preserved while the visible body is prepared for the prototype's outfit system.
+
+To rebuild from the pristine source (requires network for the upstream
+archive; both scripts are idempotent and refuse to double-apply):
+
+```powershell
+Expand-Archive male_base_mesh.zip -DestinationPath pristine -Force
+Copy-Item pristine/male_base_mesh.glb assets/characters/skier/skier_body.glb -Force
+py tools/character/rebuild_skier_body_materials.py
+py tools/character/build_skier_clothing.py
+```
+
+After replacing the GLB, re-run the editor import so `.godot/imported`
+regenerates (the cache is git-ignored and must never be hand-edited), then
+verify with `tests/character_equipment_scale_acceptance.tscn`, which gates
+the collar-skirt overlap above the `0.62` material cut.
 
 ## Runtime contract
 

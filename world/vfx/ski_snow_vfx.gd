@@ -237,12 +237,25 @@ func _append_track_sample(samples: Array[Dictionary], position: Vector3, normal:
 			samples[0].connected = false
 
 func _rebuild_track_mesh() -> void:
+	# Skip no-op uploads: with fewer than two samples in both ribbons there is
+	# no quad to draw, and committing on every such call only churns
+	# SurfaceTool/ArrayMesh allocations during ordinary movement.
+	if track_samples_left.size() < 2 and track_samples_right.size() < 2:
+		return
 	var start_usec := Time.get_ticks_usec()
 	var surface := SurfaceTool.new()
 	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 	_add_track_ribbon(surface, track_samples_left)
 	_add_track_ribbon(surface, track_samples_right)
-	track_mesh_instance.mesh = surface.commit()
+	var rebuilt := surface.commit()
+	# An empty commit (all ribbons disconnected or degenerate) must not wipe
+	# the last good ribbon: stale-but-visible beats a one-frame wipe.
+	if rebuilt != null and rebuilt.get_surface_count() > 0:
+		track_mesh_instance.mesh = rebuilt
+	elif track_mesh_instance.mesh == null:
+		track_mesh_instance.mesh = rebuilt
+	else:
+		return
 	var elapsed_usec := Time.get_ticks_usec() - start_usec
 	track_rebuild_count += 1
 	track_rebuild_total_usec += elapsed_usec

@@ -32,6 +32,12 @@ HAND_MARKERS = ("hand", "f_index", "f_middle", "f_pinky", "f_ring", "thumb")
 TORSO_JOINTS = {"spine", "spine.001", "spine.002", "spine.003", "spine.004", "spine.005"}
 JACKET_COVER_BAND_MIN_Y = 0.115
 JACKET_COLLAR_Y = 0.62
+# Collar overlap skirt: jacket shell triangles extend past the material cut up
+# to this height with a guaranteed minimum offset, forming a turtleneck lip
+# over the skin. Without it the shell tapers to zero exactly at the cut and
+# neck flexion opens a skin ring / T-junction crack.
+COLLAR_SKIRT_TOP_Y = 0.655
+COLLAR_SKIRT_MIN_OFFSET = 0.012
 BONE_OFFSETS = {
     "Jacket": {
         "upper_arm.L": 0.026, "upper_arm.R": 0.026,
@@ -171,6 +177,22 @@ def main() -> None:
                     cut_verts.update(triangle)
                     continue
                 candidates.append(triangle)
+            # Collar overlap skirt: torso-joint skin triangles just above the
+            # material cut join the Jacket shell, so the shell rides over the
+            # seam instead of ending exactly on it. Skinning copies verbatim,
+            # so the skirt deforms with the neck.
+            skirt_tris = 0
+            for triangle in region_triangles["Skin"]:
+                dominant = dominant_joint(triangle, joints, weights, joint_names)
+                if dominant not in TORSO_JOINTS:
+                    continue
+                centroid_y = sum(positions[v][1] for v in triangle) / 3.0
+                if JACKET_COLLAR_Y < centroid_y <= COLLAR_SKIRT_TOP_Y:
+                    candidates.append(triangle)
+                    skirt_tris += 1
+            if skirt_tris == 0:
+                raise RuntimeError("Collar skirt found no torso triangles; cut geometry changed")
+            print(f"Jacket collar skirt: {skirt_tris} triangles above y={JACKET_COLLAR_Y}")
             for triangle in region_triangles["Pants"]:
                 if sum(positions[v][1] for v in triangle) / 3.0 >= JACKET_COVER_BAND_MIN_Y:
                     candidates.append(triangle)
@@ -201,6 +223,9 @@ def main() -> None:
         for vertex in shell_vertices:
             dominant = joint_names[max(range(4), key=lambda i: weights[vertex][i])]
             amount = offsets.get(dominant, default_offset) * taper(distances[vertex], ramp)
+            if region == "Jacket" and positions[vertex][1] > JACKET_COLLAR_Y:
+                # Skirt zone never tapers shut: the lip stands off the skin.
+                amount = max(amount, COLLAR_SKIRT_MIN_OFFSET)
             px, py, pz = positions[vertex]
             nx, ny, nz = normalize(normals[vertex])
             out_positions.append((px + nx * amount, py + ny * amount, pz + nz * amount))

@@ -30,9 +30,30 @@ var environment: WorldEnvironment
 var sun: DirectionalLight3D
 var fill_light: DirectionalLight3D
 var high_haze: MeshInstance3D
+var player_probe: ReflectionProbe
 var course_features: Dictionary = {}
 var course_recovery: CourseRecovery
 var finish_trigger: Area3D
+
+# Player-following reflection experiment: exactly one probe, UPDATE_ONCE only.
+# The probe body stays parked at its last capture point; only a logical target
+# is tracked per frame. Relocation IS the recapture trigger (an UPDATE_ONCE
+# probe re-renders whenever its transform moves), so the probe is never eased
+# continuously. Remove if A/B shows negligible benefit.
+const PLAYER_PROBE_FOLLOW_OFFSET := Vector3(0.0, 2.5, 0.0)
+const PLAYER_PROBE_SIZE := Vector3(28.0, 12.0, 28.0)
+const PLAYER_PROBE_MAX_DISTANCE := 50.0
+const PLAYER_PROBE_INTENSITY := 0.6
+const PLAYER_PROBE_RECAPTURE_DISTANCE := 10.0
+const PLAYER_PROBE_RECAPTURE_INTERVAL := 0.33
+const PLAYER_PROBE_SNAP_DISTANCE := 40.0
+const PLAYER_PROBE_REFRESH_OFFSET := 0.025
+var _player_probe_allowed := false
+var _probe_capture_position := Vector3.ZERO
+var _probe_time_since_capture := 0.0
+var _probe_refresh_pending := false
+var _probe_refresh_parity := false
+var player_probe_recaptures := 0
 
 func _ready() -> void:
 	if follow_environment_setting:
@@ -46,6 +67,10 @@ func _ready() -> void:
 	_build_player()
 	GameSettings.settings_applied.connect(_apply_graphics_settings)
 	_apply_graphics_settings()
+	_build_player_probe()
+
+func _process(delta: float) -> void:
+	_update_player_probe(delta)
 
 func _validate_environment_asset_catalog() -> void:
 	if environment_asset_catalog == null:
@@ -252,6 +277,10 @@ func _build_finish_trigger() -> void:
 func _on_player_respawn_applied(_value: Transform3D) -> void:
 	if camera_rig != null:
 		camera_rig.reset_immediate()
+	# Teleports invalidate the parked capture point: snap immediately rather
+	# than waiting for the distance/time throttle.
+	if player != null and player_probe != null and _player_probe_allowed:
+		_move_probe_and_capture(_player_probe_target())
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
@@ -821,15 +850,122 @@ func _add_lodge(position: Vector3) -> void:
 	var roof := _add_box("LodgeRoof", Vector3(16, 1.2, 11), position + Vector3(0, 3.1, 0), Vector3(0, 0, 8), Color("#233849"), false)
 	roof.collision_layer = 0
 
+static func player_probe_allowed_for_preset(preset: int) -> bool:
+	# Dedicated probe capability policy: High, Ultra, and Custom. Numerically
+	# identical to the GI gate, but reflections are not GI policy, so this
+	# stays local to resort.gd instead of reusing graphics_preset_allows_gi().
+	return clampi(preset, 0, 4) >= 2
+
+static func probe_should_recapture(distance: float, elapsed: float) -> bool:
+	return distance >= PLAYER_PROBE_RECAPTURE_DISTANCE and elapsed >= PLAYER_PROBE_RECAPTURE_INTERVAL
+
+static func probe_should_snap(distance: float) -> bool:
+	return distance >= PLAYER_PROBE_SNAP_DISTANCE
+
+func _player_probe_target() -> Vector3:
+	if player == null:
+		return _probe_capture_position
+	return player.global_position + PLAYER_PROBE_FOLLOW_OFFSET
+
+func _build_player_probe() -> void:
+	# Created after _build_player() so the first cubemap is centered on the
+	# player, with the same semantics as every later capture.
+	if OS.has_feature("headless") or player == null:
+		return
+	var probe := ReflectionProbe.new()
+	probe.name = "PlayerProbe"
+	probe.size = PLAYER_PROBE_SIZE
+	probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	probe.max_distance = PLAYER_PROBE_MAX_DISTANCE
+	probe.intensity = PLAYER_PROBE_INTENSITY
+	probe.enable_shadows = false
+	probe.interior = false
+	probe.box_projection = false
+	probe.ambient_mode = ReflectionProbe.AMBIENT_DISABLED
+	probe.set_meta("gi_exclude", true)
+	add_child(probe)
+	player_probe = probe
+	player_probe.visible = _player_probe_allowed
+	_probe_capture_position = _player_probe_target()
+	_probe_time_since_capture = PLAYER_PROBE_RECAPTURE_INTERVAL
+	_probe_refresh_pending = false
+	probe.global_position = _probe_capture_position
+	probe.update_mode = ReflectionProbe.UPDATE_ONCE
+
+func _move_probe_and_capture(target: Vector3) -> void:
+	# Relocation IS the UPDATE_ONCE recapture trigger: the probe re-renders
+	# whenever its transform moves, so no continuous easing is used.
+	if player_probe == null:
+		return
+	player_probe.global_position = target
+	player_probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	_probe_capture_position = target
+	_probe_time_since_capture = 0.0
+	_probe_refresh_pending = false
+	player_probe_recaptures += 1
+
+func _force_probe_refresh() -> void:
+	# Environment changed while stationary: relocation normally supplies the
+	# movement that triggers an UPDATE_ONCE capture, so nudge instead.
+	# Alternating +-offset around the canonical center avoids cumulative drift
+	# across repeated Day/Sunset switches.
+	if player_probe == null:
+		return
+	_probe_refresh_parity = not _probe_refresh_parity
+	var sign := 1.0 if _probe_refresh_parity else -1.0
+	player_probe.global_position = _probe_capture_position + Vector3(0.0, sign * PLAYER_PROBE_REFRESH_OFFSET, 0.0)
+	player_probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	_probe_time_since_capture = 0.0
+	_probe_refresh_pending = false
+	player_probe_recaptures += 1
+
+func _update_player_probe(delta: float) -> void:
+	# Settings policy lives in _apply_graphics_settings(); this only handles
+	# movement/time policy. The probe body never eases: it stays parked where
+	# its current cubemap was captured until a gate fires.
+	if player_probe == null or player == null or not _player_probe_allowed:
+		return
+	var target := _player_probe_target()
+	var distance := target.distance_to(_probe_capture_position)
+	if probe_should_snap(distance):
+		_move_probe_and_capture(target)
+		return
+	_probe_time_since_capture += delta
+	if probe_should_recapture(distance, _probe_time_since_capture):
+		_move_probe_and_capture(target)
+		return
+	if _probe_refresh_pending and _probe_time_since_capture >= PLAYER_PROBE_RECAPTURE_INTERVAL:
+		_force_probe_refresh()
+
 func _apply_graphics_settings() -> void:
 	if environment == null or environment.environment == null:
 		return
+	var profile_changed := false
 	if follow_environment_setting:
 		var selected_profile := profile_for_preset(int(GameSettings.active.get("environment_preset", 0)))
 		if selected_profile != environment_profile:
 			environment_profile = selected_profile
 			_apply_environment_profile(environment_profile)
 			_configure_gi_geometry()
+			profile_changed = true
+	# Cache probe policy here so _process() only handles movement/time policy.
+	var was_allowed := _player_probe_allowed
+	_player_probe_allowed = player_probe_allowed_for_preset(int(GameSettings.active.get("graphics_preset", 2)))
+	if player_probe != null:
+		player_probe.visible = _player_probe_allowed
+	if player_probe != null and profile_changed:
+		if _player_probe_allowed:
+			if _probe_time_since_capture >= PLAYER_PROBE_RECAPTURE_INTERVAL:
+				_force_probe_refresh()
+			else:
+				_probe_refresh_pending = true
+		else:
+			# Disabled: mark dirty rather than paying for a hidden capture.
+			_probe_refresh_pending = true
+	if _player_probe_allowed and not was_allowed and player_probe != null:
+		# Disabled -> enabled edge: snap immediately instead of waiting for
+		# the normal distance/time gate.
+		_move_probe_and_capture(_player_probe_target())
 	var env := environment.environment
 	env.ssao_enabled = bool(GameSettings.active.get("ssao_enabled", true))
 	env.ssil_enabled = bool(GameSettings.active.get("ssil_enabled", false))

@@ -1384,7 +1384,7 @@ func _apply_ground_pose(frame: SkierAnimationFrame) -> void:
 		_torso_carve * profile.carve_chest_roll - _terrain_pelvis_roll_amount * 0.22
 	))
 	_add_rotation(head, Vector3(
-		profile.neutral_torso_pitch * 0.62 + _crouch_amount * profile.speed_torso_pitch * 0.72 + frame.tuck * 0.24,
+		profile.neutral_torso_pitch * 0.62 + _crouch_amount * profile.speed_torso_pitch * 0.72 + frame.tuck * 0.44,
 		_torso_carve * profile.chest_counter_yaw * 0.45 + _secondary_motion_result.filtered_heading_delta * profile.chest_travel_alignment * 0.72,
 		_torso_carve * profile.carve_head_level - _terrain_pelvis_roll_amount * 0.16
 	))
@@ -1521,6 +1521,14 @@ func _apply_air_pose(frame: SkierAnimationFrame) -> void:
 	_add_rotation(pelvis, Vector3(-_air_size * phase_compact * 0.08, _smoothed_angular_velocity.y * 0.004 * _trick_pose_weight, 0.0))
 	_add_rotation(spine, Vector3(0.0, -silhouette_side * style_phase * 0.045 * style_weight, -silhouette_side * style_phase * profile.air_torso_counter_roll * style_weight))
 	_add_rotation(chest, Vector3(0.0, silhouette_side * style_phase * 0.07 * style_weight, -silhouette_side * style_phase * profile.air_torso_counter_roll * 0.72 * style_weight))
+	# The head stays alive in straight air: look slightly toward the landing as
+	# it approaches and keep the style-side bias, so takeoff carries the head
+	# attitude instead of snapping back to a zeroed mannequin pose.
+	_add_rotation(head, Vector3(
+		_air_descent_weight * 0.12 - _air_takeoff_weight * 0.05,
+		silhouette_side * style_phase * 0.10 * style_weight,
+		-silhouette_side * style_phase * profile.air_torso_counter_roll * 0.3 * style_weight
+	))
 	var arm_in := _air_size * phase_compact * 0.2 + rotation_compact * 0.28
 	var arm_open := profile.air_arm_balance_open * (0.32 + _air_descent_weight * 0.68) * (1.0 - rotation_compact * 0.45)
 	var takeoff_swing := _air_takeoff_weight * deliberate_pop * 0.2
@@ -1642,7 +1650,7 @@ func _apply_command_rotation_pose(frame: SkierAnimationFrame) -> void:
 		_add_rotation(spine, Vector3(-0.035 * yaw_amount, clampf(yaw_side * profile.trick_spine_yaw_limit * lead + residual_counter * 0.48, -profile.trick_spine_yaw_limit, profile.trick_spine_yaw_limit), -yaw_side * 0.025 * yaw_amount))
 		_add_rotation(chest, Vector3(-0.025 * yaw_amount, clampf(yaw_side * profile.trick_chest_yaw_limit * lead + residual_counter, -profile.trick_chest_yaw_limit, profile.trick_chest_yaw_limit), -yaw_side * 0.04 * yaw_amount))
 		var head_yaw := clampf(
-			yaw_side * profile.trick_head_yaw_limit * 0.28 * yaw_amount * (1.0 - _landing_anticipation)
+			yaw_side * profile.trick_head_yaw_limit * profile.spin_head_spot * 0.5 * yaw_amount * (1.0 - _landing_anticipation)
 			+ heading_spot
 			+ residual_counter * 0.45,
 			-profile.trick_head_yaw_limit,
@@ -1827,7 +1835,7 @@ func _apply_grind_pose(frame: SkierAnimationFrame) -> void:
 		-slide * profile.rail_slide_chest_counter,
 		-balance * profile.rail_torso_counter_lean
 	))
-	_add_rotation(head, Vector3(exit_prep * 0.1, slide * 0.18, 0.0))
+	_add_rotation(head, Vector3(exit_prep * 0.1, slide * 0.18, balance * profile.rail_torso_counter_lean * 0.5))
 
 	var near_failure := smoothstep(0.55, 1.0, balance_severity)
 	var arm_gain := profile.rail_arm_balance_gain * (1.0 + near_failure * 0.6)
@@ -2097,6 +2105,11 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 	_add_rotation(left_knee, Vector3(profile.grab_leg_tuck * extra_compact * 0.85, 0.0, 0.0))
 	_add_rotation(right_knee, Vector3(profile.grab_leg_tuck * extra_compact * 0.85, 0.0, 0.0))
 	_apply_pose_shape(definition, body_weight, leg_weight, arm_weight)
+	# Counter the torso fold so the gaze stays forward: no grab definition
+	# authors a head look, and deep folds (Japan spine -0.4 / chest -0.24)
+	# would otherwise bury the face in the knees.
+	var grab_torso_fold: float = (definition.spine_rotation.x + definition.chest_rotation.x) * body_weight
+	_add_rotation(head, Vector3(-grab_torso_fold * 0.45, 0.0, 0.0))
 	_apply_grab_tweak(definition, frame.grab_tweak, body_weight)
 	var reach_weight := clampf(
 		arm_stage * profile.grab_reach * definition.reach_response_scale,
@@ -2448,7 +2461,10 @@ func _enforce_joint_limits() -> void:
 	_clamp_rotation_target(pelvis, Vector3(-1.0, -0.72, -0.72), Vector3(0.65, 0.72, 0.72))
 	_clamp_rotation_target(spine, Vector3(-1.15, -0.78, -0.78), Vector3(0.72, 0.78, 0.78))
 	_clamp_rotation_target(chest, Vector3(-0.95, -0.82, -0.82), Vector3(0.72, 0.82, 0.82))
-	_clamp_rotation_target(head, Vector3(-0.55, -profile.trick_head_yaw_limit, -0.48), Vector3(0.55, profile.trick_head_yaw_limit, 0.48))
+	# Pitch range fits the full-tuck gaze compensation (~0.66): the other head
+	# contributors (flips <= 0.2, crash <= 0.18, rail 0.1, landing nod) stay
+	# well clear of the stops.
+	_clamp_rotation_target(head, Vector3(-0.70, -profile.trick_head_yaw_limit, -0.48), Vector3(0.70, profile.trick_head_yaw_limit, 0.48))
 	var shoulder_minimum := Vector3(-profile.grab_shoulder_pitch_limit, -profile.grab_shoulder_yaw_limit, -profile.grab_shoulder_roll_limit)
 	var shoulder_maximum := Vector3(profile.grab_shoulder_pitch_limit, profile.grab_shoulder_yaw_limit, profile.grab_shoulder_roll_limit)
 	_clamp_rotation_target(left_shoulder, shoulder_minimum, shoulder_maximum)

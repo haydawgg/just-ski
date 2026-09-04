@@ -184,6 +184,23 @@ if (Test-Path -LiteralPath $detailPath -PathType Leaf) {
 	}
 }
 
+
+Require-Match $resort 'ReflectionProbe\.new\(\)' "Resort must own exactly one player-following reflection probe."
+if (([regex]::Matches($resort, 'ReflectionProbe\.new\(\)')).Count -ne 1) {
+	$failures.Add("Resort must contain exactly one ReflectionProbe (the player-following experiment).")
+}
+Require-Match $resort 'static func player_probe_allowed_for_preset' "Probe preset policy must be a dedicated resort-local gate, not the GI policy."
+Require-Match $resort 'static func probe_should_recapture' "Probe relocation throttle must be a pure testable policy."
+Require-Match $resort 'static func probe_should_snap' "Probe teleport snap must be a pure testable policy."
+Require-Match $resort 'probe_should_recapture\(distance,\s*_probe_time_since_capture\)' "Probe updates must gate relocation on distance AND elapsed time."
+Require-Match $resort 'probe_should_snap\(distance\)' "Probe updates must snap on teleport distance."
+Require-Match $resort 'ambient_mode\s*=\s*ReflectionProbe\.AMBIENT_DISABLED' "Player-following probe must not contribute moving ambient light."
+Require-Match $resort 'PLAYER_PROBE_RECAPTURE_DISTANCE\s*:=\s*10\.0' "Probe recapture distance must be an explicit named constant."
+Require-Match $resort 'PLAYER_PROBE_RECAPTURE_INTERVAL\s*:=\s*0\.33' "Probe recapture interval must be an explicit named constant."
+Require-Match $resort 'PLAYER_PROBE_SNAP_DISTANCE\s*:=\s*40\.0' "Probe snap distance must be an explicit named constant."
+Reject-Match $resort 'update_mode\s*=\s*ReflectionProbe\.UPDATE_ALWAYS' "Player-following probe must never use continuous recapture."
+Reject-Match $resort 'graphics_preset_allows_gi\(int\(GameSettings\.active\.get\("graphics_preset"' "Probe preset gating must not reuse the GI capability policy."
+
 if (Test-Path -LiteralPath (Join-Path $RepoRoot "shaders/snow.gdshader")) {
 	$failures.Add("Legacy procedural snow shader still exists.")
 }
