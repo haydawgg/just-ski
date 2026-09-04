@@ -19,6 +19,13 @@ func _bake() -> void:
 		_fail("Could not instantiate the resort source scene")
 		return
 	_active_source = source
+	var requested_profile := _requested_profile()
+	if not requested_profile.is_empty():
+		var profile := load(requested_profile) as ParkCourseProfile
+		if profile == null:
+			_fail("Could not load course profile: %s" % requested_profile)
+			return
+		source.set("course_profile", profile)
 	# Build without entering the tree first so Resort._ready() does not add the
 	# player, camera, UI, or recorder. The static environment/course methods are
 	# then allowed to enter the tree so rail and feature _ready() hooks finish
@@ -35,6 +42,7 @@ func _bake() -> void:
 	preview.name = "ResortPreview"
 	preview.set_meta("generated_from", "res://world/resort.tscn")
 	preview.set_meta("generated_by", "res://tools/world/bake_resort_preview.gd")
+	preview.set_meta("course_profile", requested_profile if not requested_profile.is_empty() else "res://resources/course/default_course_profile.tres")
 	for child: Node in source.get_children():
 		var copy := child.duplicate()
 		_strip_runtime_scripts(copy)
@@ -73,6 +81,16 @@ func _requested_output() -> String:
 			if not next_value.is_empty():
 				return next_value
 	return DEFAULT_OUTPUT
+
+func _requested_profile() -> String:
+	var args := OS.get_cmdline_user_args()
+	for index: int in range(args.size()):
+		var argument := str(args[index])
+		if argument.begins_with("--profile="):
+			return argument.trim_prefix("--profile=")
+		if argument == "--profile" and index + 1 < args.size():
+			return str(args[index + 1])
+	return ""
 
 func _mark_static_geometry(source: Node) -> void:
 	for node: Node in source.find_children("*", "GeometryInstance3D", true, false):

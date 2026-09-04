@@ -29,10 +29,25 @@ static func build(parent: Node3D, profile: ParkCourseProfile, physics_profile: S
 		var feature_name := str(spec.get("name", "ParkFeature"))
 		feature.name = feature_name
 		_apply_asset_contract(feature, spec)
-		feature.set_meta("route", str(spec.get("route", "mixed")))
+		_apply_content_metadata(feature, spec)
 		feature.set_meta("difficulty", str(spec.get("difficulty", "intermediate")))
 		built[feature_name] = feature
 	return built
+
+static func _apply_content_metadata(feature: Node3D, spec: Dictionary) -> void:
+	var defaults := {
+		"feature_id": StringName(str(spec.get("name", "park_feature")).to_snake_case()),
+		"spot_id": &"unassigned",
+		"route": &"intermediate",
+		"skill_floor": 0,
+		"skill_ceiling": 5,
+		"intent_tags": [&"legacy"],
+		"risk_level": 1,
+		"hero_feature": false,
+		"optional": false,
+	}
+	for key: String in defaults:
+		feature.set_meta(key, spec.get(key, defaults[key]))
 
 static func _build_production_feature(parent: Node3D, spec: Dictionary, physics_profile: SkiPhysicsProfile, readability: Dictionary, asset_catalog: EnvironmentAssetCatalog) -> Node3D:
 	if asset_catalog == null:

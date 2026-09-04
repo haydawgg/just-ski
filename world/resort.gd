@@ -14,6 +14,7 @@ const DISTANT_MOUNTAIN_SHADER: Shader = preload("res://shaders/distant_mountain.
 const DAY_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/default_resort_environment_profile.tres")
 const GOLDEN_HOUR_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/golden_hour_resort_environment_profile.tres")
 const SUNSET_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/sunset_resort_environment_profile.tres")
+const SESSION_YARD_PROFILE: SessionYardCourseProfile = preload("res://resources/course/session_yard_course_profile.tres")
 
 @export var course_profile: ParkCourseProfile = preload("res://resources/course/default_course_profile.tres")
 @export var physics_profile: SkiPhysicsProfile = preload("res://resources/physics/default_ski_profile.tres")
@@ -33,6 +34,7 @@ var high_haze: MeshInstance3D
 var player_probe: ReflectionProbe
 var course_features: Dictionary = {}
 var course_recovery: CourseRecovery
+var content_tracker: ParkContentTracker
 var finish_trigger: Area3D
 
 # Player-following reflection experiment: exactly one probe, UPDATE_ONCE only.
@@ -56,6 +58,8 @@ var _probe_refresh_parity := false
 var player_probe_recaptures := 0
 
 func _ready() -> void:
+	if OS.get_cmdline_user_args().has("--session-yard"):
+		course_profile = SESSION_YARD_PROFILE
 	if follow_environment_setting:
 		environment_profile = profile_for_preset(int(GameSettings.active.get("environment_preset", 0)))
 	if environment_asset_catalog != null and (force_production_assets or OS.get_cmdline_user_args().has("--production-assets")):
@@ -247,6 +251,11 @@ func _build_player() -> void:
 	add_child(ui)
 	ui.call_deferred("bind_player", player)
 	ui.call_deferred("bind_camera", camera_rig)
+	content_tracker = ParkContentTracker.new()
+	content_tracker.name = "ParkContentTracker"
+	add_child(content_tracker)
+	content_tracker.configure(course_profile, player)
+	ui.call_deferred("bind_content_tracker", content_tracker)
 	ui.recovery_fade_out_duration = course_recovery.fade_out_duration
 	ui.recovery_fade_in_duration = course_recovery.fade_in_duration
 	course_recovery.recovery_started.connect(ui.notify_course_recovery)

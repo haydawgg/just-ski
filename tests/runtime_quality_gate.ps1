@@ -169,6 +169,8 @@ $sceneShards = [ordered]@{
 		"res://tests/environment_asset_contract_acceptance.tscn",
 		"res://tests/environment_asset_production_acceptance.tscn",
 		"res://tests/environment_tree_batch_acceptance.tscn",
+		"res://tests/content_pass_acceptance.tscn",
+		"res://tests/park_content_runtime_acceptance.tscn",
 		"res://tests/summit_environment_acceptance.tscn",
 		"res://tests/sunset_environment_acceptance.tscn",
 		"res://tests/camera_low_speed_acceptance.tscn",
@@ -214,6 +216,7 @@ $sceneShards = [ordered]@{
 		"res://tests/flick_gameplay_acceptance.tscn",
 		"res://tests/flick_flip_gameplay_acceptance.tscn",
 		"res://tests/trick_ui_acceptance.tscn",
+		"res://tests/park_challenge_acceptance.tscn",
 		"res://tests/session_flow_acceptance.tscn"
 	)
 	"systems-media" = @(

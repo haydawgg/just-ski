@@ -6,6 +6,7 @@ const OPTIONS_ICON: Texture2D = preload("res://assets/ui/icons/options.svg")
 const RESTART_ICON: Texture2D = preload("res://assets/ui/icons/restart.svg")
 
 var player: SkierController
+var content_tracker: ParkContentTracker
 var camera_rig: SkiCameraController
 var hud_overlay: Control
 var speed_label: Label
@@ -20,6 +21,8 @@ var menu_backdrop: ColorRect
 var pause_panel: PanelContainer
 var options_panel: PanelContainer
 var trick_guide_panel: PanelContainer
+var challenge_panel: PanelContainer
+var challenge_list_label: Label
 var results_panel: PanelContainer
 var results_score_label: Label
 var results_detail_label: Label
@@ -49,6 +52,7 @@ func _ready() -> void:
 	_build_pause_menu()
 	_build_results_panel()
 	_build_trick_guide()
+	_build_challenge_panel()
 	_build_options_menu()
 	_build_notice_overlay()
 	_build_recovery_overlay()
@@ -78,10 +82,18 @@ func bind_player(value: SkierController) -> void:
 func bind_camera(value: SkiCameraController) -> void:
 	camera_rig = value
 
+func bind_content_tracker(value: ParkContentTracker) -> void:
+	content_tracker = value
+	content_tracker.spot_changed.connect(_on_content_spot_changed)
+	content_tracker.challenge_updated.connect(_on_challenge_updated)
+	_refresh_challenges()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and get_tree().paused):
 		if trick_guide_panel.visible:
 			_close_trick_guide()
+		elif challenge_panel.visible:
+			_close_challenges()
 		elif options_panel.visible:
 			_close_options(false)
 		elif get_tree().paused:
@@ -251,6 +263,7 @@ func _build_pause_menu() -> void:
 	box.add_child(_named_button("ReturnMarkerButton", "Return to Marker", _respawn_from_menu))
 	box.add_child(_named_button("SetMarkerButton", "Set Marker Here", _set_marker_from_menu))
 	box.add_child(_named_button("TrickGuideButton", "Trick Guide", _open_trick_guide))
+	box.add_child(_named_button("ChallengesButton", "Spot Challenges", _open_challenges))
 	box.add_child(_named_button("OptionsButton", "Options", _open_options))
 	box.add_child(_named_button("RestartButton", "Restart from Summit", _restart_summit))
 	box.add_child(_named_button("QuitButton", "Quit to Desktop", _quit_game))
@@ -329,6 +342,27 @@ func _build_trick_guide() -> void:
 		"Down → up: pop off   •   Left stick: balance",
 	])
 	box.add_child(_named_button("TrickGuideBack", "Back", _close_trick_guide))
+
+func _build_challenge_panel() -> void:
+	challenge_panel = PanelContainer.new()
+	challenge_panel.name = "SpotChallengePanel"
+	challenge_panel.visible = false
+	challenge_panel.process_mode = Node.PROCESS_MODE_ALWAYS
+	challenge_panel.position = Vector2(430, 135)
+	challenge_panel.size = Vector2(740, 630)
+	add_child(challenge_panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 16)
+	challenge_panel.add_child(box)
+	var title := _label("SPOT CHALLENGES", 32)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	challenge_list_label = _label("Ride into a park spot to see its challenges.", 19)
+	challenge_list_label.name = "ChallengeList"
+	challenge_list_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	challenge_list_label.custom_minimum_size = Vector2(690, 470)
+	box.add_child(challenge_list_label)
+	box.add_child(_named_button("ChallengesBack", "Back", _close_challenges))
 
 func _add_guide_section(parent: VBoxContainer, heading: String, lines: Array[String]) -> void:
 	var heading_label := _label(heading, 20)
@@ -605,6 +639,7 @@ func _set_menu_visible(panel: Control) -> void:
 	pause_panel.visible = panel == pause_panel
 	results_panel.visible = panel == results_panel
 	trick_guide_panel.visible = panel == trick_guide_panel
+	challenge_panel.visible = panel == challenge_panel
 	options_panel.visible = panel == options_panel
 
 func _pause() -> void:
@@ -618,6 +653,7 @@ func _pause() -> void:
 func _resume() -> void:
 	options_panel.visible = false
 	trick_guide_panel.visible = false
+	challenge_panel.visible = false
 	pause_panel.visible = false
 	results_panel.visible = false
 	menu_backdrop.visible = false
@@ -683,6 +719,45 @@ func _close_trick_guide() -> void:
 	var guide_button := pause_panel.find_child("TrickGuideButton", true, false) as Button
 	if guide_button != null:
 		guide_button.grab_focus()
+
+func _open_challenges() -> void:
+	_refresh_challenges()
+	_set_menu_visible(challenge_panel)
+	(challenge_panel.find_child("ChallengesBack", true, false) as Button).grab_focus()
+
+func _close_challenges() -> void:
+	_set_menu_visible(pause_panel)
+	var challenges_button := pause_panel.find_child("ChallengesButton", true, false) as Button
+	if challenges_button != null:
+		challenges_button.grab_focus()
+
+func _refresh_challenges() -> void:
+	if challenge_list_label == null:
+		return
+	if content_tracker == null:
+		challenge_list_label.text = "Ride into a park spot to see its challenges."
+		return
+	var content_snapshot := content_tracker.snapshot()
+	var challenge_snapshot := content_snapshot.get("challenge", {}) as Dictionary
+	var available := challenge_snapshot.get("available", []) as Array
+	var lines: Array[String] = [str(content_snapshot.get("active_spot_name", "CURRENT SPOT")).to_upper(), ""]
+	if available.is_empty():
+		lines.append("No challenge is authored for this spot yet.")
+	for value: Variant in available:
+		var challenge := value as ParkChallengeSpec
+		if challenge == null:
+			continue
+		var complete := bool((challenge_snapshot.get("completed", {}) as Dictionary).get(challenge.id, false))
+		lines.append("✓ %s" % challenge.display_name if complete else "○ %s" % challenge.display_name)
+		lines.append("   %s" % challenge.description)
+		lines.append("")
+	challenge_list_label.text = "\n".join(lines)
+
+func _on_content_spot_changed(_spot: ParkSpotSpec) -> void:
+	_refresh_challenges()
+
+func _on_challenge_updated(_snapshot: Dictionary) -> void:
+	_refresh_challenges()
 
 func _open_options() -> void:
 	GameSettings.begin_edit()
