@@ -9,4 +9,4 @@ func step_pre_bail(current_weight: float, current_side: float, frame: SkierAnima
 	return {"weight": weight, "side": side}
 
 func is_crash_stage(stage: int) -> bool:
-	return stage in [CrashContext.Stage.RELEASE, CrashContext.Stage.IMPACT, CrashContext.Stage.FALL, CrashContext.Stage.REST]
+	return stage in [CrashContext.Stage.RELEASE, CrashContext.Stage.IMPACT, CrashContext.Stage.FALL, CrashContext.Stage.REST, CrashContext.Stage.RECOVERY]

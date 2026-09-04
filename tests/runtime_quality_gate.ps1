@@ -199,6 +199,7 @@ $sceneShards = [ordered]@{
 		"res://tests/grab_animation_acceptance.tscn",
 		"res://tests/animation_silhouette_acceptance.tscn",
 		"res://tests/animation_polish_acceptance.tscn",
+		"res://tests/animation_transition_regression_acceptance.tscn",
 		"res://tests/crash_recovery_acceptance.tscn"
 	)
 	"tricks-gameplay" = @(

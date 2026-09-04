@@ -320,6 +320,21 @@ extends Resource
 @export var rail_exit_pelvis_rise: float = 0.07
 @export var rail_exit_arm_ready: float = 0.12
 
+@export_category("Lower Body IK")
+@export_range(0.0, 1.0) var ground_leg_ik_weight: float = 1.0
+@export_range(0.0, 1.0) var rail_leg_ik_weight: float = 0.94
+@export_range(0.0, 1.0) var air_leg_ik_weight: float = 0.0
+@export_range(0.0, 1.0) var bail_leg_ik_weight: float = 0.0
+@export var leg_ik_weight_response: float = 12.0
+@export var leg_ik_max_angular_rate: float = 8.0
+@export var leg_ik_pelvis_translation_limit: float = 0.14
+@export var leg_ik_pelvis_rotation_limit: float = 0.14
+@export var leg_ik_max_reach_ratio: float = 1.02
+@export var leg_ik_min_stance_width: float = 0.16
+@export var pose_handoff_duration: float = 0.2
+@export var rail_contact_duration: float = 0.12
+@export var rail_compression_duration: float = 0.2
+
 @export_category("Reactions")
 @export var pop_duration: float = 0.24
 @export var clean_landing_duration: float = 0.3
@@ -335,6 +350,9 @@ extends Resource
 @export var crash_directional_response: float = 0.7
 @export var crash_rest_pelvis_drop: float = 0.28
 @export var crash_rest_arm_spread: float = 0.82
+@export var crash_recovery_duration: float = 0.72
+@export var crash_recovery_recenter_portion: float = 0.45
+@export var crash_recovery_ik_start: float = 0.38
 @export var pre_bail_response: float = 8.0
 @export var pre_bail_arm_open: float = 0.68
 @export var pre_bail_torso_counter: float = 0.34

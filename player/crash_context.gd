@@ -22,6 +22,7 @@ enum Stage {
 	IMPACT,
 	FALL,
 	REST,
+	RECOVERY,
 }
 
 var active := false
@@ -39,6 +40,7 @@ var balance_error := 0.0
 var rail_balance := 0.0
 var lateral_bias := 0.0
 var elapsed := 0.0
+var stage_elapsed := 0.0
 var rest_elapsed := 0.0
 var rest_detected := false
 var collision_collider := ""
@@ -75,6 +77,7 @@ func begin(
 	rail_balance = clampf(crash_rail_balance, -1.35, 1.35)
 	lateral_bias = clampf(crash_lateral_bias, -1.0, 1.0)
 	elapsed = 0.0
+	stage_elapsed = 0.0
 	rest_elapsed = 0.0
 	rest_detected = false
 	collision_collider = ""
@@ -106,6 +109,7 @@ func reset() -> void:
 	rail_balance = 0.0
 	lateral_bias = 0.0
 	elapsed = 0.0
+	stage_elapsed = 0.0
 	rest_elapsed = 0.0
 	rest_detected = false
 	collision_collider = ""
@@ -113,6 +117,20 @@ func reset() -> void:
 	collision_layer = 0
 	collision_normal = Vector3.UP
 	collision_position = Vector3.ZERO
+
+func advance(delta: float) -> void:
+	var step := maxf(delta, 0.0)
+	elapsed += step
+	stage_elapsed += step
+
+func set_stage(next_stage: int) -> void:
+	if stage == next_stage:
+		return
+	stage = next_stage
+	stage_elapsed = 0.0
+
+func normalized_stage_progress(duration: float) -> float:
+	return clampf(stage_elapsed / maxf(duration, 0.001), 0.0, 1.0)
 
 func snapshot() -> Dictionary:
 	return {
@@ -131,6 +149,7 @@ func snapshot() -> Dictionary:
 		"rail_balance": rail_balance,
 		"lateral_bias": lateral_bias,
 		"elapsed": elapsed,
+		"stage_elapsed": stage_elapsed,
 		"rest_elapsed": rest_elapsed,
 		"rest_detected": rest_detected,
 		"collision_collider": collision_collider,

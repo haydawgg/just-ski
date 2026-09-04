@@ -152,12 +152,19 @@ func _test_bounded_rest_and_recovery() -> void:
 	var frames := 0
 	var stages_seen: Dictionary = {}
 	var equipment_failure_reported := false
+	var recovery_frames := 0
+	var previous_stage := "NONE"
 	while skier.state == SkierController.State.BAIL and frames < 420:
 		await get_tree().physics_frame
 		frames += 1
 		var crash := skier.telemetry().crash as Dictionary
 		var stage := str(crash.get("stage", "NONE"))
 		stages_seen[stage] = true
+		if stage == "RECOVERY":
+			recovery_frames += 1
+		if stage != previous_stage and previous_stage != "NONE" and float(crash.get("stage_elapsed", 999.0)) > 0.05:
+			failures.append("Crash stage-local clock did not reset at %s handoff" % stage)
+		previous_stage = stage
 		var equipment := skier.telemetry().crash_equipment as Dictionary
 		if not equipment_failure_reported and (not bool(equipment.get("valid", false)) or not bool(equipment.get("ski_separation_in_range", false)) or not bool(equipment.get("poles_attached", false))):
 			failures.append("Crash equipment lost calibrated attachment during %s stage" % stage)
@@ -168,7 +175,11 @@ func _test_bounded_rest_and_recovery() -> void:
 		failures.append("Crash recovered before a readable minimum crash duration")
 	if bool((skier.telemetry().crash as Dictionary).active):
 		failures.append("In-place recovery retained active crash state")
-	for expected_stage: String in ["RELEASE", "IMPACT", "FALL", "REST"]:
+	if recovery_frames < 20:
+		failures.append("Recovery did not remain in BAIL long enough for a continuous get-up")
+	if int(skier.telemetry().respawn_count) != 0:
+		failures.append("Ordinary in-place recovery incorrectly used the respawn path")
+	for expected_stage: String in ["RELEASE", "IMPACT", "FALL", "REST", "RECOVERY"]:
 		if not stages_seen.has(expected_stage):
 			failures.append("Crash lifecycle never exposed %s equipment stage" % expected_stage)
 	remove_child(skier)

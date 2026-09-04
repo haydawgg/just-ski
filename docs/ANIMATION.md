@@ -128,7 +128,7 @@ Landing animation has two separate responsibilities:
 - anticipation before contact, using the predicted landing frame;
 - impact/recovery after the authoritative gameplay landing event.
 
-Before contact, the skier can begin aligning skis, spotting, opening the arms, and extending the legs. A presentation-only readiness measure evaluates whether the current pose is visually prepared; it does not decide the gameplay landing result.
+Before contact, the skier can begin aligning skis, spotting, opening the arms, and extending the legs. A continuous presentation-only readiness envelope evaluates time-to-contact, surface orientation, vertical motion, and rotational residual. It does not replace the active trick phase or decide the gameplay landing result; the evaluated trick pose remains visible until contact starts the handoff.
 
 After contact, clean, sketchy, and hard landing events drive different compression and recovery responses. Clean landings may trigger a short stomp layer. Failed landings hand off to the bail presentation instead of also playing a successful landing reaction.
 
@@ -136,13 +136,30 @@ After contact, clean, sketchy, and hard landing events drive different compressi
 
 Rail presentation reads the gameplay grind state, spline direction, balance, approach information, entry severity, and selected rail pose.
 
-The layer covers neutral 50-50 stance, boardslide presentation, balance compensation, entry compression, exit preparation, and pop/release handoff. Gameplay remains responsible for spline travel and balance failure.
+The layer moves through `APPROACH`, `CONTACT`, `COMPRESSION`, `GRIND`, and `RELEASE`. It consumes contact point, tangent/up, slope, kink severity, speed, balance error/velocity, and progress for stance and counterbalance. Gameplay remains responsible for spline travel, ski contact targets, and balance failure.
+
+## Lower-body ownership and IK
+
+Gameplay owns the root. Ground/rail contact owns ski targets; free-air and bail presentation own the boot pose and derive each ski from its fixed binding transform. A state transition captures the final evaluated pose, including procedural layers and constraints, before the receiving owner begins.
+
+The canonical pose controller routes authored ski intent through hips, knees, and boots, then keeps ski-local rotation neutral. A specialized analytic two-bone solve moves each hip-knee-boot chain toward contact-owned boot targets. Stable knee hints, bilateral pelvis compensation, reach and crossing checks, correction-rate limits, and state-dependent weights prevent inverted knees or stretched legs. Skiing IK releases in air/bail and returns progressively during rail contact and recovery.
+
+```text
+physics/gameplay root
+  -> gameplay state and ski/contact targets
+  -> base pose + procedural layers
+  -> evaluated-pose transition
+  -> ski-target smoothing + pelvis compensation
+  -> ski-constrained leg IK
+  -> arm/grab IK
+  -> skeleton/equipment output
+```
 
 ## Bail presentation
 
 Bail animation is a staged procedural fall layered over gameplay's authoritative `BAIL` motion. It is not a physics ragdoll.
 
-The animation controller reads the captured crash context and produces a controlled release, impact, fall, and rest presentation. Recovery/respawn events reset the visual state at the same boundary used by gameplay.
+The animation controller reads the captured crash context and produces `RELEASE`, `IMPACT`, `FALL`, `REST`, and `RECOVERY` using stage-local progress. Ordinary recovery remains in `BAIL` while the body recenters and leg IK reacquires contact, then emits recovery completion and enters ground presentation. Respawn remains a separate hard-reset path.
 
 ## Secondary motion
 
@@ -162,7 +179,7 @@ Prefer changing these resources or the existing layer logic over adding overlapp
 
 ## Debugging
 
-F3 exposes animation telemetry such as active rig adapter, fallback reason, locomotion state, pose/blend information, terrain influence, air/trick phases, landing readiness, grab state, rail state, secondary motion, and bail presentation. The production adapter diagnostics also expose measured arm lengths, attached target positions, palm contact points, post-solve reach errors, helper-bone state, and the current reach solver state.
+F3 exposes animation telemetry such as pose owner and handoff progress, leg IK weight, pelvis compensation, binding error, reach/infeasibility, rail/crash phase, and the existing rig, trick, landing, grab, and secondary-motion information. Debug geometry shows contact targets, boot axes, knee hints, leg chains, and the rail frame. Opt-in transition tracing logs only ownership and lifecycle changes.
 
 The exact diagnostic fields are implementation details and may change as the prototype evolves.
 
