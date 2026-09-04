@@ -118,6 +118,8 @@ New content must continue to build from course data and reusable builders. Do no
 
 This milestone should use the current feature vocabulary whenever possible. It is primarily a redesign of placements, approaches, exits, and relationships between existing features.
 
+**M1 is the product-validation gate for this phase.** Do not proceed into substantial M2–M4 implementation merely because the planned geometry exists. First demonstrate through human play that the redesigned resort creates voluntary retries, readable choices, memorable spots, and useful recovery behavior. Minimal diagnostic metadata needed to observe M1 is allowed, but new feature systems, challenge infrastructure, and authoring migrations remain downstream of this gate.
+
 ## M1.1 — Summit Fundamentals
 
 Use the current summit gate, rollers, `SmallTable`, `SummitFlatBox`, and `BeginnerTube` as one explicit learning cluster.
@@ -267,23 +269,52 @@ Turn `StepDownTable`, `FinalCannon`, `FinalBox`, `FinalDFDRail`, `FinalCatchBerm
 
 ---
 
+## M1 validation gate — Prove the spot/line philosophy
+
+Structural acceptance criteria are necessary but not sufficient. A spot can technically support three lines and still fail to create interesting play. Before substantial M2–M4 implementation, run clean-player playtests and record observed behavior rather than explaining intended routes first.
+
+### Human playtest scorecard
+
+Use these as directional prototype targets, not telemetry-driven progression requirements:
+
+| Measure | Target signal |
+|---|---|
+| Marker reuse | Players intentionally return to at least two spots during a session. |
+| Voluntary retries | A player makes at least three attempts at a favored spot without being instructed to do so. |
+| Route diversity | Different routes or techniques appear across players or repeated attempts without prompting. |
+| Discovery | At least one advanced or unintended line/approach is discovered during skilled play. |
+| Failure recovery | Missed transfers/features often allow continued skiing when physically plausible instead of forcing a reset. |
+| Spot recall | After a run, players can identify or describe at least two memorable spots. |
+| Beginner readability | A safe route is recognizable without requiring an explanation of the intended line. |
+| Expert depth | Skilled players find a reason to revisit at least one spot after successfully traversing it. |
+
+Do not treat one player's exact counts as a pass/fail statistic. Look for repeated evidence across sessions. If players consistently traverse a spot once and move on, revise geometry before adding systems intended to direct them back to it.
+
+### Performance regression checkpoints
+
+M1 deliberately increases local course density and visual overlap, so performance should be checked while the layout is still cheap to change.
+
+- After **Technical Yard**, run the maintained quality gate and benchmark the dense-feature view on the normal reference hardware/settings. Compare against an ancestry-compatible baseline on the same machine.
+- After **Lower Hero Spot + Finale**, repeat the maintained deterministic 1080p scenario matrix used for active performance work.
+- Treat these checks as regression detection, not invitations to speculative optimization. If a meaningful regression appears, identify the CPU/GPU/submission/memory bound before changing content or rendering systems.
+- Preserve matched visual review when a performance fix changes feature readability, snow, environment presentation, or sight lines.
+
+---
+
 # Milestone 2 — Add content semantics and designer-facing structure
 
-**Priority: P0/P1**
+**Priority: P0/P1 after M1 validation**
 
-The current dictionary-based `feature_specs()` is useful for fast iteration, but it carries too little semantic information for a richer park. Add metadata before adding a challenge system or larger resort.
+The current dictionary-based `feature_specs()` is useful for fast iteration, but it carries too little semantic information for a richer park. Add only the semantics that have demonstrated value during M1 before adding a challenge system or larger resort.
 
-## M2.1 — Extend feature metadata
+## M2.1 — Add observational feature metadata first
 
-Add backward-compatible spec fields such as:
+Add backward-compatible fields that describe stable authored intent without pretending that untested difficulty judgments are objective:
 
 ```text
 spot_id
 route
-skill_floor
-skill_ceiling
 intent_tags
-risk_level
 hero_feature
 optional
 ```
@@ -304,12 +335,14 @@ style
 
 `ParkCourseBuilder` should copy these fields into feature metadata exactly as it already copies route/difficulty and asset-contract metadata.
 
+Minimal `spot_id` and `intent_tags` may be introduced during M1 if they are required for diagnostic playtest instrumentation, but they should not expand into a broader content framework before the M1 gate is satisfied.
+
 ### Acceptance criteria
 
 - Existing feature specs remain valid with defaults.
-- Every production course feature has a `spot_id`.
-- Every hero feature identifies its expected skill range and intent.
-- Debug/test code can query these tags without knowing individual node names.
+- Every production course feature has a stable `spot_id` once M2 is adopted.
+- Hero features and intended uses can be queried without knowing individual node names.
+- Metadata supports debug/playtest observation without becoming authoritative gameplay logic.
 
 ---
 
@@ -343,9 +376,29 @@ Do not make spots responsible for physics. They are content organization and UX 
 
 ---
 
-## M2.3 — Improve authoring workflow
+## M2.3 — Calibrate inferred difficulty and risk metadata
 
-After the M1 layout has been validated, consider migrating feature dictionaries into typed Godot `Resource` objects (`ParkFeatureSpec`, `ParkSpotSpec`) so designers can edit data without modifying GDScript source.
+Only after M1 playtests provide evidence, consider adding fields such as:
+
+```text
+skill_floor
+skill_ceiling
+risk_level
+```
+
+These values should summarize observed player behavior and known approach demands rather than encode the designer's first guess. A feature's effective difficulty can change materially with approach speed, sight lines, camera composition, landing geometry, and nearby recovery options.
+
+### Acceptance criteria
+
+- Difficulty/risk values are based on observed play or a documented mechanical reason.
+- Values can be revised without changing movement, scoring, or landing authority.
+- Challenge or UI systems may read these fields later, but physics does not depend on them.
+
+---
+
+## M2.4 — Improve authoring workflow
+
+After the M1 layout has been validated and the M2 field set has remained stable through iteration, consider migrating feature dictionaries into typed Godot `Resource` objects (`ParkFeatureSpec`, `ParkSpotSpec`) so designers can edit data without modifying GDScript source.
 
 Do not start this migration before the field set is stable enough to justify it.
 
@@ -363,7 +416,7 @@ Do not start this migration before the field set is stable enough to justify it.
 
 **Priority: P1**
 
-Add new feature kinds because they unlock new skiing decisions, not because the list looks small.
+Add new feature kinds because they unlock new skiing decisions, not because the list looks small. M3 remains downstream of the complete M1 playtest: implement only the primitives that validated spots still cannot express cleanly with the existing vocabulary.
 
 ## M3.1 — True snow spine
 
@@ -436,9 +489,9 @@ Possible implementation approaches:
 
 # Milestone 4 — Add optional spot and line challenges
 
-**Priority: P1**
+**Priority: P1 after M1 validation**
 
-Challenges should teach possibilities and create goals without turning the game into a locked campaign.
+Challenges should teach possibilities and create goals without turning the game into a locked campaign. Build them only after playtests show that the underlying spots are worth retrying without challenge prompts.
 
 ## Design rule
 
@@ -559,7 +612,7 @@ small jump ---- central setup ---- medium jump
 
 **Priority: Continuous**
 
-Content should be changed based on observed player behavior, not only designer intent.
+Content should be changed based on observed player behavior, not only designer intent. The M1 validation gate is the first formal use of this loop; later milestones should continue it rather than treating validation as a one-time phase.
 
 ## Human playtest questions
 
@@ -601,7 +654,9 @@ A strong spot should show:
 - increasing success across attempts;
 - both safe and ambitious behavior;
 - meaningful use of markers;
-- low rates of accidental out-of-bounds recovery caused by layout mistakes.
+- low rates of accidental out-of-bounds recovery caused by layout mistakes;
+- player recall after leaving the spot;
+- continued interest from skilled players after successful traversal.
 
 ---
 
@@ -612,16 +667,22 @@ Use this order unless playtesting reveals a blocker:
 ```text
 1. M1 Summit Fundamentals
 2. M1 Upper Fork
-3. M1 Technical Yard
-4. M1 Transfer Zone
-5. M1 Lower Hero Spot
-6. M1 Finale
-7. M2 feature + spot metadata
-8. playtest the complete redesigned resort
-9. M3 only the new feature kinds that the playtest still needs
-10. M4 optional challenges
-11. M5 Session Yard
+3. playtest and iterate the first slice until the M1 design signals are present
+4. M1 Technical Yard
+5. performance regression checkpoint
+6. M1 Transfer Zone
+7. M1 Lower Hero Spot
+8. M1 Finale
+9. complete-resort M1 playtest + final M1 performance checkpoint
+10. M2.1 observational metadata + M2.2 spot definitions
+11. M2.3 calibrate difficulty/risk only from observed play
+12. M3 only the new feature kinds that validated content still needs
+13. M4 optional challenges
+14. M5 Session Yard
+15. M2.4 typed-resource authoring migration only when the field set is stable enough to justify it
 ```
+
+Minimal `spot_id`/`intent_tags` may be added earlier if needed to support M1 diagnostics, but do not let that exception turn into premature M2 infrastructure work.
 
 Do not implement all new feature types before the M1 redesign. The existing vocabulary is already broad enough to prove whether the spot/line philosophy works.
 
@@ -631,7 +692,7 @@ Do not implement all new feature types before the M1 redesign. The existing voca
 
 A spot is ready for the maintained prototype when all of the following are true:
 
-- [ ] It has a stable `spot_id`.
+- [ ] It has a stable `spot_id` once M2 observational metadata is adopted.
 - [ ] It has an obvious low-risk route.
 - [ ] It has at least one intentional intermediate route.
 - [ ] It has at least one expert/creative use.
@@ -643,7 +704,9 @@ A spot is ready for the maintained prototype when all of the following are true:
 - [ ] Collision and visual geometry agree.
 - [ ] The deterministic preview bake shows the feature correctly.
 - [ ] Existing runtime quality gates remain green.
+- [ ] Relevant M1 performance regression checks remain within the maintained contract or have a measured, understood exception.
 - [ ] At least one human playtest has been performed from a clean player perspective.
+- [ ] The playtest records whether the player voluntarily retries, discovers alternate use, and can recall the spot afterward.
 
 ---
 
@@ -672,7 +735,8 @@ The best first code/content change is deliberately small:
 2. Do not change physics or trick tuning.
 3. Bake the resort preview and review sight lines/spacing.
 4. Run the full quality gate.
-5. Playtest whether a new player can identify the safe route and whether an experienced player can find at least one crossover/transfer.
-6. Iterate geometry before continuing farther downhill.
+5. Playtest from a clean-player perspective without explaining the intended routes first.
+6. Record the M1 validation signals: safe-route readability, voluntary retries, marker use, route diversity, recovery behavior, spot recall, and expert crossover/transfer discovery.
+7. Iterate geometry until the first slice demonstrates the spot/line philosophy before continuing farther downhill.
 
-If that slice works, apply the same design rules to the Technical Yard, Transfer Zone, Lower Hero Spot, and Finale.
+If that slice works, apply the same design rules to the Technical Yard, Transfer Zone, Lower Hero Spot, and Finale, using the M1 validation gate before committing to broader content systems.
