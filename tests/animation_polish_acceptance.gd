@@ -134,20 +134,19 @@ func _run_full_sequence(hz: float) -> Dictionary:
 	frame.crash_angular_speed = 6.0
 	rig.trigger(SkierAnimationController.AnimationEvent.BAIL, 1.0, 1.0)
 	frame.crash_stage = CrashContext.Stage.RELEASE
-	frame.crash_elapsed = 0.08
-	_advance(rig, frame, 0.18, delta, "CRASH_RELEASE", stats)
+	frame.crash_elapsed = 0.0
+	_advance_crash(rig, frame, 0.18, delta, "CRASH_RELEASE", stats)
 	frame.crash_stage = CrashContext.Stage.IMPACT
-	frame.crash_elapsed = 0.28
-	_advance(rig, frame, 0.22, delta, "CRASH_IMPACT", stats)
+	_advance_crash(rig, frame, 0.22, delta, "CRASH_IMPACT", stats)
 	frame.crash_stage = CrashContext.Stage.FALL
-	frame.crash_elapsed = 0.72
-	_advance(rig, frame, 0.48, delta, "CRASH_FALL", stats)
+	_advance_crash(rig, frame, 0.48, delta, "CRASH_FALL", stats)
 	frame.crash_stage = CrashContext.Stage.REST
 	frame.crash_rest_detected = true
-	frame.crash_elapsed = 1.3
-	_advance(rig, frame, 0.38, delta, "CRASH_REST", stats)
+	_advance_crash(rig, frame, 0.38, delta, "CRASH_REST", stats)
+	frame.crash_stage = CrashContext.Stage.RECOVERY
+	_advance_crash(rig, frame, rig.profile.crash_recovery_duration, delta, "CRASH_RECOVERY", stats)
 
-	rig.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
+	rig.trigger(SkierAnimationController.AnimationEvent.RECOVERY_COMPLETE)
 	frame.reset()
 	_set_ground(frame)
 	frame.speed_mps = 14.0
@@ -225,6 +224,7 @@ func _new_stats() -> Dictionary:
 		"seen_crash_impact": false,
 		"seen_crash_fall": false,
 		"seen_crash_rest": false,
+		"seen_crash_recovery": false,
 	}
 
 func _advance(rig: SkierAnimationController, frame: SkierAnimationFrame, duration: float, delta: float, stage: String, stats: Dictionary) -> void:
@@ -252,6 +252,16 @@ func _advance_air(rig: SkierAnimationController, frame: SkierAnimationFrame, dur
 		rig.apply_frame(frame, delta)
 		_record(rig, stage, delta, stats)
 
+func _advance_crash(rig: SkierAnimationController, frame: SkierAnimationFrame, duration: float, delta: float, stage: String, stats: Dictionary) -> void:
+	var count := maxi(1, int(round(duration / delta)))
+	frame.crash_stage_elapsed = 0.0
+	for index: int in count:
+		frame.crash_elapsed += delta
+		frame.crash_stage_elapsed += delta
+		frame.crash_stage_progress = float(index + 1) / float(count)
+		rig.apply_frame(frame, delta)
+		_record(rig, stage, delta, stats)
+
 func _record(rig: SkierAnimationController, stage: String, _delta: float, stats: Dictionary) -> void:
 	var snapshot := rig.debug_snapshot()
 	stats.seen_ground = bool(stats.seen_ground) or str(snapshot.state) == "GROUND"
@@ -262,6 +272,7 @@ func _record(rig: SkierAnimationController, stage: String, _delta: float, stats:
 	stats.seen_crash_impact = bool(stats.seen_crash_impact) or str(snapshot.crash_stage) == "Impact"
 	stats.seen_crash_fall = bool(stats.seen_crash_fall) or str(snapshot.crash_stage) == "Fall"
 	stats.seen_crash_rest = bool(stats.seen_crash_rest) or str(snapshot.crash_stage) == "Rest"
+	stats.seen_crash_recovery = bool(stats.seen_crash_recovery) or str(snapshot.crash_stage) == "Recovery"
 	stats.peak_torso_lag = maxf(float(stats.peak_torso_lag), (snapshot.get("torso_follow_through", Vector3.ZERO) as Vector3).length())
 	stats.peak_arm_lag = maxf(float(stats.peak_arm_lag), maxf(
 		(snapshot.get("left_arm_inertia", Vector3.ZERO) as Vector3).length(),
@@ -302,7 +313,7 @@ func _check_run_metrics(stats: Dictionary) -> void:
 	var hz := float(stats.hz)
 	if not bool(stats.seen_ground) or not bool(stats.seen_air) or not bool(stats.seen_grind) or not bool(stats.seen_bail):
 		failures.append("%.0f Hz full run did not traverse ground, air, grind, and crash" % hz)
-	if not bool(stats.seen_crash_release) or not bool(stats.seen_crash_impact) or not bool(stats.seen_crash_fall) or not bool(stats.seen_crash_rest):
+	if not bool(stats.seen_crash_release) or not bool(stats.seen_crash_impact) or not bool(stats.seen_crash_fall) or not bool(stats.seen_crash_rest) or not bool(stats.seen_crash_recovery):
 		failures.append("%.0f Hz full run did not traverse every controlled-fall stage" % hz)
 	if float(stats.peak_torso_lag) < 0.008 or float(stats.peak_torso_lag) > 0.3:
 		failures.append("%.0f Hz torso follow-through was absent or excessive (%.3f)" % [hz, stats.peak_torso_lag])

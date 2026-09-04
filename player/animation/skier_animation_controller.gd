@@ -15,6 +15,7 @@ const LandingPoseLayerModule = preload("res://player/animation/landing_pose_laye
 const RailPoseLayerModule = preload("res://player/animation/rail_pose_layer.gd")
 const CrashReactionLayerModule = preload("res://player/animation/crash_reaction_layer.gd")
 const SecondaryMotionLayerModule = preload("res://player/animation/secondary_motion_layer.gd")
+const SkiConstrainedLegIKModule = preload("res://player/animation/ski_constrained_leg_ik.gd")
 const GRAB_CONTACT_ACQUISITION_DISTANCE := 0.18
 const GRAB_CONTACT_MAINTENANCE_DISTANCE := 0.12
 
@@ -26,6 +27,7 @@ enum AnimationEvent {
 	GRIND_ENTER,
 	GRIND_EXIT,
 	BAIL,
+	RECOVERY_COMPLETE,
 	RESPAWN,
 }
 
@@ -42,6 +44,7 @@ const MIN_LANDING_PRESENTATION_TIME := 0.28
 @export var style_library: Resource = preload("res://resources/animation/default_style_pose_library.tres")
 @export var rig_mode: RigMode = RigMode.AUTO
 @export var skeleton_profile: SkierSkeletonProfile = preload("res://resources/animation/default_skier_skeleton_profile.tres")
+@export var trace_transitions := false
 
 var balance_root: Node3D
 var pelvis: Node3D
@@ -86,6 +89,7 @@ var _landing_pose_layer := LandingPoseLayerModule.new()
 var _rail_pose_layer := RailPoseLayerModule.new()
 var _crash_reaction_layer := CrashReactionLayerModule.new()
 var _secondary_motion_layer := SecondaryMotionLayerModule.new()
+var _leg_ik_solver := SkiConstrainedLegIKModule.new()
 
 var _rotation_targets: Dictionary = {}
 var _position_targets: Dictionary = {}
@@ -243,10 +247,31 @@ var _rail_balance_last := 0.0
 var _rail_phase_name := "Idle"
 var _crash_stage_name := "None"
 var _crash_layer_weight := 0.0
+var _crash_stage_progress := 0.0
 var _crash_handoff_rotations: Dictionary = {}
 var _pre_bail_weight := 0.0
 var _pre_bail_side := 0.0
 var _secondary_motion_result = _secondary_motion_layer.result
+var _pose_owner := "AIR_BOOT"
+var _transition_source := "AIR_BOOT"
+var _transition_target := "AIR_BOOT"
+var _transition_progress := 1.0
+var _transition_duration := 0.0
+var _transition_rotations: Dictionary = {}
+var _transition_positions: Dictionary = {}
+var _previous_crash_stage := CrashContext.Stage.NONE
+var _left_binding_rest := Transform3D.IDENTITY
+var _right_binding_rest := Transform3D.IDENTITY
+var _left_ski_target_smoothed := Transform3D.IDENTITY
+var _right_ski_target_smoothed := Transform3D.IDENTITY
+var _ski_targets_initialized := false
+var _leg_ik_weight := 0.0
+var _pelvis_ik_correction := Vector3.ZERO
+var _left_leg_ik_debug: Dictionary = {}
+var _right_leg_ik_debug: Dictionary = {}
+var _has_evaluated_frame := false
+var _left_boot_target_world := Transform3D.IDENTITY
+var _right_boot_target_world := Transform3D.IDENTITY
 
 func _ready() -> void:
 	_build_articulated_rig()
@@ -256,7 +281,16 @@ func _ready() -> void:
 
 func apply_frame(frame: SkierAnimationFrame, delta: float) -> void:
 	_elapsed += delta
+	var next_owner := _pose_owner_for_frame(frame)
+	var ownership_changed := next_owner != _pose_owner or frame.locomotion_state != _current_state
+	var crash_stage_changed := frame.locomotion_state == STATE_BAIL and frame.crash_stage != _previous_crash_stage
+	if _has_evaluated_frame and (ownership_changed or crash_stage_changed):
+		_begin_evaluated_pose_transition(next_owner, frame)
+	if ownership_changed and next_owner == "BAIL_BOOT":
+		_release_incompatible_bail_layers()
 	_current_state = frame.locomotion_state
+	_pose_owner = next_owner
+	_previous_crash_stage = frame.crash_stage
 	_cache_air_style_side(frame)
 	_update_skiing_dynamics(frame, delta)
 	_update_terrain_suspension(frame, delta)
@@ -284,11 +318,15 @@ func apply_frame(frame: SkierAnimationFrame, delta: float) -> void:
 	_apply_reaction(frame, delta)
 	_apply_secondary_motion(frame)
 	_apply_pre_bail_layer(frame)
+	_route_ski_intent_through_legs()
+	_apply_evaluated_pose_transition(delta)
 	_enforce_joint_limits()
 	_blend_targets(delta)
+	_apply_ski_constrained_leg_ik(frame, delta)
 	if rig_adapter != null:
 		rig_adapter.sync_pose(delta, _grab_reach_requests)
 		_sync_grab_visual_metrics()
+	_has_evaluated_frame = true
 
 func trigger(event: int, strength: float = 1.0, side: float = 0.0) -> void:
 	_reaction_event = event
@@ -310,6 +348,10 @@ func trigger(event: int, strength: float = 1.0, side: float = 0.0) -> void:
 			_capture_crash_handoff()
 			_reaction_duration = 1.2
 			_clear_landing_state()
+		AnimationEvent.RECOVERY_COMPLETE:
+			_reaction_duration = 0.0
+			_reaction_event = -1
+			_trace_transition("recovery_complete")
 		AnimationEvent.RESPAWN:
 			_reaction_duration = 0.0
 			_reset_pose_immediately(false)
@@ -329,6 +371,10 @@ func debug_snapshot() -> Dictionary:
 		"rig_requested": requested_rig_adapter,
 		"rig_fallback_reason": rig_fallback_reason,
 		"state": ["GROUND", "AIR", "GRIND", "BAIL"][_current_state],
+		"pose_owner": _pose_owner,
+		"transition_source": _transition_source,
+		"transition_target": _transition_target,
+		"transition_progress": _transition_progress,
 		"pose": _current_pose_name,
 		"blend": _current_blend,
 		"reaction": _reaction_event,
@@ -474,6 +520,25 @@ func debug_snapshot() -> Dictionary:
 		"rail_exit_anticipation": _rail_exit_anticipation,
 		"rail_balance": _rail_balance_last,
 		"rail_phase": _rail_phase_name,
+		"leg_ik_weight": _leg_ik_weight,
+		"pelvis_ik_correction": _pelvis_ik_correction,
+		"left_leg_reach_ratio": float(_left_leg_ik_debug.get("reach_ratio", 0.0)),
+		"right_leg_reach_ratio": float(_right_leg_ik_debug.get("reach_ratio", 0.0)),
+		"left_knee_constraint_correction": float(_left_leg_ik_debug.get("knee_correction", 0.0)),
+		"right_knee_constraint_correction": float(_right_leg_ik_debug.get("knee_correction", 0.0)),
+		"leg_ik_infeasibility": maxf(float(_left_leg_ik_debug.get("infeasibility", 0.0)), float(_right_leg_ik_debug.get("infeasibility", 0.0))),
+		"left_boot_binding_position_error": _binding_position_error(left_ski, left_boot, _left_binding_rest),
+		"right_boot_binding_position_error": _binding_position_error(right_ski, right_boot, _right_binding_rest),
+		"left_boot_binding_angular_error": _binding_angular_error(left_ski, left_boot, _left_binding_rest),
+		"right_boot_binding_angular_error": _binding_angular_error(right_ski, right_boot, _right_binding_rest),
+		"left_boot_target_world": _left_boot_target_world,
+		"right_boot_target_world": _right_boot_target_world,
+		"left_boot_world": left_boot.global_transform,
+		"right_boot_world": right_boot.global_transform,
+		"left_boot_target_position_error": left_boot.global_position.distance_to(_left_boot_target_world.origin) if _leg_ik_weight > 0.001 else 0.0,
+		"right_boot_target_position_error": right_boot.global_position.distance_to(_right_boot_target_world.origin) if _leg_ik_weight > 0.001 else 0.0,
+		"left_knee_hint_world": left_hip.global_position + (_left_leg_ik_debug.get("pole", Vector3.ZERO) as Vector3) * 0.35,
+		"right_knee_hint_world": right_hip.global_position + (_right_leg_ik_debug.get("pole", Vector3.ZERO) as Vector3) * 0.35,
 		"lateral_accel_filtered": _secondary_motion_result.filtered_lateral_accel,
 		"vertical_accel_filtered": _secondary_motion_result.filtered_vertical_accel,
 		"yaw_accel_filtered": _secondary_motion_result.filtered_yaw_accel,
@@ -490,6 +555,7 @@ func debug_snapshot() -> Dictionary:
 		"secondary_motion_weight": _secondary_motion_result.secondary_motion_weight,
 		"crash_stage": _crash_stage_name,
 		"crash_layer_weight": _crash_layer_weight,
+		"crash_stage_progress": _crash_stage_progress,
 		"pre_bail_weight": _pre_bail_weight,
 		"pre_bail_side": _pre_bail_side,
 		"state_transition_weight": _secondary_motion_result.state_transition_weight,
@@ -510,7 +576,203 @@ func equipment_attachment_snapshot() -> Dictionary:
 		"right_pole_hand_offset_m": right_pole_offset,
 		"ski_separation_in_range": ski_separation >= 0.18 and ski_separation <= 2.5,
 		"poles_attached": left_pole_offset <= 1.6 and right_pole_offset <= 1.6,
+		"left_boot_binding_position_error": _binding_position_error(left_ski, left_boot, _left_binding_rest),
+		"right_boot_binding_position_error": _binding_position_error(right_ski, right_boot, _right_binding_rest),
+		"left_boot_binding_angular_error": _binding_angular_error(left_ski, left_boot, _left_binding_rest),
+		"right_boot_binding_angular_error": _binding_angular_error(right_ski, right_boot, _right_binding_rest),
 	}
+
+func _pose_owner_for_frame(frame: SkierAnimationFrame) -> String:
+	match frame.locomotion_state:
+		STATE_GROUND:
+			return "GROUND_CONTACT"
+		STATE_GRIND:
+			return "RAIL_CONTACT"
+		STATE_BAIL:
+			return "RECOVERY_CONTACT" if frame.crash_stage == CrashContext.Stage.RECOVERY else "BAIL_BOOT"
+	return "AIR_BOOT"
+
+func _release_incompatible_bail_layers() -> void:
+	_rail_influence = 0.0
+	_rail_approach_anticipation = 0.0
+	_rail_entry_active = false
+	_rail_entry_compressing = false
+	_rail_entry_compression = 0.0
+	_rail_slide_angle = 0.0
+	_rail_exit_anticipation = 0.0
+	_rail_balance_last = 0.0
+	_trick_pose_weight = 0.0
+	_prewind_weight = 0.0
+	_trick_release_weight = 0.0
+	_spin_compactness = 0.0
+	_spin_open_weight = 0.0
+	_grab_pose_weight = 0.0
+	_grab_contact_weight = 0.0
+	_grab_definition = null
+	_grab_reach_requests.clear()
+	_style_pose_weight = 0.0
+	_clear_landing_state()
+
+func _begin_evaluated_pose_transition(next_owner: String, frame: SkierAnimationFrame) -> void:
+	_transition_source = _pose_owner
+	_transition_target = next_owner
+	_transition_progress = 0.0
+	_transition_duration = profile.pose_handoff_duration
+	if frame.locomotion_state == STATE_GRIND:
+		_transition_duration = profile.rail_contact_duration + profile.rail_compression_duration
+	elif frame.locomotion_state == STATE_BAIL and frame.crash_stage == CrashContext.Stage.RELEASE:
+		_transition_duration = profile.crash_release_duration
+	elif frame.crash_stage == CrashContext.Stage.RECOVERY:
+		_transition_duration = profile.crash_recovery_duration
+	elif frame.locomotion_state == STATE_BAIL:
+		_transition_duration = minf(profile.pose_handoff_duration, 0.08)
+	_transition_rotations.clear()
+	_transition_positions.clear()
+	for joint: Node3D in _all_pose_joints():
+		if joint != null:
+			_transition_rotations[joint] = joint.rotation
+	for joint: Node3D in [pelvis, left_hip, right_hip, chest, left_shoulder, right_shoulder]:
+		if joint != null:
+			_transition_positions[joint] = joint.position
+	_trace_transition("handoff")
+
+func _apply_evaluated_pose_transition(delta: float) -> void:
+	if _transition_progress >= 1.0 or _transition_rotations.is_empty():
+		_transition_progress = 1.0
+		return
+	_transition_progress = clampf(_transition_progress + delta / maxf(_transition_duration, 0.001), 0.0, 1.0)
+	var blend := smoothstep(0.0, 1.0, _transition_progress)
+	for key: Variant in _transition_rotations:
+		var joint := key as Node3D
+		if _rotation_targets.has(joint):
+			var source := _transition_rotations[joint] as Vector3
+			var target := _rotation_targets[joint] as Vector3
+			_rotation_targets[joint] = Vector3(
+				lerp_angle(source.x, target.x, blend),
+				lerp_angle(source.y, target.y, blend),
+				lerp_angle(source.z, target.z, blend)
+			)
+	for key: Variant in _transition_positions:
+		var joint := key as Node3D
+		if _position_targets.has(joint):
+			_position_targets[joint] = (_transition_positions[joint] as Vector3).lerp(_position_targets[joint] as Vector3, blend)
+
+func _all_pose_joints() -> Array[Node3D]:
+	return [balance_root, pelvis, spine, chest, head, left_hip, right_hip, left_knee, right_knee, left_boot, right_boot, left_ski, right_ski, left_shoulder, right_shoulder, left_elbow, right_elbow, left_hand, right_hand, left_pole, right_pole]
+
+func _route_ski_intent_through_legs() -> void:
+	_route_single_ski_intent(left_ski, left_boot, left_knee, left_hip)
+	_route_single_ski_intent(right_ski, right_boot, right_knee, right_hip)
+
+func _route_single_ski_intent(ski: Node3D, boot: Node3D, knee: Node3D, hip: Node3D) -> void:
+	var intent := _rotation_targets.get(ski, Vector3.ZERO) as Vector3
+	_rotation_targets[boot] = (_rotation_targets.get(boot, Vector3.ZERO) as Vector3) + Vector3(intent.x * 0.72, intent.y * 0.35, intent.z * 0.72)
+	_rotation_targets[knee] = (_rotation_targets.get(knee, Vector3.ZERO) as Vector3) + Vector3(-intent.x * 0.18, 0.0, intent.z * 0.12)
+	_rotation_targets[hip] = (_rotation_targets.get(hip, Vector3.ZERO) as Vector3) + Vector3(intent.x * 0.18, intent.y * 0.65, intent.z * 0.28)
+	_rotation_targets[ski] = Vector3.ZERO
+
+func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> void:
+	left_ski.rotation = Vector3.ZERO
+	right_ski.rotation = Vector3.ZERO
+	var target_weight := 0.0
+	if frame.locomotion_state == STATE_GROUND:
+		target_weight = profile.ground_leg_ik_weight
+	elif frame.locomotion_state == STATE_GRIND:
+		target_weight = profile.rail_leg_ik_weight * smoothstep(0.0, 1.0, _rail_influence)
+	elif frame.locomotion_state == STATE_BAIL and frame.crash_stage == CrashContext.Stage.RECOVERY:
+		var start := clampf(profile.crash_recovery_ik_start, 0.0, 0.95)
+		target_weight = profile.ground_leg_ik_weight * smoothstep(start, 1.0, frame.crash_stage_progress)
+	else:
+		target_weight = profile.air_leg_ik_weight if frame.locomotion_state == STATE_AIR else profile.bail_leg_ik_weight
+	var targets_valid := frame.left_ski_target_valid and frame.right_ski_target_valid
+	if not targets_valid:
+		target_weight = 0.0
+	_leg_ik_weight = _damp(_leg_ik_weight, target_weight, profile.leg_ik_weight_response, delta)
+	if _leg_ik_weight <= 0.001 or not targets_valid:
+		_pelvis_ik_correction = _pelvis_ik_correction.lerp(Vector3.ZERO, 1.0 - exp(-profile.leg_ik_weight_response * delta))
+		_left_leg_ik_debug = {"valid": true, "reach_ratio": 0.0, "knee_correction": 0.0, "infeasibility": 0.0}
+		_right_leg_ik_debug = _left_leg_ik_debug.duplicate()
+		return
+	var target_blend := 1.0 - exp(-profile.leg_ik_weight_response * delta)
+	if not _ski_targets_initialized:
+		_left_ski_target_smoothed = frame.left_ski_target_world
+		_right_ski_target_smoothed = frame.right_ski_target_world
+		_ski_targets_initialized = true
+	else:
+		_left_ski_target_smoothed = _left_ski_target_smoothed.interpolate_with(frame.left_ski_target_world, target_blend)
+		_right_ski_target_smoothed = _right_ski_target_smoothed.interpolate_with(frame.right_ski_target_world, target_blend)
+	var left_boot_target := _left_ski_target_smoothed * _left_binding_rest
+	var right_boot_target := _right_ski_target_smoothed * _right_binding_rest
+	_left_boot_target_world = left_boot_target
+	_right_boot_target_world = right_boot_target
+	var pelvis_space_left := pelvis.to_local(left_boot_target.origin)
+	var pelvis_space_right := pelvis.to_local(right_boot_target.origin)
+	var crossing := pelvis_space_left.x > pelvis_space_right.x - profile.leg_ik_min_stance_width
+	var feasibility_weight := 0.25 if crossing else 1.0
+	_apply_bounded_pelvis_compensation(left_boot_target.origin, right_boot_target.origin, delta, feasibility_weight)
+	var left_direction := left_boot_target.origin - left_hip.global_position
+	var right_direction := right_boot_target.origin - right_hip.global_position
+	var left_pole := left_knee.global_position - left_hip.global_position
+	var right_pole := right_knee.global_position - right_hip.global_position
+	if left_direction.length_squared() > 0.0001:
+		left_pole = left_pole.slide(left_direction.normalized())
+	if right_direction.length_squared() > 0.0001:
+		right_pole = right_pole.slide(right_direction.normalized())
+	_left_leg_ik_debug = _leg_ik_solver.solve_leg(left_hip, left_knee, left_boot, left_boot_target, left_pole, _leg_ik_weight * feasibility_weight, profile.leg_ik_max_angular_rate, delta, &"left")
+	_right_leg_ik_debug = _leg_ik_solver.solve_leg(right_hip, right_knee, right_boot, right_boot_target, right_pole, _leg_ik_weight * feasibility_weight, profile.leg_ik_max_angular_rate, delta, &"right")
+	if crossing:
+		_left_leg_ik_debug.infeasibility = 1.0
+		_right_leg_ik_debug.infeasibility = 1.0
+	left_ski.rotation = Vector3.ZERO
+	right_ski.rotation = Vector3.ZERO
+
+func _apply_bounded_pelvis_compensation(left_target: Vector3, right_target: Vector3, delta: float, weight: float) -> void:
+	var correction := Vector3.ZERO
+	var contributors := 0
+	for values: Array in [[left_hip.global_position, left_target], [right_hip.global_position, right_target]]:
+		var hip_position := values[0] as Vector3
+		var boot_target := values[1] as Vector3
+		var offset := boot_target - hip_position
+		var reach := offset.length()
+		var maximum := 0.99 * profile.leg_ik_max_reach_ratio
+		if reach > maximum and reach > 0.001:
+			correction += offset.normalized() * (reach - maximum)
+			contributors += 1
+	if contributors > 0:
+		correction /= float(contributors)
+	correction = correction.limit_length(profile.leg_ik_pelvis_translation_limit) * weight
+	_pelvis_ik_correction = _pelvis_ik_correction.lerp(correction, 1.0 - exp(-profile.leg_ik_weight_response * delta))
+	if pelvis.get_parent() is Node3D:
+		pelvis.position += (pelvis.get_parent() as Node3D).global_basis.inverse() * _pelvis_ik_correction
+
+func _binding_position_error(ski: Node3D, boot: Node3D, rest: Transform3D) -> float:
+	if ski == null or boot == null:
+		return INF
+	var current := ski.global_transform.affine_inverse() * boot.global_transform
+	return current.origin.distance_to(rest.origin)
+
+func _binding_angular_error(ski: Node3D, boot: Node3D, rest: Transform3D) -> float:
+	if ski == null or boot == null:
+		return INF
+	var current := ski.global_transform.affine_inverse() * boot.global_transform
+	return Quaternion(current.basis.orthonormalized()).angle_to(Quaternion(rest.basis.orthonormalized()))
+
+func _trace_transition(kind: String) -> void:
+	if not trace_transitions:
+		return
+	print("[SKI_ANIM_TRACE] %s state=%s owner=%s->%s progress=%.3f root=%s pelvis=%s left_boot=%s right_boot=%s left_ski=%s right_ski=%s" % [
+		kind,
+		["GROUND", "AIR", "GRIND", "BAIL"][_current_state],
+		_transition_source,
+		_transition_target,
+		_transition_progress,
+		global_transform,
+		pelvis.global_transform,
+		left_boot.global_transform,
+		right_boot.global_transform,
+		left_ski.global_transform,
+		right_ski.global_transform,
+	])
 
 func _update_skiing_dynamics(frame: SkierAnimationFrame, delta: float) -> void:
 	var grounded := frame.locomotion_state == STATE_GROUND
@@ -655,8 +917,10 @@ func _update_trick_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	if frame.trick_phase == TrickCommand.PresentationPhase.OPEN:
 		pose_target *= 0.42
 	elif frame.trick_phase == TrickCommand.PresentationPhase.LANDING:
-		pose_target *= lerpf(0.22, 0.5, rate_demand)
-	var landing_yield := _landing_anticipation * lerpf(0.82, 0.48, rate_demand)
+		# LANDING is advisory while the body still carries meaningful rotation.
+		# Contact owns the actual handoff; anticipation only opens the pose.
+		pose_target *= lerpf(0.66, 0.92, rate_demand)
+	var landing_yield := _landing_anticipation * (1.0 - rate_demand) * 0.34
 	pose_target *= 1.0 - landing_yield
 	_trick_pose_weight = _damp(_trick_pose_weight, pose_target, profile.trick_pose_response, delta)
 	var gameplay_compactness := clampf(frame.rotation_compactness, 0.0, 1.0) if frame.locomotion_state == STATE_AIR else 0.0
@@ -1002,6 +1266,18 @@ func _clear_landing_state() -> void:
 	_landing_outcome = 0
 
 func _update_rail_animation(frame: SkierAnimationFrame, delta: float) -> void:
+	if frame.locomotion_state == STATE_BAIL:
+		_rail_influence = 0.0
+		_rail_approach_anticipation = 0.0
+		_rail_entry_active = false
+		_rail_entry_compressing = false
+		_rail_entry_compression = 0.0
+		_rail_slide_angle = 0.0
+		_rail_exit_anticipation = 0.0
+		_rail_pole_lag = 0.0
+		_rail_balance_last = 0.0
+		_rail_phase_name = "IDLE"
+		return
 	var approach_target := _rail_pose_layer.approach_target(frame)
 	_rail_approach_anticipation = _damp(_rail_approach_anticipation, approach_target, profile.rail_approach_response, delta)
 
@@ -1024,12 +1300,15 @@ func _update_rail_animation(frame: SkierAnimationFrame, delta: float) -> void:
 		var exit_target := _rail_pose_layer.exit_target(frame.rail_distance_to_end, profile.rail_exit_anticipation_distance)
 		_rail_exit_anticipation = _damp(_rail_exit_anticipation, exit_target, profile.rail_exit_response, delta)
 		_rail_pole_lag = _damp(_rail_pole_lag, _rail_entry_compression * profile.rail_entry_pole_lag, profile.secondary_response, delta)
-		if _rail_entry_compression > 0.1:
-			_rail_phase_name = "Entry"
+		var contact_fraction := profile.rail_contact_duration / maxf(profile.rail_contact_duration + profile.rail_compression_duration, 0.001)
+		if _transition_target == "RAIL_CONTACT" and _transition_progress < contact_fraction:
+			_rail_phase_name = "CONTACT"
+		elif _rail_entry_compression > 0.1:
+			_rail_phase_name = "COMPRESSION"
 		elif _rail_exit_anticipation > 0.3:
-			_rail_phase_name = "Exit"
+			_rail_phase_name = "RELEASE"
 		else:
-			_rail_phase_name = "Slide"
+			_rail_phase_name = "GRIND"
 	else:
 		_rail_entry_active = false
 		_rail_entry_compressing = false
@@ -1037,7 +1316,7 @@ func _update_rail_animation(frame: SkierAnimationFrame, delta: float) -> void:
 		_rail_slide_angle = _damp(_rail_slide_angle, 0.0, profile.rail_slide_response, delta)
 		_rail_exit_anticipation = _damp(_rail_exit_anticipation, 0.0, profile.rail_exit_response, delta)
 		_rail_pole_lag = _damp(_rail_pole_lag, 0.0, profile.secondary_response, delta)
-		_rail_phase_name = "Approach" if _rail_approach_anticipation > 0.12 else "Idle"
+		_rail_phase_name = "RELEASE" if _rail_influence > 0.05 else ("APPROACH" if _rail_approach_anticipation > 0.12 else "IDLE")
 
 func _begin_rail_entry(severity: float, lateral_bias: float) -> void:
 	_rail_entry_active = true
@@ -1052,6 +1331,7 @@ func _begin_rail_entry(severity: float, lateral_bias: float) -> void:
 	)
 	_rail_entry_left_asymmetry = clampf(-_rail_entry_lateral_bias * profile.rail_leg_asymmetry_gain, -0.35, 0.35)
 	_rail_entry_right_asymmetry = clampf(_rail_entry_lateral_bias * profile.rail_leg_asymmetry_gain, -0.35, 0.35)
+	_rail_phase_name = "CONTACT"
 
 func _apply_rail_approach_layer(frame: SkierAnimationFrame) -> void:
 	if _rail_approach_anticipation <= 0.01 or frame.locomotion_state == STATE_GRIND:
@@ -1542,7 +1822,7 @@ func _apply_air_pose(frame: SkierAnimationFrame) -> void:
 	_add_rotation(right_elbow, Vector3(0.54 - arm_in * 0.32 - asymmetry, 0.0, 0.0))
 
 func _apply_trick_layer(frame: SkierAnimationFrame) -> void:
-	if frame.locomotion_state == STATE_GRIND:
+	if frame.locomotion_state == STATE_GRIND or frame.locomotion_state == STATE_BAIL:
 		return
 	var prewind := _prewind_weight
 	if frame.trick_phase == TrickCommand.PresentationPhase.SETUP and prewind <= 0.01:
@@ -1806,6 +2086,9 @@ func _apply_grind_pose(frame: SkierAnimationFrame) -> void:
 	var entry := _rail_entry_compression
 	var exit_prep := _rail_exit_anticipation
 	var speed_flex := clampf(frame.rail_speed / 45.0, 0.0, 1.0) * 0.1
+	var slope_response := clampf(frame.rail_slope / deg_to_rad(30.0), -1.0, 1.0)
+	var kink_response := clampf(frame.rail_kink_severity * 8.0, 0.0, 1.0)
+	var balance_velocity := clampf(frame.rail_balance_velocity / 4.0, -1.0, 1.0)
 	var flex := clampf(
 		profile.rail_knee_flex + speed_flex + entry * profile.rail_entry_knee_flex - exit_prep * profile.rail_exit_leg_extend,
 		profile.min_leg_flex,
@@ -1819,26 +2102,26 @@ func _apply_grind_pose(frame: SkierAnimationFrame) -> void:
 	_apply_leg_flex(flex, slide * 0.2, sideways, left_asym, right_asym)
 
 	_position_targets[pelvis] = Vector3(
-		balance * profile.rail_pelvis_shift * 0.4,
+		(balance + balance_velocity * 0.35) * profile.rail_pelvis_shift * 0.4,
 		0.96 - flex * profile.pelvis_flex_depth - entry * profile.rail_entry_hip_drop + exit_prep * profile.rail_exit_pelvis_rise,
 		0.0
 	)
 	_add_rotation(balance_root, Vector3(0.0, balance * profile.rail_counter_rotation * 0.6, -balance * profile.rail_balance_lean * 0.6))
 	_add_rotation(pelvis, Vector3(
-		-0.1 - entry * 0.08,
+		-0.1 - entry * 0.08 + slope_response * 0.06,
 		slide * profile.rail_slide_hip_yaw - balance * 0.08,
 		balance * profile.rail_pelvis_shift + slide * 0.06
 	))
-	_add_rotation(spine, Vector3(0.02 + entry * 0.06, -slide * profile.rail_slide_chest_counter * 0.4, -balance * profile.rail_torso_counter_lean * 0.5))
+	_add_rotation(spine, Vector3(0.02 + entry * 0.06 - slope_response * 0.05, -slide * profile.rail_slide_chest_counter * 0.4, -(balance + balance_velocity * 0.25) * profile.rail_torso_counter_lean * 0.5))
 	_add_rotation(chest, Vector3(
 		0.04 + entry * 0.05,
 		-slide * profile.rail_slide_chest_counter,
-		-balance * profile.rail_torso_counter_lean
+		-(balance + balance_velocity * 0.4) * profile.rail_torso_counter_lean
 	))
 	_add_rotation(head, Vector3(exit_prep * 0.1, slide * 0.18, balance * profile.rail_torso_counter_lean * 0.5))
 
 	var near_failure := smoothstep(0.55, 1.0, balance_severity)
-	var arm_gain := profile.rail_arm_balance_gain * (1.0 + near_failure * 0.6)
+	var arm_gain := profile.rail_arm_balance_gain * (1.0 + near_failure * 0.6 + kink_response * 0.35)
 	var arm_silhouette := lerpf(0.28, 0.72, sideways)
 	_add_rotation(left_shoulder, Vector3(-0.16 - sideways * 0.12 - entry * 0.1 + exit_prep * profile.rail_exit_arm_ready, slide * 0.14, -arm_silhouette - balance * arm_gain))
 	_add_rotation(right_shoulder, Vector3(-0.16 - sideways * 0.12 - entry * 0.1 + exit_prep * profile.rail_exit_arm_ready, slide * 0.14, arm_silhouette - balance * arm_gain))
@@ -1861,12 +2144,15 @@ func _apply_bail_pose(frame: SkierAnimationFrame) -> void:
 	var angular_strength := clampf(frame.crash_angular_speed / 7.5, 0.15, 1.0)
 	var downward_bias := clampf(-frame.crash_incoming_velocity.y / 15.0, -0.35, 1.0)
 	_current_blend = 1.0
-	_crash_stage_name = CrashContext.Stage.keys()[clampi(frame.crash_stage, CrashContext.Stage.NONE, CrashContext.Stage.REST)].capitalize()
+	var stage_time := _crash_stage_time(frame)
+	var stage_progress := _crash_stage_progress_for_frame(frame, stage_time)
+	_crash_stage_progress = stage_progress
+	_crash_stage_name = CrashContext.Stage.keys()[clampi(frame.crash_stage, CrashContext.Stage.NONE, CrashContext.Stage.RECOVERY)].capitalize()
 	_crash_layer_weight = 1.0
 	match frame.crash_stage:
 		CrashContext.Stage.RELEASE:
 			_current_pose_name = "Crash Release"
-			var release := clampf(frame.crash_elapsed / maxf(profile.crash_release_duration, 0.01), 0.0, 1.0)
+			var release := stage_progress
 			_crash_layer_weight = release
 			_add_rotation(pelvis, Vector3(-0.12 * release, 0.0, side * 0.16 * release))
 			_add_rotation(chest, Vector3(0.08 * release, -side * 0.12 * release, -side * 0.2 * release))
@@ -1879,20 +2165,23 @@ func _apply_bail_pose(frame: SkierAnimationFrame) -> void:
 			_add_rotation(right_ski, Vector3(-0.05, side * 0.2, side * 0.12) * release)
 		CrashContext.Stage.IMPACT:
 			_current_pose_name = "Crash Impact"
+			# The evaluated-pose handoff supplies continuity; the impact target must
+			# still be legible immediately instead of easing from a second neutral.
+			var impact_progress := lerpf(0.52, 1.0, smoothstep(0.0, 1.0, stage_progress))
 			var directional := side * profile.crash_directional_response * impact_strength
-			_add_rotation(pelvis, Vector3(-0.28 - downward_bias * 0.18, side * 0.12, directional * 0.62))
-			_add_rotation(spine, Vector3(-0.34 - downward_bias * 0.24, -side * 0.08, directional * 0.5))
-			_add_rotation(chest, Vector3(-0.3 - downward_bias * 0.22, -side * 0.16, directional * 0.82))
-			_add_rotation(head, Vector3(0.14, side * 0.16, -directional * 0.28))
-			_add_rotation(left_shoulder, Vector3(-1.05, 0.3, -0.88 + directional * 0.18))
-			_add_rotation(right_shoulder, Vector3(-0.82, -0.3, 0.88 + directional * 0.18))
-			_add_rotation(left_hip, Vector3(-0.58, 0.08, -side * 0.32))
-			_add_rotation(right_hip, Vector3(-0.34, -0.08, side * 0.32))
-			_add_rotation(left_knee, Vector3(1.05, 0.0, -side * 0.12))
-			_add_rotation(right_knee, Vector3(0.68, 0.0, side * 0.12))
+			_add_rotation(pelvis, Vector3(-0.28 - downward_bias * 0.18, side * 0.12, directional * 0.62) * impact_progress)
+			_add_rotation(spine, Vector3(-0.34 - downward_bias * 0.24, -side * 0.08, directional * 0.5) * impact_progress)
+			_add_rotation(chest, Vector3(-0.3 - downward_bias * 0.22, -side * 0.16, directional * 0.82) * impact_progress)
+			_add_rotation(head, Vector3(0.14, side * 0.16, -directional * 0.28) * impact_progress)
+			_add_rotation(left_shoulder, Vector3(-1.05, 0.3, -0.88 + directional * 0.18) * impact_progress)
+			_add_rotation(right_shoulder, Vector3(-0.82, -0.3, 0.88 + directional * 0.18) * impact_progress)
+			_add_rotation(left_hip, Vector3(-0.58, 0.08, -side * 0.32) * impact_progress)
+			_add_rotation(right_hip, Vector3(-0.34, -0.08, side * 0.32) * impact_progress)
+			_add_rotation(left_knee, Vector3(1.05, 0.0, -side * 0.12) * impact_progress)
+			_add_rotation(right_knee, Vector3(0.68, 0.0, side * 0.12) * impact_progress)
 		CrashContext.Stage.FALL:
 			_current_pose_name = "Crash Fall"
-			var phase := frame.crash_elapsed * profile.crash_tumble_speed
+			var phase := stage_time * profile.crash_tumble_speed
 			var tumble := profile.crash_tumble_limit * angular_strength
 			_add_rotation(pelvis, Vector3(-0.42 + sin(phase) * tumble * 0.3, side * 0.18, side * 0.48 + sin(phase * 0.6) * tumble * 0.28))
 			_add_rotation(spine, Vector3(-0.38 + cos(phase * 0.72) * tumble * 0.32, -side * 0.12, side * 0.3))
@@ -1919,14 +2208,56 @@ func _apply_bail_pose(frame: SkierAnimationFrame) -> void:
 			_add_rotation(right_knee, Vector3(0.78, 0.0, 0.0))
 			_add_rotation(left_ski, Vector3(0.08, -side * 0.28, -side * 0.18))
 			_add_rotation(right_ski, Vector3(-0.06, side * 0.3, side * 0.18))
+		CrashContext.Stage.RECOVERY:
+			_current_pose_name = "Crash Recovery"
+			var recovery := smoothstep(0.0, 1.0, stage_progress)
+			var fallen := 1.0 - recovery
+			var recenter_end := maxf(profile.crash_recovery_recenter_portion, 0.05)
+			var recenter := smoothstep(0.0, recenter_end, stage_progress)
+			_crash_layer_weight = fallen
+			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + Vector3(0.0, -profile.crash_rest_pelvis_drop * fallen, 0.0)
+			_add_rotation(pelvis, Vector3(-0.38, side * 0.12, side * 0.58) * fallen)
+			_add_rotation(spine, Vector3(-0.34, -side * 0.08, side * 0.34) * fallen)
+			_add_rotation(chest, Vector3(-0.2, -side * 0.12, side * 0.42) * fallen)
+			_add_rotation(head, Vector3(0.12, side * 0.15, -side * 0.15) * fallen)
+			_add_rotation(left_shoulder, Vector3(-profile.crash_rest_arm_spread, 0.2, -0.72) * fallen)
+			_add_rotation(right_shoulder, Vector3(-profile.crash_rest_arm_spread, -0.2, 0.72) * fallen)
+			_add_rotation(left_hip, Vector3(-0.62, 0.0, -side * 0.32) * fallen)
+			_add_rotation(right_hip, Vector3(-0.4, 0.0, side * 0.32) * fallen)
+			_add_rotation(left_knee, Vector3(1.18, 0.0, 0.0) * fallen)
+			_add_rotation(right_knee, Vector3(0.78, 0.0, 0.0) * fallen)
+			# A small staged crouch keeps the get-up readable before full ground IK.
+			_add_rotation(left_knee, Vector3(0.28 * recenter * recovery, 0.0, 0.0))
+			_add_rotation(right_knee, Vector3(0.28 * recenter * recovery, 0.0, 0.0))
 		_:
 			_current_pose_name = "Crash Release"
 			_crash_stage_name = "Release"
 	_enforce_crash_equipment_constraints(frame)
 	_apply_crash_settling(frame)
 	if frame.crash_stage == CrashContext.Stage.RELEASE and not _crash_handoff_rotations.is_empty():
-		var release_blend := clampf(frame.crash_elapsed / maxf(profile.crash_release_duration, 0.01), 0.0, 1.0)
+		var release_blend := stage_progress
 		_blend_crash_handoff(1.0 - release_blend)
+
+func _crash_stage_time(frame: SkierAnimationFrame) -> float:
+	if frame.crash_stage_elapsed > 0.0:
+		return frame.crash_stage_elapsed
+	match frame.crash_stage:
+		CrashContext.Stage.IMPACT:
+			return maxf(0.0, frame.crash_elapsed - profile.crash_release_duration)
+		CrashContext.Stage.FALL, CrashContext.Stage.REST, CrashContext.Stage.RECOVERY:
+			return maxf(0.0, frame.crash_elapsed - profile.crash_release_duration - profile.crash_impact_duration)
+	return frame.crash_elapsed
+
+func _crash_stage_progress_for_frame(frame: SkierAnimationFrame, stage_time: float) -> float:
+	if frame.crash_stage_progress > 0.0:
+		return clampf(frame.crash_stage_progress, 0.0, 1.0)
+	var duration := profile.crash_recovery_duration
+	match frame.crash_stage:
+		CrashContext.Stage.RELEASE: duration = profile.crash_release_duration
+		CrashContext.Stage.IMPACT: duration = profile.crash_impact_duration
+		CrashContext.Stage.REST: duration = 0.32
+		CrashContext.Stage.FALL: duration = 0.7
+	return clampf(stage_time / maxf(duration, 0.001), 0.0, 1.0)
 
 func _capture_crash_handoff() -> void:
 	_crash_handoff_rotations.clear()
@@ -2037,9 +2368,9 @@ func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
 		_add_rotation(right_ski, Vector3(0, drag_dir.x * 0.06 * influence, 0))
 	# In REST, keep a small residual slide and secondary wobble until rest is confirmed.
 	if frame.crash_stage == CrashContext.Stage.REST:
-		var rest_drag := influence * 0.045 * clampf(1.0 - frame.crash_elapsed / maxf(1.4, 0.01), 0.0, 1.0)
+		var rest_drag := influence * 0.045 * clampf(1.0 - frame.crash_stage_elapsed / maxf(0.8, 0.01), 0.0, 1.0)
 		_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_dir * rest_drag
-		var wobble := sin(frame.crash_elapsed * 6.2) * influence * 0.035
+		var wobble := sin(frame.crash_stage_elapsed * 6.2) * influence * 0.035
 		_add_rotation(spine, Vector3(wobble * 0.5, 0, wobble))
 		_add_rotation(chest, Vector3(0, 0, wobble * 0.7))
 		_add_rotation(left_pole, Vector3(wobble * 0.3, 0, 0))
@@ -2692,8 +3023,19 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_previous_state = _current_state
 	_crash_stage_name = "None"
 	_crash_layer_weight = 0.0
+	_crash_stage_progress = 0.0
 	_pre_bail_weight = 0.0
 	_pre_bail_side = 0.0
+	_transition_rotations.clear()
+	_transition_positions.clear()
+	_transition_progress = 1.0
+	_has_evaluated_frame = false
+	_leg_ik_weight = 0.0
+	_pelvis_ik_correction = Vector3.ZERO
+	_ski_targets_initialized = false
+	_left_boot_target_world = Transform3D.IDENTITY
+	_right_boot_target_world = Transform3D.IDENTITY
+	_leg_ik_solver.reset()
 	_reset_targets()
 	if snap_joints:
 		for key: Variant in _rotation_targets:
@@ -2740,6 +3082,8 @@ func _build_articulated_rig() -> void:
 	right_pole_tip = pose_driver.pole_tips[&"right"] as Node3D
 	_select_rig_adapter()
 	_reset_pose_immediately()
+	_left_binding_rest = left_ski.global_transform.affine_inverse() * left_boot.global_transform
+	_right_binding_rest = right_ski.global_transform.affine_inverse() * right_boot.global_transform
 	if rig_adapter != null:
 		rig_adapter.sync_pose(0.0, [])
 

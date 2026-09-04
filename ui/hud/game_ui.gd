@@ -807,6 +807,14 @@ func _on_telemetry(data: Dictionary) -> void:
 		animation.get("grab_target_ski", "NONE"), animation.get("grab_pose_weight", 0.0),
 		animation.get("grab_contact_weight", 0.0), animation.get("grab_reach_error", 0.0), animation.get("grab_hold_time", 0.0)]
 	debug_label.text += "\nContact class %s  snow VFX %s" % [data.get("surface_class", "UNKNOWN"), data.get("snow_contact", true)]
+	debug_label.text += "\nOwner %s  %s→%s %.2f  legIK %.2f pelvis %s" % [
+		animation.get("pose_owner", "—"), animation.get("transition_source", "—"),
+		animation.get("transition_target", "—"), animation.get("transition_progress", 1.0),
+		animation.get("leg_ik_weight", 0.0), animation.get("pelvis_ik_correction", Vector3.ZERO)]
+	debug_label.text += "\nBind pos %.3f/%.3f ang %.1f°/%.1f° reach %.2f/%.2f infeasible %.2f" % [
+		animation.get("left_boot_binding_position_error", 0.0), animation.get("right_boot_binding_position_error", 0.0),
+		rad_to_deg(float(animation.get("left_boot_binding_angular_error", 0.0))), rad_to_deg(float(animation.get("right_boot_binding_angular_error", 0.0))),
+		animation.get("left_leg_reach_ratio", 0.0), animation.get("right_leg_reach_ratio", 0.0), animation.get("leg_ik_infeasibility", 0.0)]
 	debug_label.text += "\nRig %s (requested %s)%s" % [
 		animation.get("rig_adapter", "none"), animation.get("rig_requested", "none"),
 		(" fallback: " + str(animation.get("rig_fallback_reason", ""))) if not str(animation.get("rig_fallback_reason", "")).is_empty() else ""]

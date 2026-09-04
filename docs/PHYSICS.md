@@ -57,7 +57,7 @@ Grab presentation may release before contact, but trick metadata required for la
 
 All fall entry passes through a guarded gameplay boundary that records the source and relevant impact/motion context before transient trick, grab, and rail presentation is cleared.
 
-`BAIL` is controlled physics rather than ragdoll simulation. Linear momentum is retained and angular motion is damped within configured bounds. Recovery waits for a sufficiently quiet rest state or the configured maximum duration, then returns through the normal reset/recovery path.
+`BAIL` is controlled physics rather than ragdoll simulation. Linear momentum is retained and angular motion is damped within configured bounds. Rail release supplies a filtered, bounded angular presentation value instead of passing through the normal air-entry reset. Recovery waits for a sufficiently quiet rest state or the configured maximum duration, then advances through an explicit presentation recovery while gameplay remains in `BAIL`. `GROUND` begins only after that recovery duration reaches its skiing-ready endpoint; ordinary recovery does not invoke respawn.
 
 Solid-feature contact becomes a bail only when the profile's impact conditions are met. Low-speed brushes remain ordinary collisions.
 
@@ -67,7 +67,11 @@ Solid-feature contact becomes a bail only when the profile's impact conditions a
 
 After capture, momentum is projected onto the spline tangent, entry blends toward the rail, gravity and friction act along the spline, and travel may reverse if the geometry and momentum allow it. Left-stick X counters balance drift.
 
-Kinks, slide stance, authored drift bias, and the initial capture offset can increase balance demand. Crossing the balance limit releases the skier into `AIR`; it does not directly force a bail.
+Kinks, slide stance, authored drift bias, and the initial capture offset can increase balance demand. The same contact point, tangent, slope, kink, balance, and balance-rate values are forwarded to presentation. Crossing the balance limit atomically releases rail ownership and enters `AIR` with bounded inherited angular state; a subsequent failed landing uses that state when entering bail.
+
+## Root, ski, and boot ownership
+
+The `CharacterBody3D` remains the only root-motion owner. Terrain/rail contact produces authoritative ski targets without allowing animation to rewrite the root. Each boot has a calibrated ski-local binding transform; the presentation system converts a ski target to a boot target and uses bounded pelvis compensation plus specialized two-bone leg IK to reach it. In unconstrained air and bail stages the relationship reverses: the evaluated boot pose drives the rigid boot/ski assembly, and contact IK is reduced or disabled.
 
 ## Course geometry
 
