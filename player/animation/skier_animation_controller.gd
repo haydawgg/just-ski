@@ -678,8 +678,13 @@ func _route_single_ski_intent(ski: Node3D, boot: Node3D, knee: Node3D, hip: Node
 	_rotation_targets[boot] = (_rotation_targets.get(boot, Vector3.ZERO) as Vector3) + Vector3(intent.x * 0.72, intent.y * 0.35, intent.z * 0.72)
 	_rotation_targets[knee] = (_rotation_targets.get(knee, Vector3.ZERO) as Vector3) + Vector3(-intent.x * 0.18, 0.0, intent.z * 0.12)
 	_rotation_targets[hip] = (_rotation_targets.get(hip, Vector3.ZERO) as Vector3) + Vector3(intent.x * 0.18, intent.y * 0.65, intent.z * 0.28)
+	if _grab_definition == null or _grab_pose_weight <= 0.01:
+		_rotation_targets[ski] = Vector3.ZERO
 
 func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> void:
+	if _grab_definition == null or _grab_pose_weight <= 0.01:
+		left_ski.rotation = Vector3.ZERO
+		right_ski.rotation = Vector3.ZERO
 	var target_weight := 0.0
 	if frame.locomotion_state == STATE_GROUND:
 		target_weight = profile.ground_leg_ik_weight

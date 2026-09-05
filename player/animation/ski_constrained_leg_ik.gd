@@ -64,14 +64,16 @@ func solve_leg(
 	_clamp_local_euler(hip, Vector3(-1.4, -0.7, -0.72), Vector3(0.72, 0.7, 0.72))
 	# Canonical knees flex on +X. Reject the mathematically equivalent negative
 	# Euler branch so a terrain discontinuity cannot flip the knee backward.
-	_clamp_local_euler(knee, Vector3(-0.45, -0.28, -0.35), Vector3(2.3, 0.28, 0.35))
+	_clamp_local_euler(knee, Vector3(0.0, -0.28, -0.35), Vector3(2.3, 0.28, 0.35))
+	var current_boot_basis := boot.global_basis.orthonormalized()
+	var target_boot_basis := target_boot_world.basis.orthonormalized()
 	var orientation_weight := _bounded_weight(
-		Quaternion(boot.global_basis).angle_to(Quaternion(target_boot_world.basis)),
+		Quaternion(current_boot_basis).angle_to(Quaternion(target_boot_basis)),
 		weight,
 		maximum_angular_rate,
 		delta
 	)
-	boot.global_basis = Basis(Quaternion(boot.global_basis).slerp(Quaternion(target_boot_world.basis.orthonormalized()), orientation_weight)).orthonormalized()
+	boot.global_basis = Basis(Quaternion(current_boot_basis).slerp(Quaternion(target_boot_basis), orientation_weight)).orthonormalized()
 	_clamp_local_euler(boot, Vector3(-0.9, -0.45, -0.5), Vector3(0.55, 0.45, 0.5))
 	result.valid = _finite_transform(boot.global_transform)
 	result.reach_ratio = target_distance / maximum_reach
@@ -87,9 +89,10 @@ func _rotate_toward_direction(node: Node3D, current: Vector3, target: Vector3, w
 	if angle <= 0.00001:
 		return
 	var correction := Quaternion(current, target)
-	var desired := (Basis(correction) * node.global_basis).orthonormalized()
+	var current_basis := node.global_basis.orthonormalized()
+	var desired := (Basis(correction) * current_basis).orthonormalized()
 	var bounded := _bounded_weight(angle, weight, maximum_rate, delta)
-	node.global_basis = Basis(Quaternion(node.global_basis).slerp(Quaternion(desired), bounded)).orthonormalized()
+	node.global_basis = Basis(Quaternion(current_basis).slerp(Quaternion(desired), bounded)).orthonormalized()
 
 func _bounded_weight(angle: float, weight: float, maximum_rate: float, delta: float) -> float:
 	if angle <= 0.00001:
