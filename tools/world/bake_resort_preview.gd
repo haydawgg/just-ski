@@ -54,7 +54,7 @@ func _bake() -> void:
 	if pack_error != OK:
 		_fail("PackedScene.pack failed with error %d" % pack_error)
 		return
-	var output_path := _requested_output()
+	var output_path := OutputPathGuard.sanitize(_requested_output(), PackedStringArray([".tscn"]), DEFAULT_OUTPUT)
 	var output_absolute := ProjectSettings.globalize_path(output_path)
 	var output_directory := DirAccess.make_dir_recursive_absolute(output_absolute.get_base_dir())
 	if output_directory != OK and output_directory != ERR_ALREADY_EXISTS:

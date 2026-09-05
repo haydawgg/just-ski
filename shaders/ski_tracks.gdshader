@@ -15,11 +15,10 @@ void vertex() {
 void fragment() {
 	float distance_to_camera = distance(INV_VIEW_MATRIX[3].xyz, track_world_position);
 	float distance_visibility = 1.0 - smoothstep(distance_fade_start, distance_fade_end, distance_to_camera);
-	float disturbed = clamp(COLOR.r * 0.72 + COLOR.g * 0.28, 0.0, 1.0);
-	ALBEDO = mix(compressed_snow_color, disturbed_snow_color, disturbed);
-	// A clean carve compresses and polishes the groove; a skid leaves a rough,
-	// churned ribbon. This makes the two kinds of ski passage read differently.
-	ROUGHNESS = mix(0.64, 0.92, disturbed);
+	float skid = clamp(COLOR.r, 0.0, 1.0);
+	float carve = clamp(COLOR.g, 0.0, 1.0);
+	ALBEDO = mix(compressed_snow_color, disturbed_snow_color, skid);
+	ROUGHNESS = mix(0.52, 0.92, skid) * mix(1.0, 0.78, carve);
 	METALLIC = 0.0;
 	SPECULAR = 0.5;
 	ALPHA = COLOR.a * distance_visibility;

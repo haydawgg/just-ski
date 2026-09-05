@@ -8,6 +8,7 @@ var last_device := "keyboard"
 var active_joypad_id := -1
 var active_controller_family := "controller"
 var connected_joypads: Dictionary = {}
+var _rumbled_devices: Dictionary = {}
 
 func _ready() -> void:
 	if not Input.joy_connection_changed.is_connected(_on_joy_connection_changed):
@@ -66,19 +67,27 @@ func rumble(weak: float, strong: float, duration: float) -> void:
 	if device < 0:
 		return
 	var strength := float(GameSettings.active.get("controller_rumble", 0.75))
-	Input.start_joy_vibration(device, weak * strength, strong * strength, duration)
+	var scaled_weak := weak * strength
+	var scaled_strong := strong * strength
+	if scaled_weak <= 0.001 and scaled_strong <= 0.001:
+		return
+	_rumbled_devices[device] = true
+	Input.start_joy_vibration(device, scaled_weak, scaled_strong, duration)
 
 func _rumble_target() -> int:
 	return active_joypad_id if active_joypad_id >= 0 and connected_joypads.has(active_joypad_id) else -1
 
 func stop_rumble() -> void:
 	var devices := {}
+	for device: Variant in _rumbled_devices.keys():
+		devices[int(device)] = true
 	for device: Variant in connected_joypads.keys():
 		devices[int(device)] = true
 	for device: int in Input.get_connected_joypads():
 		devices[device] = true
 	for device: Variant in devices.keys():
 		Input.stop_joy_vibration(int(device))
+	_rumbled_devices.clear()
 
 func _controller_family(device: int) -> String:
 	return _controller_family_from_name(Input.get_joy_name(device))
@@ -110,6 +119,9 @@ func _set_active_controller(device: int) -> void:
 		_register_controller(device)
 	var family := str(connected_joypads.get(device, "controller"))
 	var changed := active_joypad_id != device or active_controller_family != family
+	if changed and active_joypad_id >= 0 and active_joypad_id != device:
+		Input.stop_joy_vibration(active_joypad_id)
+		_rumbled_devices.erase(active_joypad_id)
 	active_joypad_id = device
 	active_controller_family = family
 	if changed:
@@ -142,6 +154,8 @@ func _on_joy_connection_changed(device: int, connected: bool) -> void:
 		if active_joypad_id < 0:
 			_select_lowest_connected_controller()
 	else:
+		Input.stop_joy_vibration(device)
+		_rumbled_devices.erase(device)
 		connected_joypads.erase(device)
 		if active_joypad_id == device:
 			if connected_joypads.is_empty():

@@ -16,8 +16,13 @@ func advance(
 	var result := RailMotionResult.new()
 	result.speed = current_speed + slope_acceleration * delta
 	result.speed = move_toward(result.speed, 0.0, friction * delta)
-	if absf(result.speed) < 0.35 and absf(slope_acceleration) > 1.0:
-		result.speed = signf(slope_acceleration) * 0.35
+	if absf(result.speed) < 0.35:
+		var crawl_sign := signf(result.speed)
+		if is_zero_approx(crawl_sign):
+			crawl_sign = signf(current_speed)
+		if is_zero_approx(crawl_sign):
+			crawl_sign = 1.0
+		result.speed = crawl_sign * 0.35
 	result.offset = current_offset + result.speed * direction * delta
 	result.reached_end = result.offset <= 0.02 or result.offset >= path_length - 0.02
 	return result

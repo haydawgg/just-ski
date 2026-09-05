@@ -3,6 +3,10 @@ extends Node
 
 const MIN_STRAIGHT_AIR_PRESENTATION_TIME := 0.45
 const MIN_GRAB_QUALIFY_TIME := 0.1
+const MIN_GRIND_SECONDS := 0.08
+const MAX_GRIND_SCORE_SECONDS := 4.0
+const MAX_CREDITED_SPIN_DEGREES := 1080
+const MAX_TWEAK_INTEGRAL := 5.0
 const SPIN_STEP_DEGREES := 180.0
 const FLIP_STEP_DEGREES := 360.0
 const SPIN_MAX_UNDERROTATION_DEGREES := 25.0
@@ -83,7 +87,7 @@ func begin_air(
 	rotation_axis_weights = presentation_classifier.axis_weights(committed_axis_local)
 	dominant_kind = presentation_classifier.classify(committed_axis_local, takeoff_kind)
 	rail_pose = 0
-	had_trick_intent = takeoff_kind != TrickCommand.Kind.NONE
+	had_trick_intent = takeoff_kind not in [TrickCommand.Kind.NONE, TrickCommand.Kind.POP]
 	air_presentation_eligible = presentation_eligible
 
 func update_air(local_angular_velocity: Vector3, delta: float, command: TrickCommand = null) -> void:
@@ -125,11 +129,11 @@ func _update_air(
 	style_pose = command.style_pose
 	if grab_pose != GrabPose.NONE:
 		grab_seconds += delta * command.grab_amount
-		tweak_integral += command.grab_tweak.length() * delta
+		tweak_integral = minf(tweak_integral + command.grab_tweak.length() * delta, MAX_TWEAK_INTEGRAL)
 		had_trick_intent = true
 	if style_pose != StylePose.NONE:
 		style_seconds += delta * command.style_amount
-		tweak_integral += command.grab_tweak.length() * delta
+		tweak_integral = minf(tweak_integral + command.grab_tweak.length() * delta, MAX_TWEAK_INTEGRAL)
 		had_trick_intent = true
 	# The live pose can return to neutral before touchdown, but the completed
 	# trick still owns any grab that was held during the air. Keep the last
@@ -169,9 +173,9 @@ func update_grind(delta: float, selected_pose: int = 0) -> void:
 	var rail_name := "50-50" if rail_pose == 0 else ("Boardslide Left" if rail_pose < 0 else "Boardslide Right")
 	trick_changed.emit("%s %.1fs" % [rail_name, grind_seconds])
 
-func land(quality: float, switch_landing: bool, outcome: int, link_bonus: int = 0, rotation_quality_applied: bool = false) -> void:
+func land(quality: float, switch_landing: bool, outcome: int, link_bonus: int = 0, rotation_quality_applied: bool = false) -> bool:
 	if not active:
-		return
+		return false
 	var name := current_name()
 	var spin_degrees := _spin_degrees()
 	var flip_degrees := _flip_degrees()
@@ -181,28 +185,42 @@ func land(quality: float, switch_landing: bool, outcome: int, link_bonus: int = 
 		motion_points = cork_degrees * 3
 	else:
 		motion_points = spin_degrees * 2 + int(float(flip_degrees) / 360.0 * 500.0)
-	var points: int = motion_points + int(grind_seconds * 300.0)
+	var grind_points := int(minf(grind_seconds, MAX_GRIND_SCORE_SECONDS) * 300.0)
+	var points: int = motion_points + grind_points
 	if grab_qualified and not grab_name.is_empty():
-		points += 150 + int(grab_seconds * 120.0) + int(tweak_integral * 80.0)
+		points += 150 + int(grab_seconds * 120.0) + int(minf(tweak_integral, MAX_TWEAK_INTEGRAL) * 80.0)
 	if not style_name.is_empty():
-		points += 150 + int(style_seconds * 120.0) + int(tweak_integral * 80.0)
+		points += 150 + int(style_seconds * 120.0) + int(minf(tweak_integral, MAX_TWEAK_INTEGRAL) * 80.0)
 	if switch_landing != switch_takeoff:
 		name += " to Switch"
 		points += 120
 	if link_bonus > 0:
 		name = "Line Link + " + name
 		points += 200 * link_bonus
-	if points <= 0 and dominant_kind == TrickCommand.Kind.POP and air_seconds >= 0.15:
+	if points <= 0 and grind_seconds < MIN_GRIND_SECONDS and dominant_kind == TrickCommand.Kind.POP and air_seconds >= MIN_STRAIGHT_AIR_PRESENTATION_TIME:
 		points = 50
-	if points <= 0 and grind_seconds < 0.08:
+	if points <= 0 and grind_seconds < MIN_GRIND_SECONDS:
 		reset()
-		return
-	if points <= 0 and grind_seconds >= 0.08:
-		points = int(grind_seconds * 300.0)
+		return false
+	if points <= 0 and grind_seconds >= MIN_GRIND_SECONDS:
+		points = grind_points
 	var scored_quality := clampf(quality if rotation_quality_applied else quality * _rotation_quality_factor(), 0.2, 1.0)
 	points = int(points * scored_quality)
 	trick_landed.emit(name, points, scored_quality, outcome)
 	reset()
+	return true
+
+func commit_grind() -> void:
+	if grind_seconds < MIN_GRIND_SECONDS:
+		grind_seconds = 0.0
+		return
+	var grind_points := int(minf(grind_seconds, MAX_GRIND_SCORE_SECONDS) * 300.0)
+	if grind_points <= 0:
+		grind_seconds = 0.0
+		return
+	var rail_name := "50-50" if rail_pose == 0 else ("Boardslide Left" if rail_pose < 0 else "Boardslide Right")
+	trick_landed.emit("%s %.1fs" % [rail_name, grind_seconds], grind_points, 0.85, LandingSolver.Outcome.CLEAN)
+	grind_seconds = 0.0
 
 func current_name() -> String:
 	var parts: Array[String] = []
@@ -319,7 +337,8 @@ func _credited_degrees(actual_degrees: float, step_degrees: float, max_underrota
 	if actual_degrees + max_underrotation_degrees < step_degrees:
 		return 0
 	var steps := int(floor((actual_degrees + max_underrotation_degrees) / step_degrees))
-	return maxi(0, int(step_degrees) * steps)
+	var credited := maxi(0, int(step_degrees) * steps)
+	return mini(MAX_CREDITED_SPIN_DEGREES, credited)
 
 func _rotation_quality_factor() -> float:
 	var target := rotation_target_degrees()

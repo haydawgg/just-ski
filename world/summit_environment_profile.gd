@@ -17,7 +17,7 @@ extends Resource
 @export_range(0.0, 0.2, 0.001) var relief_frequency := 0.032
 @export_range(0.0, 0.2, 0.001) var secondary_relief_frequency := 0.071
 @export var relief_seed := 5173
-@export_range(0.0, 0.1, 0.001) var surface_offset_m := 0.008
+@export_range(0.0, 0.1, 0.001) var surface_offset_m := 0.0
 @export_range(100.0, 1200.0, 10.0) var terrain_lod_end_m := 900.0
 @export_range(300.0, 2000.0, 10.0) var backdrop_lod_end_m := 1400.0
 @export var lift_line_enabled := true

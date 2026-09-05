@@ -30,7 +30,7 @@ SHELL_REGIONS = ("Jacket", "Pants", "Gloves")
 SHELL_RAMP_METERS = {"Jacket": 0.09, "Pants": 0.07, "Gloves": 0.03}
 HAND_MARKERS = ("hand", "f_index", "f_middle", "f_pinky", "f_ring", "thumb")
 TORSO_JOINTS = {"spine", "spine.001", "spine.002", "spine.003", "spine.004", "spine.005"}
-JACKET_COVER_BAND_MIN_Y = 0.115
+JACKET_COVER_BAND_MIN_Y = 0.16
 JACKET_COLLAR_Y = 0.62
 # Collar overlap skirt: jacket shell triangles extend past the material cut up
 # to this height with a guaranteed minimum offset, forming a turtleneck lip

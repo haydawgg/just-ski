@@ -73,8 +73,8 @@ static func _terrain_rows(profile: SummitEnvironmentProfile) -> Array[PackedFloa
 	var outer_half_width := clampf(profile.outer_half_width_m, profile.playable_half_width_m + 1.0, face_half_width)
 	var spacing := maxf(profile.sample_spacing_m, 0.5)
 	var x_count := maxi(3, ceili((outer_half_width * 2.0) / spacing) + 1)
-	var z_min := -ParkLayout.FACE_SLOPE_LENGTH * 0.5
-	var z_max := ParkLayout.FACE_SLOPE_LENGTH * 0.5
+	var z_min := -ParkLayout.face_half_world_z()
+	var z_max := ParkLayout.face_half_world_z()
 	var z_count := maxi(3, ceili((z_max - z_min) / spacing) + 1)
 	for row_index: int in range(z_count):
 		var z := lerpf(z_max, z_min, float(row_index) / float(z_count - 1))
@@ -112,8 +112,8 @@ static func _create_terrain_mesh(profile: SummitEnvironmentProfile) -> ArrayMesh
 	var row_count := scalar_rows.size()
 	var column_count := scalar_rows[0].size()
 	var face_half_width := clampf(profile.outer_half_width_m, profile.playable_half_width_m + 1.0, ParkLayout.FACE_WIDTH * 0.5)
-	var z_min := -ParkLayout.FACE_SLOPE_LENGTH * 0.5
-	var z_max := ParkLayout.FACE_SLOPE_LENGTH * 0.5
+	var z_min := -ParkLayout.face_half_world_z()
+	var z_max := ParkLayout.face_half_world_z()
 	var world_rows: Array[PackedVector3Array] = []
 	for row_index: int in range(row_count):
 		var z := lerpf(z_max, z_min, float(row_index) / float(row_count - 1))

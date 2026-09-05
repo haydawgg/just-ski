@@ -98,14 +98,14 @@ func _physics_process(_delta: float) -> void:
 			failures.append("Reference pop airtime %.2f s left the approved 0.55-%.2f s short-hop band" % [pop_air_seconds, REFERENCE_POP_MAX_AIR_SECONDS])
 		if pop_takeoff_upward_speed > REFERENCE_POP_MAX_TAKEOFF_UPWARD_SPEED:
 			failures.append("Reference pop takeoff %.2f m/s exceeded the %.2f m/s short-hop cap" % [pop_takeoff_upward_speed, REFERENCE_POP_MAX_TAKEOFF_UPWARD_SPEED])
-		marker_position = skier.global_position + Vector3.UP * 0.35
+		marker_position = skier.global_position
 		var marker_transform := skier.global_transform
 		marker_transform.origin = marker_position
 		SessionManager.set_marker(marker_transform)
 		skier.global_position += Vector3(9.0, 4.0, 0.0)
 		SessionManager.request_respawn()
 	elif frame == 500:
-		if skier.global_position.distance_to(marker_position + Vector3.UP * 0.35) > 1.0:
+		if skier.global_position.distance_to(marker_position) > 1.0:
 			failures.append("Session marker respawn did not restore the saved position")
 	elif frame == 620:
 		speed_before_brake = skier.velocity.length()

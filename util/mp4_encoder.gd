@@ -11,9 +11,10 @@ extends RefCounted
 
 const VIDEO_TIMESCALE := 30000
 const MOVIE_TIMESCALE := 1000
+const MAX_DIMENSION := 16383
 
 static func encode(jpeg_frames: Array, fps: int, width: int, height: int) -> PackedByteArray:
-	if jpeg_frames.is_empty() or fps <= 0:
+	if jpeg_frames.is_empty() or fps <= 0 or not _valid_frame_size(width, height):
 		return PackedByteArray()
 	var ftyp := _build_ftyp()
 	var sizes := PackedInt32Array()
@@ -34,7 +35,7 @@ static func encode(jpeg_frames: Array, fps: int, width: int, height: int) -> Pac
 	return bytes
 
 static func write_to_file(jpeg_frames: Array, fps: int, width: int, height: int, path: String) -> Error:
-	if jpeg_frames.is_empty() or fps <= 0 or width <= 0 or height <= 0:
+	if jpeg_frames.is_empty() or fps <= 0 or not _valid_frame_size(width, height):
 		return ERR_INVALID_PARAMETER
 	var sizes := PackedInt32Array()
 	sizes.resize(jpeg_frames.size())
@@ -213,6 +214,9 @@ static func _full_box(kind: String, version: int, flags: int, payload: PackedByt
 	var head := _u32((version << 24) | (flags & 0x00FFFFFF))
 	head.append_array(payload)
 	return _box(kind, head)
+
+static func _valid_frame_size(width: int, height: int) -> bool:
+	return width > 0 and height > 0 and width <= MAX_DIMENSION and height <= MAX_DIMENSION
 
 static func _u32(value: int) -> PackedByteArray:
 	var bytes := PackedByteArray()
