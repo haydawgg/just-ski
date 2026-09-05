@@ -2,9 +2,12 @@ extends Node
 
 const AudioMixSolverModule := preload("res://audio/audio_mix_solver.gd")
 const MAX_GENERATED_FRAMES_PER_PROCESS := 1024
+const MIN_RAIL_RUMBLE_SPEED := 4.0
 
 var feedback_player: AudioStreamPlayer
+var atmosphere_player: AudioStreamPlayer
 var playback: AudioStreamGeneratorPlayback
+var atmosphere_playback: AudioStreamGeneratorPlayback
 var target_speed := 0.0
 var target_skid := 0.0
 var target_rail := 0.0
@@ -47,20 +50,17 @@ func _ready() -> void:
 		# autoload reaches _ready(). Do not create a generator that will outlive
 		# the scene and trigger an ObjectDB playback leak at process exit.
 		return
-	var generator := AudioStreamGenerator.new()
-	generator.mix_rate = 22050.0
-	generator.buffer_length = 0.12
-	feedback_player = AudioStreamPlayer.new()
-	feedback_player.stream = generator
-	feedback_player.bus = "SFX"
-	add_child(feedback_player)
-	feedback_player.play()
-	playback = feedback_player.get_stream_playback() as AudioStreamGeneratorPlayback
+	feedback_player = _make_generator_player("SFX")
+	atmosphere_player = _make_generator_player("Music")
 	GameSettings.settings_applied.connect(_apply_bus_settings)
 	_apply_bus_settings()
+	_ensure_playback()
 
 func _process(delta: float) -> void:
-	if playback == null:
+	if _headless_audio or _shutdown_requested:
+		return
+	_ensure_playback()
+	if playback == null and atmosphere_playback == null:
 		return
 	var profile_started_usec := Time.get_ticks_usec()
 	target_speed = lerpf(target_speed, desired_speed, 1.0 - exp(-7.0 * delta))
@@ -71,12 +71,17 @@ func _process(delta: float) -> void:
 	impact_envelope *= exp(-13.0 * delta)
 	# Avoid a multi-millisecond first-fill hitch. One tick still generates more
 	# than a 60 Hz frame consumes at 22,050 Hz, so the buffer catches up quickly.
-	var frame_count := mini(playback.get_frames_available(), MAX_GENERATED_FRAMES_PER_PROCESS)
+	var sfx_available := playback.get_frames_available() if playback != null else 0
+	var music_available := atmosphere_playback.get_frames_available() if atmosphere_playback != null else 0
+	var frame_count := mini(maxi(sfx_available, music_available), MAX_GENERATED_FRAMES_PER_PROCESS)
+	if frame_count <= 0:
+		return
 	var mix_rate := 22050.0
-	var mix := _mix_solver.resolve(target_speed, target_skid, target_air, target_surface_kind)
+	var mix := _mix_solver.resolve(target_speed, target_skid, target_air, target_surface_kind, target_rail)
 	var speed_mix := float(mix.speed_mix)
 	var surface_amplitude := float(mix.surface_amplitude)
 	var wind_amplitude := float(mix.wind_amplitude)
+	var rail_amplitude := float(mix.rail_amplitude)
 	var output_gain := 0.0 if get_tree().paused else 1.0
 	for _frame: int in frame_count:
 		phase = fmod(phase + (72.0 + target_speed * 7.0) / mix_rate, 1.0)
@@ -91,12 +96,17 @@ func _process(delta: float) -> void:
 		var glide_left := noise.randf_range(-1.0, 1.0) * (surface_texture + target_skid * 0.62)
 		var glide_right := noise.randf_range(-1.0, 1.0) * (surface_texture + target_skid * 0.62)
 		var edge_sing := sin(phase * TAU) * target_skid * speed_mix * 0.012
-		var rail_tone := (sin(rail_phase * TAU) * 0.72 + sin(rail_phase * TAU * 2.01) * 0.18) * target_rail * 0.038
+		var rail_tone := (sin(rail_phase * TAU) * 0.72 + sin(rail_phase * TAU * 2.01) * 0.18) * rail_amplitude
 		var pop_tone := sin(pop_phase * TAU) * pop_envelope * 0.052
 		var impact_noise := noise.randf_range(-1.0, 1.0) * impact_envelope * 0.082
-		var left := wind_filter_left * wind_amplitude * gust + glide_left * surface_amplitude + edge_sing + rail_tone + pop_tone + impact_noise
-		var right := wind_filter_right * wind_amplitude * gust + glide_right * surface_amplitude - edge_sing + rail_tone + pop_tone + impact_noise
-		playback.push_frame(Vector2(clampf(left * output_gain, -0.9, 0.9), clampf(right * output_gain, -0.9, 0.9)))
+		var wind_left := wind_filter_left * wind_amplitude * gust
+		var wind_right := wind_filter_right * wind_amplitude * gust
+		var sfx_left := glide_left * surface_amplitude + edge_sing + rail_tone + pop_tone + impact_noise
+		var sfx_right := glide_right * surface_amplitude - edge_sing + rail_tone + pop_tone + impact_noise
+		if playback != null:
+			playback.push_frame(Vector2(clampf(sfx_left * output_gain, -0.9, 0.9), clampf(sfx_right * output_gain, -0.9, 0.9)))
+		if atmosphere_playback != null:
+			atmosphere_playback.push_frame(Vector2(clampf(wind_left * output_gain, -0.9, 0.9), clampf(wind_right * output_gain, -0.9, 0.9)))
 	var process_usec := Time.get_ticks_usec() - profile_started_usec
 	_profile_process_samples += 1
 	_profile_process_total_usec += process_usec
@@ -143,17 +153,12 @@ func pop_feedback(strength: float) -> void:
 func shutdown_audio() -> void:
 	_shutdown_requested = true
 	stop_feedback()
-	if feedback_player != null:
-		# Release our playback reference before tearing down the stream/player so
-		# the generator can drop its internal playback object cleanly.
-		playback = null
-		feedback_player.stop()
-		feedback_player.stream = null
-		# Tests and the quit path often shut audio down immediately before the
-		# tree exits. Free synchronously so the generator playback reference is
-		# released before ObjectDB performs its final leak audit.
-		feedback_player.free()
+	_free_player(feedback_player)
+	_free_player(atmosphere_player)
 	feedback_player = null
+	atmosphere_player = null
+	playback = null
+	atmosphere_playback = null
 
 func landing_feedback(quality: float, impact: float) -> void:
 	var strength := clampf(impact / 16.0, 0.08, 1.0)
@@ -167,20 +172,59 @@ func skid_feedback(force: float) -> void:
 		InputManager.rumble(0.05 + force * 0.12, force * 0.2, 0.08)
 
 func rail_feedback(speed: float) -> void:
+	if speed < MIN_RAIL_RUMBLE_SPEED:
+		return
 	var now := Time.get_ticks_msec()
 	if now - last_rail_rumble_ms < 110:
 		return
 	last_rail_rumble_ms = now
-	InputManager.rumble(0.08, clampf(speed / 50.0, 0.08, 0.35), 0.1)
+	var speed_mix := clampf(speed / 50.0, 0.0, 1.0)
+	InputManager.rumble(0.04 + speed_mix * 0.08, clampf(speed / 50.0, 0.0, 0.35), 0.1)
 
 func crash_feedback() -> void:
 	impact_envelope = 1.0
 	InputManager.rumble(0.4, 1.0, 0.45)
 
+func _make_generator_player(bus_name: String) -> AudioStreamPlayer:
+	var generator := AudioStreamGenerator.new()
+	generator.mix_rate = 22050.0
+	generator.buffer_length = 0.12
+	var player := AudioStreamPlayer.new()
+	player.stream = generator
+	player.bus = bus_name
+	add_child(player)
+	player.play()
+	return player
+
+func _ensure_playback() -> void:
+	if _headless_audio or _shutdown_requested:
+		return
+	playback = _refresh_playback(feedback_player, playback)
+	atmosphere_playback = _refresh_playback(atmosphere_player, atmosphere_playback)
+
+func _refresh_playback(player: AudioStreamPlayer, current: AudioStreamGeneratorPlayback) -> AudioStreamGeneratorPlayback:
+	if player == null:
+		return null
+	if current != null:
+		return current
+	if not player.playing:
+		player.play()
+	return player.get_stream_playback() as AudioStreamGeneratorPlayback
+
+func _free_player(player: AudioStreamPlayer) -> void:
+	if player == null:
+		return
+	player.stop()
+	player.stream = null
+	player.free()
+
 func _ensure_bus(bus_name: String) -> void:
-	if AudioServer.get_bus_index(bus_name) < 0:
-		AudioServer.add_bus()
-		AudioServer.set_bus_name(AudioServer.bus_count - 1, bus_name)
+	if AudioServer.get_bus_index(bus_name) >= 0:
+		return
+	AudioServer.add_bus()
+	var index := AudioServer.bus_count - 1
+	AudioServer.set_bus_name(index, bus_name)
+	AudioServer.set_bus_send(index, "Master")
 
 func _apply_bus_settings() -> void:
 	for bus_name: String in ["Master", "Music", "SFX"]:

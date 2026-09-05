@@ -11,6 +11,7 @@ var failures: Array[String] = []
 
 func _ready() -> void:
 	await get_tree().process_frame
+	AudioManager.reset_profiling()
 	await _profile_rails()
 	await _profile_world_and_session()
 	var audio := AudioManager.profiling_snapshot()

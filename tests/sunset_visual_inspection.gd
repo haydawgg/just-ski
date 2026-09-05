@@ -34,13 +34,13 @@ func _parse_visual_arguments() -> void:
 		elif argument.begins_with("--sunset-feature="):
 			feature_isolation_name = argument.trim_prefix("--sunset-feature=")
 		elif argument.begins_with("--capture-path="):
-			capture_path = argument.trim_prefix("--capture-path=")
+			capture_path = OutputPathGuard.sanitize(argument.trim_prefix("--capture-path="), PackedStringArray([".png"]), OUTPUT_PATH)
 		elif argument.begins_with("--profile-snow-quality="):
-			profile_snow_quality = clampi(int(argument.trim_prefix("--profile-snow-quality=")), 0, 1)
+			profile_snow_quality = OutputPathGuard.parse_int_range(argument.trim_prefix("--profile-snow-quality="), 0, 0, 1)
 		elif argument.begins_with("--profile-preset="):
-			profile_graphics_preset = clampi(int(argument.trim_prefix("--profile-preset=")), 0, 3)
+			profile_graphics_preset = OutputPathGuard.parse_int_range(argument.trim_prefix("--profile-preset="), -1, 0, 4)
 		elif argument.begins_with("--profile-path="):
-			profile_output_path = argument.trim_prefix("--profile-path=")
+			profile_output_path = OutputPathGuard.sanitize(argument.trim_prefix("--profile-path="), PackedStringArray([".json"]), "res://.godot_user/captures/sunset_visual_profile.json")
 		elif argument.begins_with("--profile-environment="):
 			profile_environment = argument.trim_prefix("--profile-environment=").to_lower()
 		elif argument.begins_with("--profile-commit="):
@@ -48,7 +48,7 @@ func _parse_visual_arguments() -> void:
 		elif argument.begins_with("--profile-dirty="):
 			profile_working_tree_dirty = argument.trim_prefix("--profile-dirty=").to_lower() == "true"
 		elif argument.begins_with("--profile-render-scale="):
-			profile_render_scale = clampf(float(argument.trim_prefix("--profile-render-scale=")), 0.5, 1.5)
+			profile_render_scale = OutputPathGuard.parse_finite_float(argument.trim_prefix("--profile-render-scale="), -1.0, 0.5, 1.5)
 
 func _apply_profile_settings() -> void:
 	if profile_snow_quality < 0 and profile_graphics_preset < 0:
@@ -65,6 +65,7 @@ func _apply_profile_settings() -> void:
 	active["vsync_mode"] = 0
 	if profile_render_scale >= 0.0:
 		active["render_scale"] = profile_render_scale
+	active = GameSettings._validated_settings(active)
 	GameSettings.active = active
 	GameSettings.pending = active.duplicate(true)
 	get_viewport().scaling_3d_scale = float(active.get("render_scale", 1.0))

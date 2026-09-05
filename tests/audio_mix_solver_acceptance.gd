@@ -16,6 +16,9 @@ func _ready() -> void:
 		failures.append("Airborne mix did not suppress ground surface audio")
 	if float(airborne.wind_amplitude) <= float(powder_skid.wind_amplitude):
 		failures.append("Airborne mix did not strengthen wind")
+	var rail := solver.resolve(12.0, 0.0, 0.0, 0, 1.0)
+	if float(rail.rail_amplitude) <= 0.0:
+		failures.append("Rail mix did not produce a rail amplitude")
 	if failures.is_empty():
 		print("AUDIO_MIX_SOLVER_PASS: surface, skid, and airborne mix policy remained bounded")
 		AudioManager.shutdown_audio()

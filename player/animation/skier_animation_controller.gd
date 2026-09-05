@@ -274,6 +274,14 @@ var _left_boot_target_world := Transform3D.IDENTITY
 var _right_boot_target_world := Transform3D.IDENTITY
 
 func _ready() -> void:
+	if profile != null:
+		profile = profile.duplicate(true)
+	if grab_library != null:
+		grab_library = grab_library.duplicate(true)
+	if style_library != null:
+		style_library = style_library.duplicate(true)
+	if skeleton_profile != null:
+		skeleton_profile = skeleton_profile.duplicate(true)
 	_build_articulated_rig()
 	_cache_grab_definitions()
 	_cache_style_definitions()
@@ -326,6 +334,7 @@ func apply_frame(frame: SkierAnimationFrame, delta: float) -> void:
 	if rig_adapter != null:
 		rig_adapter.sync_pose(delta, _grab_reach_requests)
 		_sync_grab_visual_metrics()
+	_update_grab_contact_latch(frame, delta)
 	_has_evaluated_frame = true
 
 func trigger(event: int, strength: float = 1.0, side: float = 0.0) -> void:
@@ -669,11 +678,8 @@ func _route_single_ski_intent(ski: Node3D, boot: Node3D, knee: Node3D, hip: Node
 	_rotation_targets[boot] = (_rotation_targets.get(boot, Vector3.ZERO) as Vector3) + Vector3(intent.x * 0.72, intent.y * 0.35, intent.z * 0.72)
 	_rotation_targets[knee] = (_rotation_targets.get(knee, Vector3.ZERO) as Vector3) + Vector3(-intent.x * 0.18, 0.0, intent.z * 0.12)
 	_rotation_targets[hip] = (_rotation_targets.get(hip, Vector3.ZERO) as Vector3) + Vector3(intent.x * 0.18, intent.y * 0.65, intent.z * 0.28)
-	_rotation_targets[ski] = Vector3.ZERO
 
 func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> void:
-	left_ski.rotation = Vector3.ZERO
-	right_ski.rotation = Vector3.ZERO
 	var target_weight := 0.0
 	if frame.locomotion_state == STATE_GROUND:
 		target_weight = profile.ground_leg_ik_weight
@@ -744,6 +750,13 @@ func _apply_bounded_pelvis_compensation(left_target: Vector3, right_target: Vect
 	_pelvis_ik_correction = _pelvis_ik_correction.lerp(correction, 1.0 - exp(-profile.leg_ik_weight_response * delta))
 	if pelvis.get_parent() is Node3D:
 		pelvis.position += (pelvis.get_parent() as Node3D).global_basis.inverse() * _pelvis_ik_correction
+	var stance := right_target - left_target
+	stance.y = 0.0
+	if stance.length_squared() > 0.0001:
+		var desired_yaw := Vector3.FORWARD.signed_angle_to(stance.normalized(), Vector3.UP)
+		var yaw_limit := profile.leg_ik_pelvis_rotation_limit
+		var extra_yaw := clampf(desired_yaw * 0.35 * weight, -yaw_limit, yaw_limit)
+		pelvis.rotate_object_local(Vector3.UP, extra_yaw * (1.0 - exp(-profile.leg_ik_weight_response * delta)))
 
 func _binding_position_error(ski: Node3D, boot: Node3D, rest: Transform3D) -> float:
 	if ski == null or boot == null:
@@ -868,7 +881,9 @@ func _update_trick_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	_trick_rotation_residual = frame.rotation_residual
 	_gameplay_rotation_compactness = clampf(frame.rotation_compactness, 0.0, 1.0)
 	_gameplay_rotation_inertia = maxf(frame.rotation_inertia_scale, 0.05)
-	_spin_cycle = fposmod(absf(frame.rotation_accumulated.y), TAU) / TAU
+	_spin_cycle = 0.0
+	if is_finite(frame.rotation_accumulated.y):
+		_spin_cycle = fposmod(absf(frame.rotation_accumulated.y), TAU) / TAU
 	_trick_active = frame.trick_active
 	_trick_intent = (
 		frame.trick_intent
@@ -1020,6 +1035,18 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 		compact_target = _grab_definition.body_compactness * _grab_pose_weight
 	_grab_compactness = _damp(_grab_compactness, compact_target, profile.grab_pose_response * 0.72, delta)
 
+	if live_pose == TrickController.GrabPose.NONE and _grab_pose_weight < 0.01:
+		_grab_pose_id = TrickController.GrabPose.NONE
+		_grab_definition = null
+		_grab_left_target_active = false
+		_grab_right_target_active = false
+
+func _update_grab_contact_latch(frame: SkierAnimationFrame, delta: float) -> void:
+	var airborne := frame.locomotion_state == STATE_AIR
+	var input_strength := _grab_input_strength
+	var minimum_air_time := profile.grab_min_contact_air_time
+	if _grab_definition != null:
+		minimum_air_time = maxf(minimum_air_time, _grab_definition.minimum_air_time)
 	var target_was_active := _grab_left_target_active or _grab_right_target_active
 	var reach_error := _grab_primary_reach_error()
 	if _grab_definition == null or input_strength <= 0.0 or not airborne:
@@ -1037,7 +1064,6 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 		)
 	var contact_target := 1.0 if _grab_contact_latched else 0.0
 	_grab_contact_weight = _damp(_grab_contact_weight, contact_target, profile.grab_contact_response, delta)
-
 	_grab_phase_name = _grab_pose_layer.phase_name(
 		_grab_definition,
 		_grab_pose_weight,
@@ -1046,12 +1072,6 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 		_grab_contact_weight,
 		_grab_contact_latched
 	)
-
-	if live_pose == TrickController.GrabPose.NONE and _grab_pose_weight < 0.01:
-		_grab_pose_id = TrickController.GrabPose.NONE
-		_grab_definition = null
-		_grab_left_target_active = false
-		_grab_right_target_active = false
 
 func _update_style_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var live_pose := frame.style_pose
@@ -1903,9 +1923,12 @@ func _apply_command_rotation_pose(frame: SkierAnimationFrame) -> void:
 	var pitch_support := clampf(absf(_smoothed_angular_velocity.x) / maxf(profile.flip_compact_threshold, 0.01), 0.0, 1.0)
 	var roll_support := clampf(absf(_smoothed_angular_velocity.z) / maxf(profile.flip_compact_threshold, 0.01), 0.0, 1.0)
 	var has_axis_weights := frame.rotation_axis_weights.length_squared() > 0.0001
-	var yaw_primary := lerpf(profile.trick_multi_axis_weight, 1.0, frame.rotation_axis_weights.y) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT, TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight)
-	var pitch_primary := lerpf(profile.trick_multi_axis_weight, 1.0, frame.rotation_axis_weights.x) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP] else profile.trick_multi_axis_weight)
-	var roll_primary := lerpf(profile.trick_multi_axis_weight, 1.0, frame.rotation_axis_weights.z) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight)
+	var yaw_weight := clampf(frame.rotation_axis_weights.y, 0.0, 1.0) if is_finite(frame.rotation_axis_weights.y) else 0.0
+	var pitch_weight := clampf(frame.rotation_axis_weights.x, 0.0, 1.0) if is_finite(frame.rotation_axis_weights.x) else 0.0
+	var roll_weight := clampf(frame.rotation_axis_weights.z, 0.0, 1.0) if is_finite(frame.rotation_axis_weights.z) else 0.0
+	var yaw_primary := lerpf(profile.trick_multi_axis_weight, 1.0, yaw_weight) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.SPIN_LEFT, TrickCommand.Kind.SPIN_RIGHT, TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight)
+	var pitch_primary := lerpf(profile.trick_multi_axis_weight, 1.0, pitch_weight) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP] else profile.trick_multi_axis_weight)
+	var roll_primary := lerpf(profile.trick_multi_axis_weight, 1.0, roll_weight) if has_axis_weights else (1.0 if frame.trick_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] else profile.trick_multi_axis_weight)
 	var yaw_amount := yaw_support * yaw_primary * pose
 	var pitch_amount := pitch_support * pitch_primary * pose
 	var roll_amount := roll_support * roll_primary * pose

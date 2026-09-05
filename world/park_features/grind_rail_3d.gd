@@ -26,7 +26,7 @@ func _ready() -> void:
 		push_warning("Disabled invalid grind rail: %s" % name)
 		process_mode = Node.PROCESS_MODE_DISABLED
 		return
-	path.bake_interval = 0.12
+	path.bake_interval = 0.08
 	path_length = path.get_baked_length()
 	_build_visual_and_collision()
 
@@ -35,7 +35,7 @@ func capture_candidate(world_position: Vector3, world_velocity: Vector3, require
 		return {"valid": false}
 	var local_position := to_local(world_position)
 	var local_offset := path.get_closest_offset(local_position)
-	var rail_position := to_global(path.sample_baked(local_offset, true) + Vector3.UP * grind_height_offset)
+	var rail_position := to_global(path.sample_baked(local_offset, true) + _grind_offset())
 	var tangent := tangent_at(local_offset)
 	var offset_from_rail := world_position - rail_position
 	var vertical_gap := offset_from_rail.dot(Vector3.UP)
@@ -74,7 +74,7 @@ func approach_preview(world_position: Vector3, world_velocity: Vector3, preview_
 	if path_length <= 0.01 or world_velocity.length() < 0.5:
 		return {"valid": false}
 	var local_offset := path.get_closest_offset(to_local(world_position))
-	var rail_position := to_global(path.sample_baked(local_offset, true) + Vector3.UP * grind_height_offset)
+	var rail_position := to_global(path.sample_baked(local_offset, true) + _grind_offset())
 	var distance := world_position.distance_to(rail_position)
 	if distance > preview_radius:
 		return {"valid": false}
@@ -83,12 +83,18 @@ func approach_preview(world_position: Vector3, world_velocity: Vector3, preview_
 	return {"valid": absf(approach) > 0.35, "distance": distance}
 
 func sample_world(offset: float) -> Vector3:
-	return to_global(path.sample_baked(clampf(offset, 0.0, path_length), true) + Vector3.UP * grind_height_offset)
+	return to_global(path.sample_baked(clampf(offset, 0.0, path_length), true) + _grind_offset())
 
 func tangent_at(offset: float) -> Vector3:
-	var a := path.sample_baked(clampf(offset - 0.08, 0.0, path_length), true)
-	var b := path.sample_baked(clampf(offset + 0.08, 0.0, path_length), true)
-	return global_basis * (b - a).normalized()
+	var a := path.sample_baked(clampf(offset - 0.10, 0.0, path_length), true)
+	var b := path.sample_baked(clampf(offset + 0.10, 0.0, path_length), true)
+	var delta := b - a
+	if delta.length_squared() < 0.0001:
+		return global_basis.z.normalized()
+	return (global_basis * delta).normalized()
+
+func _grind_offset() -> Vector3:
+	return ParkLayout.snow_normal() * grind_height_offset
 
 func _build_visual_and_collision() -> void:
 	var samples := path.get_baked_points()
@@ -213,4 +219,8 @@ func _add_surface_triangle(surface: SurfaceTool, a: Vector3, normal_a: Vector3, 
 	surface.add_vertex(c)
 
 func _segment_basis(delta: Vector3) -> Basis:
-	return Basis.looking_at(delta.normalized(), Vector3.UP).rotated(Vector3.RIGHT, PI * 0.5)
+	var direction := delta.normalized() if delta.length_squared() > 0.0001 else Vector3.FORWARD
+	var up := Vector3.UP
+	if absf(direction.dot(up)) > 0.92:
+		up = Vector3.FORWARD
+	return Basis.looking_at(direction, up).rotated(Vector3.RIGHT, PI * 0.5)

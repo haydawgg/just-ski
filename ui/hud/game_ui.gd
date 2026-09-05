@@ -89,7 +89,14 @@ func bind_content_tracker(value: ParkContentTracker) -> void:
 	_refresh_challenges()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel") and options_panel.visible:
+		var focused := get_viewport().gui_get_focus_owner()
+		if focused is OptionButton:
+			return
 	if event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and get_tree().paused):
+		if results_panel.visible:
+			get_viewport().set_input_as_handled()
+			return
 		if trick_guide_panel.visible:
 			_close_trick_guide()
 		elif challenge_panel.visible:
@@ -267,6 +274,7 @@ func _build_pause_menu() -> void:
 	box.add_child(_named_button("OptionsButton", "Options", _open_options))
 	box.add_child(_named_button("RestartButton", "Restart from Summit", _restart_summit))
 	box.add_child(_named_button("QuitButton", "Quit to Desktop", _quit_game))
+	_wire_vertical_focus(box)
 
 func _build_results_panel() -> void:
 	results_panel = PanelContainer.new()
@@ -296,6 +304,7 @@ func _build_results_panel() -> void:
 	box.add_child(_named_button("ResultsRetryButton", "Retry from Summit", _restart_summit))
 	box.add_child(_named_button("ResultsMarkerButton", "Return to Marker", _results_return_marker))
 	box.add_child(_named_button("ResultsContinueButton", "Keep Riding", _results_continue))
+	_wire_vertical_focus(box)
 
 func _build_trick_guide() -> void:
 	trick_guide_panel = PanelContainer.new()
@@ -625,6 +634,22 @@ func _button(text: String, callback: Callable) -> Button:
 	button.pressed.connect(callback)
 	return button
 
+func _wire_vertical_focus(box: VBoxContainer) -> void:
+	var buttons: Array[Button] = []
+	for node: Node in box.get_children():
+		if node is Button:
+			buttons.append(node as Button)
+	var count := buttons.size()
+	if count < 2:
+		return
+	for index: int in count:
+		var previous := buttons[(index - 1 + count) % count]
+		var next_button := buttons[(index + 1) % count]
+		buttons[index].focus_neighbor_top = buttons[index].get_path_to(previous)
+		buttons[index].focus_neighbor_bottom = buttons[index].get_path_to(next_button)
+		buttons[index].focus_previous = buttons[index].get_path_to(previous)
+		buttons[index].focus_next = buttons[index].get_path_to(next_button)
+
 func _focus_first_pause_button() -> void:
 	var resume := pause_panel.find_child("ResumeButton", true, false) as Button
 	if resume != null:
@@ -635,6 +660,9 @@ func _focus_first_pause_button() -> void:
 		break
 
 func _set_menu_visible(panel: Control) -> void:
+	var focused := get_viewport().gui_get_focus_owner()
+	if focused != null:
+		focused.release_focus()
 	menu_backdrop.visible = true
 	pause_panel.visible = panel == pause_panel
 	results_panel.visible = panel == results_panel
@@ -675,7 +703,7 @@ func _set_marker_from_menu() -> void:
 		_show_notice("NEED SNOW CONTACT")
 		_focus_first_pause_button()
 		return
-	SessionManager.set_marker(player.global_transform.translated_local(Vector3.UP * 0.5))
+	SessionManager.set_marker(player._marker_transform())
 	_resume()
 
 func _restart_summit() -> void:

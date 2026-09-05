@@ -513,7 +513,7 @@ func _physics_process(delta: float) -> void:
 			planar_speed
 		)
 		# Hockey-stop hold: trigger on strong brake + decel or divergence, not just low absolute speed.
-		var deceleration_rate := maxf((_previous_planar_speed - planar_speed) / maxf(delta, 0.0001), 0.0)
+		var deceleration_rate := maxf((_previous_planar_speed - planar_speed) / FrameDelta.stable(delta), 0.0)
 		var is_hard_braking := (
 			skier != null
 			and skier.braking
@@ -670,7 +670,7 @@ func _physics_process(delta: float) -> void:
 	if fov_limit > 0.0:
 		fov_step = clampf(fov_step, -fov_limit, fov_limit)
 	camera.fov = clampf(fov_before + fov_step, 1.0, 179.0)
-	_last_fov_rate = absf(camera.fov - fov_before) / maxf(delta, 0.0001)
+	_last_fov_rate = absf(camera.fov - fov_before) / FrameDelta.stable(delta)
 
 	# Composition owns position only. Orientation stays authoritative in the
 	# yaw/pitch controller above so AIR/CRASH recovery cannot bypass the 90 deg/s
@@ -819,7 +819,7 @@ func _physics_process(delta: float) -> void:
 	# Composition is position-only, so the rendered basis remains the yaw/pitch
 	# controller's bounded orientation in every state.
 	global_basis = composition_basis
-	_last_distance_rate = absf(global_position.distance_to(target.global_position) - frame_distance) / maxf(delta, 0.0001)
+	_last_distance_rate = absf(global_position.distance_to(target.global_position) - frame_distance) / FrameDelta.stable(delta)
 	_previous_target_distance = global_position.distance_to(target.global_position)
 	_previous_target_position = target.global_position
 	_previous_planar_speed = planar_speed

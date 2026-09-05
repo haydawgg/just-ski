@@ -26,6 +26,9 @@ func set_marker(value: Transform3D) -> void:
 func request_respawn() -> void:
 	respawn_requested.emit(marker if has_marker else default_spawn)
 
+func request_respawn_to(value: Transform3D) -> void:
+	respawn_requested.emit(value)
+
 func clear_marker() -> void:
 	has_marker = false
 

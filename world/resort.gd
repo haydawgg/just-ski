@@ -229,7 +229,7 @@ func _build_player() -> void:
 	player = SkierController.new()
 	player.name = "Skier"
 	player.profile = physics_profile
-	player.position = ParkLayout.spawn_position()
+	player.position = ParkLayout.spawn_position(course_profile.spawn_world_z() if course_profile != null else 138.0)
 	player.basis = ParkLayout.downhill_basis()
 	add_child(player)
 	for node: Node in player.find_children("*", "GeometryInstance3D", true, false):
@@ -239,6 +239,7 @@ func _build_player() -> void:
 	course_recovery.name = "CourseRecovery"
 	add_child(course_recovery)
 	course_recovery.set_target(player)
+	course_recovery.course_profile = course_profile
 
 	camera_rig = SkiCameraController.new()
 	camera_rig.name = "CameraRig"
@@ -268,7 +269,7 @@ func _build_finish_trigger() -> void:
 	finish_trigger.collision_layer = 0
 	finish_trigger.collision_mask = 2
 	finish_trigger.monitoring = true
-	finish_trigger.position = ParkLayout.snow_at(0.0, -155.0) + ParkLayout.snow_normal() * 1.5
+	finish_trigger.position = ParkLayout.snow_at(0.0, course_profile.finish_trigger_world_z() if course_profile != null else -155.0) + ParkLayout.snow_normal() * 1.5
 	finish_trigger.basis = ParkLayout.downhill_basis()
 	var shape_node := CollisionShape3D.new()
 	var shape := BoxShape3D.new()

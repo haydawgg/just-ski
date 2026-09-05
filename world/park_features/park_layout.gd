@@ -4,8 +4,10 @@ extends RefCounted
 const PITCH_DEG := 18.0
 const FACE_THICKNESS := 1.5
 const FACE_WIDTH := 64.0
-const FACE_SLOPE_LENGTH := 315.0
+const FACE_SLOPE_LENGTH := 337.0
 const SURFACE_Y_AT_ORIGIN := 52.0
+const SPAWN_HOVER := 1.15
+const MARKER_HOVER := 0.5
 const SNOW_SHADOW := Color("#a9c7d8")
 const SnowSurface := preload("res://world/snow_material.gd")
 
@@ -29,14 +31,29 @@ static func downhill_basis(yaw_deg: float = 0.0) -> Basis:
 static func snow_at(x: float, z: float) -> Vector3:
 	return Vector3(x, SURFACE_Y_AT_ORIGIN + z * tan(pitch_rad()), z)
 
+static func face_half_world_z() -> float:
+	return FACE_SLOPE_LENGTH * 0.5 * cos(pitch_rad())
+
+static func surface_hover(x: float, z: float, hover: float) -> Vector3:
+	return snow_at(x, z) + snow_normal() * hover
+
+static func upright_feature_basis(yaw_deg: float = 0.0) -> Basis:
+	var planar_down := Vector3(downhill().x, 0.0, downhill().z)
+	if planar_down.length_squared() < 0.0001:
+		planar_down = Vector3.FORWARD
+	var basis := Basis.looking_at(planar_down.normalized(), Vector3.UP)
+	if absf(yaw_deg) > 0.01:
+		basis = basis.rotated(Vector3.UP, deg_to_rad(yaw_deg))
+	return basis
+
 static func along_slope(origin: Vector3, distance: float, yaw_deg: float = 0.0) -> Vector3:
 	return origin + downhill_basis(yaw_deg) * Vector3(0.0, 0.0, -distance)
 
 static func face_center() -> Vector3:
 	return snow_at(0.0, 0.0) - snow_normal() * (FACE_THICKNESS * 0.5)
 
-static func spawn_position() -> Vector3:
-	return snow_at(0.0, 138.0) + snow_normal() * 1.15
+static func spawn_position(world_z: float = 138.0) -> Vector3:
+	return surface_hover(0.0, world_z, SPAWN_HOVER)
 
 static func hub_position() -> Vector3:
 	return Vector3(0.0, 0.2, -168.0)
@@ -46,29 +63,31 @@ static func jump_table(physics_profile: SkiPhysicsProfile, design_speed: float, 
 	var n := snow_normal()
 	var d := downhill()
 	var lip_dir := (d * cos(extra) + n * sin(extra)).normalized()
+	var lip_length := clampf(7.0 + extra_lip_deg * 0.35, 7.0, 12.0)
+	var lip_rise := maxf(0.42, lip_length * tan(extra) * 0.62)
 	var velocity := lip_dir * design_speed
 	var resolved_pop_strength := design_pop_strength if design_pop_strength >= 0.0 else physics_profile.minimum_pop_strength
 	velocity += n * physics_profile.pop_impulse * clampf(resolved_pop_strength, 0.0, 1.0)
 	var gravity := Vector3(0.0, -physics_profile.air_gravity, 0.0)
-	var position := Vector3.ZERO
+	var position := n * lip_rise
 	var dt := 1.0 / 120.0
 	var range_along := 0.0
 	for _i in range(1440):
 		position += velocity * dt
 		velocity += gravity * dt
 		range_along = position.dot(d)
-		if range_along > 2.5 and n.dot(position) <= -drop:
+		if range_along > 2.5 and n.dot(position - n * lip_rise) <= -drop:
 			break
 	range_along = maxf(range_along, 6.0)
-	var table_length := range_along * 0.72
+	var table_length := clampf(range_along * 0.72, 8.0, 20.0)
 	var landing_length := maxf(8.0, (range_along - table_length) * 1.4)
-	var lip_length := clampf(7.0 + extra_lip_deg * 0.35, 7.0, 12.0)
 	return {
 		"lip_length": lip_length,
 		"table_length": table_length,
 		"landing_length": landing_length,
 		"range": range_along,
 		"lip_dir": lip_dir,
+		"lip_rise": lip_rise,
 	}
 
 static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhysicsProfile, x: float, lip_z: float, design_speed: float, extra_lip_deg: float, width: float = 8.5, drop: float = 0.0, yaw_deg: float = 0.0, design_pop_strength: float = -1.0, readability: Dictionary = {}) -> Node3D:
@@ -81,7 +100,8 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 	var lip_length: float = sizing.lip_length
 	var table_length: float = sizing.table_length
 	var landing_length: float = sizing.landing_length
-	var lip_rise := maxf(0.42, lip_length * tan(extra) * 0.62)
+	var lip_rise: float = sizing.get("lip_rise", maxf(0.42, lip_length * tan(extra) * 0.62))
+	var landing_crown := clampf(0.28 + lip_rise * 0.22, 0.42, 0.82)
 	var run_in_length := clampf(lip_length * 0.68, 4.5, 7.5)
 	var root := Node3D.new()
 	root.name = label
@@ -110,7 +130,7 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 	for sample: int in range(table_samples):
 		var t := float(sample) / float(table_samples - 1)
 		var distance_along := lip_length + table_length * t
-		var knuckle_height := _hermite(t, lip_rise, 0.055, tan(extra), 0.0, table_length)
+		var knuckle_height := _hermite(t, lip_rise, landing_crown, tan(extra), 0.0, table_length)
 		table_centers.append(lip_start + down * distance_along + n * knuckle_height)
 		table_widths.append(width * lerpf(1.0, 1.34, _smootherstep(t)))
 		table_shoulders.append(maxf(knuckle_height - 0.001, 0.0))
@@ -133,8 +153,7 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 	var landing_shoulders := PackedFloat32Array()
 	var run_out_length := clampf(landing_length * 0.28, 3.5, 6.0)
 	var landing_samples := 14
-	var landing_crown := clampf(0.28 + lip_rise * 0.22, 0.42, 0.82)
-	var flat_gap := 1.8
+	var flat_gap := 0.25
 	for sample: int in range(landing_samples):
 		var t := float(sample) / float(landing_samples - 1)
 		var distance_along := lip_length + table_length + flat_gap + (landing_length + run_out_length) * t
@@ -263,7 +282,7 @@ static func add_wallride(parent: Node3D, label: String, x: float, z: float, leng
 	root.name = label
 	root.add_to_group("park_wallrides")
 	parent.add_child(root)
-	var feature_basis := downhill_basis(yaw_deg)
+	var feature_basis := upright_feature_basis(yaw_deg)
 	var snow_base := MeshInstance3D.new()
 	var base_mesh := BoxMesh.new()
 	base_mesh.size = Vector3(0.72, 0.12, length + 0.45)
@@ -280,7 +299,7 @@ static func add_wallride(parent: Node3D, label: String, x: float, z: float, leng
 	body.collision_mask = 2
 	body.set_meta("ski_surface_kind", SnowSurface.Kind.GROOMED)
 	body.set_meta("ski_surface_class", "feature")
-	body.transform = Transform3D(downhill_basis(yaw_deg), snow_at(x, z) + snow_normal() * (height * 0.5))
+	body.transform = Transform3D(feature_basis, snow_at(x, z) + Vector3.UP * (height * 0.5))
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.42, height, length)
@@ -328,7 +347,7 @@ static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: 
 	body.name = "BonkBody"
 	body.collision_layer = 4
 	body.collision_mask = 2
-	body.transform = Transform3D(downhill_basis(), snow_at(x, z) + snow_normal() * (height * 0.5))
+	body.transform = Transform3D(upright_feature_basis(), snow_at(x, z) + Vector3.UP * (height * 0.5))
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = radius
@@ -519,10 +538,10 @@ static func add_rail_contours(parent: Node3D, label: String, points: Array[Vecto
 
 static func _add_rail_support(parent: Node3D, anchor: Vector3, normal: Vector3, support_index: int) -> void:
 	var snow_position := snow_at(anchor.x, anchor.z)
-	var above_snow := anchor.y - snow_position.y
-	if above_snow < 0.34:
+	var above_snow := (anchor - snow_position).dot(normal)
+	if above_snow < 0.10:
 		return
-	var support_height := clampf(above_snow - 0.14, 0.24, 4.5)
+	var support_height := clampf(above_snow - 0.06, 0.12, 4.5)
 	var support := MeshInstance3D.new()
 	support.name = "RailSupport_%02d" % support_index
 	var support_mesh := BoxMesh.new()

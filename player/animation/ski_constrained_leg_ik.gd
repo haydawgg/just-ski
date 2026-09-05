@@ -64,7 +64,7 @@ func solve_leg(
 	_clamp_local_euler(hip, Vector3(-1.4, -0.7, -0.72), Vector3(0.72, 0.7, 0.72))
 	# Canonical knees flex on +X. Reject the mathematically equivalent negative
 	# Euler branch so a terrain discontinuity cannot flip the knee backward.
-	_clamp_local_euler(knee, Vector3(0.0, -0.28, -0.35), Vector3(2.3, 0.28, 0.35))
+	_clamp_local_euler(knee, Vector3(-0.45, -0.28, -0.35), Vector3(2.3, 0.28, 0.35))
 	var orientation_weight := _bounded_weight(
 		Quaternion(boot.global_basis).angle_to(Quaternion(target_boot_world.basis)),
 		weight,

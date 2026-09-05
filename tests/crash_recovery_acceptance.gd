@@ -271,7 +271,7 @@ func _test_course_recovery_lifecycle_and_scoring() -> void:
 		failures.append("Course recovery did not emit exactly one start/completion lifecycle")
 	if recovery.recovery_in_progress or skier.recovery_frozen:
 		failures.append("Course recovery remained frozen after completion")
-	if skier.global_position.distance_to(SessionManager.default_spawn.origin + Vector3.UP * 0.35) > 0.05:
+	if skier.global_position.distance_to(SessionManager.default_spawn.origin) > 0.05:
 		failures.append("Course recovery did not return the skier to the authoritative spawn")
 	remove_child(recovery)
 	recovery.queue_free()

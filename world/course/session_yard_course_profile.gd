@@ -1,6 +1,12 @@
 class_name SessionYardCourseProfile
 extends ParkCourseProfile
 
+func spawn_world_z() -> float:
+	return 42.0
+
+func finish_trigger_world_z() -> float:
+	return -26.0
+
 func feature_specs() -> Array[Dictionary]:
 	var specs: Array[Dictionary] = [
 		{"kind": "gate", "name": "YardStartGate", "x": 0.0, "z": 42.0, "width": 18.0, "color": Color("#55d6be"), "route": &"safe"},

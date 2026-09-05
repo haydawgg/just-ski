@@ -5,6 +5,9 @@ signal score_awarded(text: String, awarded_points: int, quality: float, outcome:
 signal score_changed(snapshot: Dictionary)
 signal run_finished(snapshot: Dictionary)
 
+const MAX_TOTAL_SCORE := 999999
+const MIN_COMBO_POINTS := 80
+
 @export var line_link_window := 4.5
 @export var combo_window := 9.0
 @export var maximum_multiplier := 4.0
@@ -20,6 +23,8 @@ var last_feature_kind := ""
 var pending_feature_kind := ""
 var best_trick_name := ""
 var best_trick_points := 0
+var last_awarded_points := 0
+var retry_count := 0
 var landed_trick_count := 0
 var clean_trick_count := 0
 var bail_count := 0
@@ -56,16 +61,19 @@ func accept_trick(text: String, base_points: int, quality: float, outcome: int) 
 	if linked:
 		scored_text = "Line Link + " + text
 		adjusted_points += line_bonus_points
-	combo_count += 1
-	combo_multiplier = minf(maximum_multiplier, 1.0 + float(combo_count - 1) * multiplier_step)
-	combo_remaining = combo_window
-	var awarded := int(round(float(adjusted_points) * combo_multiplier))
-	total_score += awarded
+	var combo_eligible := adjusted_points >= MIN_COMBO_POINTS
+	if combo_eligible:
+		combo_count += 1
+		combo_multiplier = minf(maximum_multiplier, 1.0 + float(combo_count - 1) * multiplier_step)
+		combo_remaining = combo_window
+	var awarded := adjusted_points if not combo_eligible else int(round(float(adjusted_points) * combo_multiplier))
+	last_awarded_points = awarded
+	total_score = mini(MAX_TOTAL_SCORE, total_score + awarded)
 	landed_trick_count += 1
 	if outcome == LandingSolver.Outcome.CLEAN:
 		clean_trick_count += 1
-	if awarded > best_trick_points:
-		best_trick_points = awarded
+	if adjusted_points > best_trick_points:
+		best_trick_points = adjusted_points
 		best_trick_name = scored_text
 	if not pending_feature_kind.is_empty():
 		last_feature_kind = pending_feature_kind
@@ -104,10 +112,22 @@ func break_combo(reason: String = "manual") -> void:
 	last_combo_break_reason = reason
 	reset_combo()
 
+func apply_retry_cost() -> void:
+	var percent_cost := int(round(float(total_score) * 0.15))
+	var cost := maxi(last_awarded_points, percent_cost)
+	if cost <= 0 and total_score > 0:
+		cost = mini(200, total_score)
+	total_score = maxi(0, total_score - cost)
+	retry_count += 1
+	reset_link()
+	break_combo("marker_retry")
+
 func reset_run() -> void:
 	total_score = 0
 	best_trick_name = ""
 	best_trick_points = 0
+	last_awarded_points = 0
+	retry_count = 0
 	landed_trick_count = 0
 	clean_trick_count = 0
 	bail_count = 0
@@ -128,6 +148,7 @@ func snapshot() -> Dictionary:
 		"last_feature_kind": last_feature_kind,
 		"best_trick_name": best_trick_name,
 		"best_trick_points": best_trick_points,
+		"retry_count": retry_count,
 		"landed_trick_count": landed_trick_count,
 		"clean_trick_count": clean_trick_count,
 		"bail_count": bail_count,

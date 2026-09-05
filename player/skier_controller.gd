@@ -158,16 +158,10 @@ func _physics_process(delta: float) -> void:
 	if input_frame.respawn_pressed:
 		SessionManager.request_respawn()
 	if input_frame.marker_pressed and state == State.GROUND and contact.grounded:
-		var safe_transform := global_transform
-		safe_transform.origin += contact.average_normal * 0.5
-		SessionManager.set_marker(safe_transform)
+		SessionManager.set_marker(_marker_transform())
 	if recovery_frozen:
-		# Recovery freezes gameplay motion, not the observers that drive HUD,
-		# combo expiry, and surface audio. Keep those channels ticking so the
-		# recovery overlay cannot leave stale telemetry or a held sound loop.
 		if scoring != null:
-			scoring.step(delta, velocity.length())
-		AudioManager.update_surface_audio(velocity.length(), skid_amount, state == State.GRIND, contact.surface_kind, state == State.AIR)
+			scoring.step(delta, 0.0)
 		telemetry_updated.emit(telemetry())
 		return
 	var velocity_before_motion := velocity
@@ -200,7 +194,7 @@ func _physics_process(delta: float) -> void:
 	snow_vfx.update_from_existing_contact(delta)
 	_update_contact_shadow(delta)
 	_update_debug()
-	AudioManager.update_surface_audio(velocity.length(), skid_amount, state == State.GRIND, contact.surface_kind, state == State.AIR)
+	AudioManager.update_surface_audio(velocity.length(), skid_amount, state == State.GRIND, contact.surface_kind, _audio_airborne())
 	telemetry_updated.emit(telemetry())
 
 func _update_ground(delta: float) -> void:
@@ -304,7 +298,7 @@ func _update_ground(delta: float) -> void:
 	var unused_grip := maxf(0.0, grip - needed_centripetal)
 	var tracking := minf(absf(lateral_slip), unused_grip * delta) * signf(lateral_slip)
 	velocity -= turned_right * tracking
-	carve_force = planar_speed * absf(velocity_yaw) / maxf(delta, 0.001)
+	carve_force = planar_speed * absf(velocity_yaw) / FrameDelta.stable(delta)
 	skid_amount = clampf(
 		(1.0 - current_carve_ratio) * absf(edge_amount)
 		+ absf(lateral_slip) / 12.0
@@ -562,7 +556,7 @@ func _update_grind(delta: float) -> void:
 		profile.rail_balance_input_gain,
 		delta
 	)
-	rail_balance_velocity = (rail_balance - rail_previous_balance) / maxf(delta, 0.001)
+	rail_balance_velocity = (rail_balance - rail_previous_balance) / FrameDelta.stable(delta)
 	if _rail_motion_solver.has_failed(rail_balance, profile.rail_balance_fail):
 		_slip_off_rail()
 		return
@@ -735,7 +729,8 @@ func _handle_landing() -> void:
 	state = State.GROUND
 	if trick.had_trick_intent:
 		scoring.begin_feature("jump")
-	trick.land(quality, velocity.dot(-global_basis.z) < 0.0, int(result.outcome), 0, true)
+	if not trick.land(quality, velocity.dot(-global_basis.z) < 0.0, int(result.outcome), 0, true):
+		scoring.pending_feature_kind = ""
 	trick_rotation_state.reset()
 	active_trick_kind = TrickCommand.Kind.NONE
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
@@ -918,9 +913,11 @@ func _exit_rail(pop_off: bool) -> void:
 	if pop_off:
 		velocity += Vector3.UP * profile.pop_impulse * profile.rail_pop_strength
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_EXIT, clampf(absf(rail_speed) / 20.0, 0.25, 1.0), rail_direction)
-	if trick.grind_seconds > 0.05:
+	if trick.grind_seconds >= TrickController.MIN_GRIND_SECONDS:
 		scoring.begin_feature("rail")
-		trick.land(0.85, false, LandingSolver.Outcome.CLEAN)
+		trick.commit_grind()
+	else:
+		trick.grind_seconds = 0.0
 	active_rail = null
 	rail_balance = 0.0
 	rail_capture_blend_remaining = 0.0
@@ -1097,7 +1094,7 @@ func respawn_at(value: Transform3D) -> void:
 	_clear_landing_orientation_settle()
 	angular_velocity = Vector3.ZERO
 	global_transform = value
-	global_position += Vector3.UP * 0.35
+	_clear_locomotion_channels()
 	state = State.AIR
 	air_deliberate = false
 	air_takeoff_type = SkierAnimationFrame.TakeoffType.NONE
@@ -1132,11 +1129,11 @@ func respawn_at(value: Transform3D) -> void:
 	last_speed_discontinuity = {}
 	animation_frame.reset()
 	_clear_crash_state()
-	# Any authoritative respawn ends the active line. Preserve total score for
-	# marker/course recovery, but never carry a combo multiplier into a new
-	# physical attempt.
-	scoring.reset_link()
-	scoring.break_combo("respawn")
+	if SessionManager.has_marker:
+		scoring.apply_retry_cost()
+	else:
+		scoring.reset_link()
+		scoring.break_combo("respawn")
 	AudioManager.stop_feedback()
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
 	state_changed.emit("Air")
@@ -1148,18 +1145,15 @@ func set_recovery_frozen(value: bool) -> void:
 	if value:
 		velocity = Vector3.ZERO
 		angular_velocity = Vector3.ZERO
+		AudioManager.stop_feedback()
 
-func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3.ZERO) -> void:
-	"""Reset every motion subsystem to a reproducible benchmark baseline."""
-	recovery_frozen = false
-	active_rail = null
-	velocity = initial_velocity
-	_clear_landing_orientation_settle()
-	angular_velocity = Vector3.ZERO
-	global_transform = value
-	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
-	state = State.AIR
-	contact = SkiContactSolver.new()
+func _audio_airborne() -> bool:
+	return state == State.AIR or state == State.BAIL
+
+func _marker_transform() -> Transform3D:
+	return Transform3D(global_basis, ParkLayout.surface_hover(global_position.x, global_position.z, ParkLayout.MARKER_HOVER))
+
+func _clear_locomotion_channels() -> void:
 	edge_amount = 0.0
 	pressure_amount = 0.0
 	lateral_slip = 0.0
@@ -1179,6 +1173,19 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	tuck_amount = 0.0
 	braking = false
 	air_time = 0.0
+
+func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3.ZERO) -> void:
+	"""Reset every motion subsystem to a reproducible benchmark baseline."""
+	recovery_frozen = false
+	active_rail = null
+	velocity = initial_velocity
+	_clear_landing_orientation_settle()
+	angular_velocity = Vector3.ZERO
+	global_transform = value
+	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
+	state = State.AIR
+	contact = SkiContactSolver.new()
+	_clear_locomotion_channels()
 	rail_balance_input = 0.0
 	rail_balance = 0.0
 	rail_offset = 0.0
@@ -1754,11 +1761,18 @@ func _predict_landing() -> Dictionary:
 	if state != State.AIR:
 		return result
 	var step := clampf(profile.landing_prediction_step, 0.025, 0.15)
+	var horizon := profile.landing_prediction_seconds
+	if not is_finite(horizon):
+		horizon = 2.2
+	horizon = clampf(horizon, 0.1, 4.0)
 	var elapsed := 0.0
 	var position := global_position + Vector3.UP * 0.2
 	var predicted_velocity := velocity
 	var space := get_world_3d().direct_space_state
-	while elapsed < profile.landing_prediction_seconds:
+	var max_iterations := 80
+	var iteration := 0
+	while elapsed < horizon and iteration < max_iterations:
+		iteration += 1
 		var next_velocity := predicted_velocity + Vector3.DOWN * profile.air_gravity * step
 		var next_position := position + (predicted_velocity + next_velocity) * 0.5 * step
 		var query := PhysicsRayQueryParameters3D.create(position, next_position, 1)

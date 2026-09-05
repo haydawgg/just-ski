@@ -63,7 +63,9 @@ float snow_value_noise(vec2 position) {
 
 vec3 snow_decode_normal(vec2 encoded_normal) {
 	vec2 xy = encoded_normal * 2.0 - 1.0;
-	float z = sqrt(max(1.0 - dot(xy, xy), 0.0001));
+	float max_abs = max(max(abs(xy.x), abs(xy.y)), 1.0);
+	xy /= max_abs;
+	float z = sqrt(max(1.0 - dot(xy, xy), 0.0));
 	return normalize(vec3(xy, z));
 }
 
@@ -76,7 +78,7 @@ vec3 snow_axis_normal_y(vec3 tangent_normal, float axis_sign) {
 }
 
 vec3 snow_axis_normal_z(vec3 tangent_normal, float axis_sign) {
-	return vec3(tangent_normal.x, axis_sign * tangent_normal.y, axis_sign * tangent_normal.z);
+	return vec3(axis_sign * tangent_normal.x, tangent_normal.y, axis_sign * tangent_normal.z);
 }
 
 SnowTriplanarSample sample_triplanar(vec3 world_position, vec3 geometry_normal) {
@@ -195,6 +197,8 @@ void snow_surface(
 }
 
 float snow_crystal_mask(float detail_visibility, float sparkle_amount, float sparkle_density) {
-	float crystal = snow_hash12(floor(snow_world_position.xz * 42.0));
-	return step(sparkle_density, crystal) * sparkle_amount * detail_visibility;
+	float cell = snow_hash12(floor(snow_world_position.xz * 42.0));
+	float width = max(fwidth(cell), 0.02);
+	float crystal = smoothstep(sparkle_density - width, sparkle_density + width, cell);
+	return crystal * sparkle_amount * detail_visibility;
 }

@@ -12,6 +12,12 @@ extends Resource
 @export_range(0.04, 0.3, 0.01) var landing_marker_width := 0.22
 @export_range(0.005, 0.08, 0.005) var marker_surface_offset := 0.032
 
+func spawn_world_z() -> float:
+	return 138.0
+
+func finish_trigger_world_z() -> float:
+	return -155.0
+
 func feature_readability() -> Dictionary:
 	return {
 		"color": snow_feature_marker_color,

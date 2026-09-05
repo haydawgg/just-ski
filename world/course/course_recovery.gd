@@ -26,6 +26,7 @@ var respawn_issued := false
 var recovery_count := 0
 var last_recovery_reason := ""
 var last_respawn_transform := Transform3D.IDENTITY
+var course_profile: ParkCourseProfile
 
 var recovery_in_progress: bool:
 	get:
@@ -47,8 +48,8 @@ func _physics_process(delta: float) -> void:
 		recovery_elapsed += delta
 		if not respawn_issued and recovery_elapsed >= maxf(fade_out_duration, 0.0):
 			respawn_issued = true
-			last_respawn_transform = SessionManager.marker if SessionManager.has_marker else SessionManager.default_spawn
-			SessionManager.request_respawn()
+			last_respawn_transform = _recovery_spawn_transform()
+			SessionManager.request_respawn_to(last_respawn_transform)
 			recovery_respawned.emit(last_recovery_reason, last_respawn_transform)
 		if respawn_issued and recovery_elapsed >= maxf(fade_out_duration, 0.0) + maxf(fade_in_duration, 0.0):
 			_finish_recovery()
@@ -87,3 +88,22 @@ func _finish_recovery() -> void:
 	if target != null and target.has_method("set_recovery_frozen"):
 		target.call("set_recovery_frozen", false)
 	recovery_completed.emit(last_recovery_reason, last_respawn_transform)
+
+func _recovery_spawn_transform() -> Transform3D:
+	if SessionManager.has_marker:
+		return SessionManager.marker
+	if course_profile == null or target == null:
+		return SessionManager.default_spawn
+	var player_z := target.global_position.z
+	var best := SessionManager.default_spawn
+	var best_delta := INF
+	for spot: ParkSpotSpec in course_profile.spot_specs():
+		var marker := spot.recommended_marker_position
+		if marker.z < player_z:
+			continue
+		var origin := ParkLayout.surface_hover(marker.x, marker.z, ParkLayout.SPAWN_HOVER)
+		var delta_z := marker.z - player_z
+		if delta_z < best_delta:
+			best_delta = delta_z
+			best = Transform3D(ParkLayout.downhill_basis(), origin)
+	return best
