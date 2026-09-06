@@ -447,9 +447,11 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 		return
 	var target_sum := Vector3.ZERO
 	var weight_sum := 0.0
+	var assist_scale_sum := 0.0
 	for request: SkierGrabReachRequest in requests:
 		target_sum += request.target_marker.global_position * request.weight
 		weight_sum += request.weight
+		assist_scale_sum += request.upper_spine_assist_scale * request.weight
 	if weight_sum <= 0.001:
 		return
 	var helper_index := int(_helper_bone_indices[&"upper_spine"])
@@ -461,6 +463,9 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 	if current_direction.length_squared() < 0.0001 or target_direction.length_squared() < 0.0001:
 		return
 	var average_weight := clampf(weight_sum / float(requests.size()), 0.0, 1.0)
+	var average_assist_scale := clampf(assist_scale_sum / maxf(weight_sum, 0.001), 0.0, 4.0)
+	var assist_strength := profile.upper_spine_reach_assist * average_assist_scale
+	var assist_limit := clampf(profile.upper_spine_reach_limit * average_assist_scale, 0.0, MAX_HELPER_TURN)
 	# The mapped spine segment is the long visual lever into the optional
 	# upper-spine helper. Rotating it only for active requests lets the helper
 	# reach assist fold the production torso without translating gameplay or
@@ -471,8 +476,8 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 	var parent_direction := parent_child_transform.origin - parent_transform.origin
 	var parent_target_direction := target_sum / weight_sum - parent_transform.origin
 	if parent_direction.length_squared() > 0.0001 and parent_target_direction.length_squared() > 0.0001:
-		var parent_assist := clampf(profile.upper_spine_reach_assist * average_weight * 0.65, 0.0, 1.0)
-		var parent_limit := minf(clampf(profile.upper_spine_reach_limit, 0.0, MAX_HELPER_TURN) * 0.65, 1.2)
+		var parent_assist := clampf(assist_strength * average_weight * 0.65, 0.0, 1.0)
+		var parent_limit := minf(assist_limit * 0.65, 1.2)
 		var assisted_parent_direction := _slerp_direction(parent_direction, parent_target_direction, parent_assist)
 		assisted_parent_direction = _limit_direction_turn(parent_direction, assisted_parent_direction, parent_limit)
 		_set_bone_world_rotation(
@@ -485,12 +490,12 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 	var assisted_direction := _slerp_direction(
 		current_direction,
 		target_direction,
-		profile.upper_spine_reach_assist * average_weight
+		assist_strength * average_weight
 	)
 	assisted_direction = _limit_direction_turn(
 		current_direction,
 		assisted_direction,
-		clampf(profile.upper_spine_reach_limit, 0.0, MAX_HELPER_TURN)
+		assist_limit
 	)
 	_set_bone_world_rotation(
 		helper_index,

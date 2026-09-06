@@ -2612,7 +2612,7 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 			_grab_left_target_world = left_marker.global_position
 			if owns_visual_reach:
 				var left_request := GrabReachRequestModule.new() as SkierGrabReachRequest
-				_grab_reach_requests.append(left_request.configure(&"left", left_marker, reach_weight, definition.clavicle_assist_scale))
+				_grab_reach_requests.append(left_request.configure(&"left", left_marker, reach_weight, definition.clavicle_assist_scale, definition.upper_spine_assist_scale))
 			else:
 				_grab_left_reach_error = left_hand.global_position.distance_to(_grab_left_target_world)
 				_aim_arm_at(left_shoulder, left_elbow, left_hand, _grab_left_target_world, reach_weight, -1.0)
@@ -2623,7 +2623,7 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 			_grab_right_target_world = right_marker.global_position
 			if owns_visual_reach:
 				var right_request := GrabReachRequestModule.new() as SkierGrabReachRequest
-				_grab_reach_requests.append(right_request.configure(&"right", right_marker, reach_weight, definition.clavicle_assist_scale))
+				_grab_reach_requests.append(right_request.configure(&"right", right_marker, reach_weight, definition.clavicle_assist_scale, definition.upper_spine_assist_scale))
 			else:
 				_grab_right_reach_error = right_hand.global_position.distance_to(_grab_right_target_world)
 				_aim_arm_at(right_shoulder, right_elbow, right_hand, _grab_right_target_world, reach_weight, 1.0)
