@@ -154,7 +154,8 @@ func sync_pose(_delta: float, grab_requests: Array[SkierGrabReachRequest] = []) 
 			var pose_position := initial_pose_positions[semantic] as Vector3
 			if semantic in TRANSLATED_JOINTS:
 				var offset := (source.position - driver.rest_position(semantic)) * profile.pose_translation_scale
-				pose_position += (_unroll[semantic] as Quaternion) * (parent_neutral as Quaternion).inverse() * offset
+				var translation_frame := axis_inverse if CHAIN_PARENTS[semantic] == &"" else (parent_neutral as Quaternion).inverse()
+				pose_position += (_unroll[semantic] as Quaternion) * translation_frame * offset
 			if _static_position_offsets.has(semantic):
 				pose_position += _static_position_offsets[semantic]
 			skeleton.set_bone_pose_position(index, pose_position)
@@ -342,8 +343,14 @@ func _compute_retarget_calibration() -> void:
 	# canonical boot positions, preserving ground contact and stance width.
 	for side: StringName in [&"left", &"right"]:
 		var boot := StringName(side + "_boot")
-		var delta := _canonical_rest_world(boot) - _model_bone_rest(boot).origin
-		_static_position_offsets[StringName(side + "_hip")] = (_neutral_world[&"pelvis"] as Quaternion).inverse() * delta
+		# Match the canonical segment lengths once at calibration. Pinning only
+		# the neutral ankle leaves bent knees/boots centimetres off the solved
+		# support pose because the imported thigh/shin lengths differ.
+		for semantic: StringName in [StringName(side + "_hip"), StringName(side + "_knee"), boot]:
+			var parent_semantic: StringName = CHAIN_PARENTS[semantic]
+			var desired_segment := _canonical_rest_world(semantic) - _canonical_rest_world(parent_semantic)
+			var model_segment := _model_bone_rest(semantic).origin - _model_bone_rest(parent_semantic).origin
+			_static_position_offsets[semantic] = (_unroll[semantic] as Quaternion) * (_neutral_world[parent_semantic] as Quaternion).inverse() * (desired_segment - model_segment)
 		var shoulder_rest := _model_bone_rest(StringName(side + "_shoulder")).origin
 		var elbow_rest := _model_bone_rest(StringName(side + "_elbow")).origin
 		var hand_rest := _model_bone_rest(StringName(side + "_hand")).origin
@@ -429,10 +436,10 @@ func _compensate_head_for_spine_assist(head_index: int, head_before: Quaternion)
 	# canonical head: full restoration would look neck-broken against the
 	# folded torso. Anchoring on the head's own before/after avoids any
 	# assumption about which ancestor moved or in which rest frame it composes.
-	# Blend is strong (0.85): like a real vestibulo-ocular reflex the gaze
+	# Blend is strong (0.97): like a real vestibulo-ocular reflex the gaze
 	# stabilizes while the torso folds underneath it.
 	var head_after := _bone_world_index(head_index).basis.orthonormalized().get_rotation_quaternion()
-	_set_bone_world_rotation(head_index, head_after.slerp(head_before, 0.85).normalized())
+	_set_bone_world_rotation(head_index, head_after.slerp(head_before, 0.97).normalized())
 	skeleton.force_update_all_bone_transforms()
 
 func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
@@ -440,9 +447,11 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 		return
 	var target_sum := Vector3.ZERO
 	var weight_sum := 0.0
+	var assist_scale_sum := 0.0
 	for request: SkierGrabReachRequest in requests:
 		target_sum += request.target_marker.global_position * request.weight
 		weight_sum += request.weight
+		assist_scale_sum += request.upper_spine_assist_scale * request.weight
 	if weight_sum <= 0.001:
 		return
 	var helper_index := int(_helper_bone_indices[&"upper_spine"])
@@ -454,6 +463,9 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 	if current_direction.length_squared() < 0.0001 or target_direction.length_squared() < 0.0001:
 		return
 	var average_weight := clampf(weight_sum / float(requests.size()), 0.0, 1.0)
+	var average_assist_scale := clampf(assist_scale_sum / maxf(weight_sum, 0.001), 0.0, 4.0)
+	var assist_strength := profile.upper_spine_reach_assist * average_assist_scale
+	var assist_limit := clampf(profile.upper_spine_reach_limit * average_assist_scale, 0.0, MAX_HELPER_TURN)
 	# The mapped spine segment is the long visual lever into the optional
 	# upper-spine helper. Rotating it only for active requests lets the helper
 	# reach assist fold the production torso without translating gameplay or
@@ -464,8 +476,8 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 	var parent_direction := parent_child_transform.origin - parent_transform.origin
 	var parent_target_direction := target_sum / weight_sum - parent_transform.origin
 	if parent_direction.length_squared() > 0.0001 and parent_target_direction.length_squared() > 0.0001:
-		var parent_assist := clampf(profile.upper_spine_reach_assist * average_weight * 0.65, 0.0, 1.0)
-		var parent_limit := minf(clampf(profile.upper_spine_reach_limit, 0.0, MAX_HELPER_TURN) * 0.65, 1.2)
+		var parent_assist := clampf(assist_strength * average_weight * 0.65, 0.0, 1.0)
+		var parent_limit := minf(assist_limit * 0.65, 1.2)
 		var assisted_parent_direction := _slerp_direction(parent_direction, parent_target_direction, parent_assist)
 		assisted_parent_direction = _limit_direction_turn(parent_direction, assisted_parent_direction, parent_limit)
 		_set_bone_world_rotation(
@@ -478,12 +490,12 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 	var assisted_direction := _slerp_direction(
 		current_direction,
 		target_direction,
-		profile.upper_spine_reach_assist * average_weight
+		assist_strength * average_weight
 	)
 	assisted_direction = _limit_direction_turn(
 		current_direction,
 		assisted_direction,
-		clampf(profile.upper_spine_reach_limit, 0.0, MAX_HELPER_TURN)
+		assist_limit
 	)
 	_set_bone_world_rotation(
 		helper_index,
@@ -521,7 +533,7 @@ func _apply_clavicle_assist(request: SkierGrabReachRequest) -> void:
 	desired_direction = _slerp_direction(
 		current_direction,
 		desired_direction,
-		profile.clavicle_reach_assist * request.weight
+		profile.clavicle_reach_assist * request.clavicle_assist_scale * request.weight
 	)
 	desired_direction = _limit_direction_turn(
 		current_direction,
@@ -749,7 +761,7 @@ func _build_attachments() -> void:
 	# on the chest wall. Primitive-calibrated values would float centimeters
 	# off this body, hence per-rig calibration.
 	SkierEquipment.build_jacket_details(spine_mount, chest_mount, jacket_accent, dark, jacket_trim,
-		0.143, -0.128, Vector3(-0.085, 0.06, -0.097))
+		0.143, -0.148, Vector3(-0.085, 0.06, -0.132))
 	for side: StringName in [&"left", &"right"]:
 		var shoulder_attachment := _bone_attachment(StringName(side + "_shoulder"), side.capitalize() + "SleeveShoulderAttachment")
 		var shoulder_mount := Node3D.new()
@@ -843,28 +855,28 @@ func _stabilize_equipment_poles() -> void:
 	# rotate a hand far enough that the local -Y shaft points above the skier.
 	# Preserve authored angles while they are readable; only replace an inverted
 	# presentation direction with a stable, slightly outward/downhill one.
-	var forward := -skeleton.global_basis.z
-	forward.y = 0.0
-	if forward.length_squared() < 0.0001:
-		forward = Vector3.FORWARD
-	else:
-		forward = forward.normalized()
-	var lateral := skeleton.global_basis.x
-	lateral.y = 0.0
-	if lateral.length_squared() < 0.0001:
-		lateral = Vector3.RIGHT
-	else:
-		lateral = lateral.normalized()
+	# Use the skier frame, not the imported model's quarter-turn calibration or
+	# world gravity. During a flip the poles must rotate with their hands.
+	var skier_basis := driver.global_basis.orthonormalized()
+	var forward := -skier_basis.z
+	var lateral := skier_basis.x
+	var down := -skier_basis.y
 	for side: StringName in [&"left", &"right"]:
 		var pivot := equipment_nodes.get(StringName(side + "_pole")) as Node3D
 		var tip := equipment_tips.get(side) as Node3D
 		if pivot == null or tip == null:
 			continue
 		var current_direction := (tip.global_position - pivot.global_position).normalized()
-		if current_direction.dot(Vector3.DOWN) >= 0.58:
+		var downward_alignment := current_direction.dot(down)
+		var grabbing := (_grab_target_world[side] as Vector3) != Vector3.ZERO
+		if downward_alignment >= 0.58 and not grabbing:
 			continue
 		var side_sign := -1.0 if side == &"left" else 1.0
-		var target_direction := (Vector3.DOWN * 0.88 + forward * 0.08 + lateral * side_sign * 0.28).normalized()
+		if grabbing:
+			# Cross-body grabs place the named left hand on the right ski. Sweep
+			# away from the actual hand position, rather than across both legs.
+			side_sign = clampf((pivot.global_position - _bone_world(&"pelvis").origin).dot(lateral) / 0.18, -1.0, 1.0)
+		var target_direction := (down * 0.88 - forward * 0.32 + lateral * side_sign * (0.72 if grabbing else 0.28)).normalized()
 		var y_axis := -target_direction
 		var z_axis := forward.slide(y_axis)
 		if z_axis.length_squared() < 0.0001:
@@ -874,7 +886,12 @@ func _stabilize_equipment_poles() -> void:
 		z_axis = z_axis.normalized()
 		var x_axis := y_axis.cross(z_axis).normalized()
 		z_axis = x_axis.cross(y_axis).normalized()
-		pivot.global_basis = Basis(x_axis, y_axis, z_axis)
+		var target_basis := Basis(x_axis, y_axis, z_axis)
+		# A hard replacement made a pole twitch when a grab or flip crossed the
+		# readability threshold. Preserve the authored hand pose and blend only
+		# the unsafe part back toward a downhill shaft direction.
+		var correction_weight := maxf(0.85 if grabbing else 0.0, clampf((0.58 - downward_alignment) / 0.85, 0.0, 1.0))
+		pivot.global_basis = pivot.global_basis.slerp(target_basis, correction_weight * 0.72).orthonormalized()
 
 func _bone_attachment(semantic: StringName, node_name: String) -> BoneAttachment3D:
 	var attachment := BoneAttachment3D.new()

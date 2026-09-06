@@ -7,13 +7,14 @@ var failures: Array[String] = []
 func _ready() -> void:
 	_test_landing_readiness_retains_combined_trick()
 	_test_crash_context_has_recovery_stage()
+	_test_authored_pose_handoffs_blend()
 	_test_combined_trick_preserves_boot_binding()
 	_test_full_trick_rail_bail_recovery_sequence()
 	_test_contact_targets_drive_valid_two_bone_ik()
 	_test_rail_slip_preserves_bounded_angular_state()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("ANIMATION_TRANSITION_REGRESSION_PASS: trick, rail phases, angular handoff, atomic bail cleanup, recovery, rigid bindings, and ski-constrained leg IK passed")
+		print("ANIMATION_TRANSITION_REGRESSION_PASS: trick, authored pose handoffs, rail phases, angular handoff, atomic bail cleanup, recovery, rigid bindings, and ski-constrained leg IK passed")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
@@ -64,6 +65,49 @@ func _test_landing_readiness_retains_combined_trick() -> void:
 func _test_crash_context_has_recovery_stage() -> void:
 	if not CrashContext.Stage.keys().has("RECOVERY"):
 		failures.append("crash lifecycle has no explicit RECOVERY presentation stage")
+
+func _test_authored_pose_handoffs_blend() -> void:
+	var rig := SkierAnimationController.new()
+	add_child(rig)
+	var frame := SkierAnimationFrame.new()
+	frame.locomotion_state = 1
+	frame.grounded = false
+	frame.speed_mps = 16.0
+	frame.speed_ratio = 0.7
+	frame.air_time = 0.55
+	frame.air_upward_velocity = -1.5
+	frame.vertical_velocity = -1.5
+	frame.trick_phase = TrickCommand.PresentationPhase.GRAB
+	frame.grab_pose = TrickController.GrabPose.MUTE_LEFT
+	frame.grab_amount = 1.0
+	frame.grab_input_strength = 1.0
+	_advance(rig, frame, 60)
+	frame.grab_pose = TrickController.GrabPose.JAPAN_LEFT
+	rig.apply_frame(frame, STEP)
+	var grab_transition := rig.debug_snapshot()
+	if float(grab_transition.get("grab_definition_blend", 1.0)) >= 0.99:
+		failures.append("grab definition changed without a crossfade")
+	if int(grab_transition.get("grab_previous_pose", TrickController.GrabPose.NONE)) != TrickController.GrabPose.MUTE_LEFT:
+		failures.append("grab handoff did not retain the outgoing authored pose")
+	_advance(rig, frame, 30)
+	if float(rig.debug_snapshot().get("grab_definition_blend", 0.0)) <= float(grab_transition.get("grab_definition_blend", 0.0)):
+		failures.append("grab definition handoff did not progress")
+
+	frame.grab_pose = TrickController.GrabPose.NONE
+	frame.grab_amount = 0.0
+	frame.grab_input_strength = 0.0
+	frame.style_pose = TrickController.StylePose.SPREAD_EAGLE
+	frame.style_amount = 1.0
+	_advance(rig, frame, 60)
+	frame.style_pose = TrickController.StylePose.DAFFY
+	rig.apply_frame(frame, STEP)
+	var style_transition := rig.debug_snapshot()
+	if float(style_transition.get("style_definition_blend", 1.0)) >= 0.99:
+		failures.append("style definition changed without a crossfade")
+	if int(style_transition.get("style_previous_pose", TrickController.StylePose.NONE)) != TrickController.StylePose.SPREAD_EAGLE:
+		failures.append("style handoff did not retain the outgoing authored pose")
+	remove_child(rig)
+	rig.queue_free()
 
 func _test_combined_trick_preserves_boot_binding() -> void:
 	var rig := SkierAnimationController.new()

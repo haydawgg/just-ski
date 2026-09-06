@@ -2,9 +2,11 @@ class_name SkiConstrainedLegIK
 extends RefCounted
 
 var _last_poles: Dictionary = {}
+var _last_rotations: Dictionary = {}
 
 func reset() -> void:
 	_last_poles.clear()
+	_last_rotations.clear()
 
 func solve_leg(
 	hip: Node3D,
@@ -52,47 +54,45 @@ func solve_leg(
 	var along := (clamped_distance * clamped_distance + thigh_length * thigh_length - shin_length * shin_length) / (2.0 * clamped_distance)
 	var height := sqrt(maxf(thigh_length * thigh_length - along * along, 0.0))
 	var desired_knee := hip_position + direction * along + pole * height
-	var thigh_current := (knee.global_position - hip_position).normalized()
 	var thigh_target := (desired_knee - hip_position).normalized()
-	var hip_correction := thigh_current.angle_to(thigh_target)
-	_rotate_toward_direction(hip, thigh_current, thigh_target, weight, maximum_angular_rate, delta)
+	var previous: Array = _last_rotations.get(side, [hip.quaternion, knee.quaternion, boot.quaternion])
+	# Solve the complete chain first. Limiting each correction against the newly
+	# evaluated free pose loses the same part of the solve every frame, so deep
+	# compression never reaches contact even after the target has stopped moving.
+	var thigh_up := -thigh_target
+	var bend_out := pole.slide(thigh_up).normalized()
+	var hinge_axis := thigh_up.cross(bend_out).normalized()
+	hip.global_basis = Basis(hinge_axis, thigh_up, hinge_axis.cross(thigh_up)).orthonormalized()
 	var knee_position := knee.global_position
 	var shin_current := (boot.global_position - knee_position).normalized()
 	var shin_target := (target_position - knee_position).normalized()
 	var knee_correction := shin_current.angle_to(shin_target)
-	_rotate_toward_direction(knee, shin_current, shin_target, weight, maximum_angular_rate, delta)
 	_clamp_local_euler(hip, Vector3(-1.4, -0.7, -0.72), Vector3(0.72, 0.7, 0.72))
-	# Canonical knees flex on +X. Reject the mathematically equivalent negative
-	# Euler branch so a terrain discontinuity cannot flip the knee backward.
-	_clamp_local_euler(knee, Vector3(0.0, -0.28, -0.35), Vector3(2.3, 0.28, 0.35))
-	var current_boot_basis := boot.global_basis.orthonormalized()
+	# Beyond 90 degrees Godot's YXZ Euler decomposition transfers the rotation
+	# into Y/Z. Clamping that representation destroys deep knee flexion. Bound
+	# the analytic hinge angle instead, without allowing sideways knee bend.
+	var flexion := PI - acos(clampf((thigh_length * thigh_length + shin_length * shin_length - clamped_distance * clamped_distance) / (2.0 * thigh_length * shin_length), -1.0, 1.0))
+	flexion -= atan2(-boot.position.z, -boot.position.y)
+	knee.quaternion = Quaternion(Vector3.RIGHT, clampf(flexion, 0.0, 2.3))
 	var target_boot_basis := target_boot_world.basis.orthonormalized()
-	var orientation_weight := _bounded_weight(
-		Quaternion(current_boot_basis).angle_to(Quaternion(target_boot_basis)),
-		weight,
-		maximum_angular_rate,
-		delta
-	)
-	boot.global_basis = Basis(Quaternion(current_boot_basis).slerp(Quaternion(target_boot_basis), orientation_weight)).orthonormalized()
+	boot.global_basis = target_boot_basis
 	_clamp_local_euler(boot, Vector3(-0.9, -0.45, -0.5), Vector3(0.55, 0.45, 0.5))
+	var joints: Array[Node3D] = [hip, knee, boot]
+	var solved: Array[Quaternion] = []
+	for index: int in joints.size():
+		var joint := joints[index]
+		var before: Quaternion = previous[index]
+		var target := joint.quaternion
+		var blend := _bounded_weight(before.angle_to(target), weight, maximum_angular_rate, delta)
+		joint.quaternion = before.slerp(target, blend).normalized()
+		solved.append(joint.quaternion)
+	_last_rotations[side] = solved
 	result.valid = _finite_transform(boot.global_transform)
 	result.reach_ratio = target_distance / maximum_reach
 	result.knee_correction = knee_correction
 	result.infeasibility = clampf(infeasibility, 0.0, 1.0)
 	result.pole = pole
 	return result
-
-func _rotate_toward_direction(node: Node3D, current: Vector3, target: Vector3, weight: float, maximum_rate: float, delta: float) -> void:
-	if current.length_squared() <= 0.0001 or target.length_squared() <= 0.0001:
-		return
-	var angle := current.angle_to(target)
-	if angle <= 0.00001:
-		return
-	var correction := Quaternion(current, target)
-	var current_basis := node.global_basis.orthonormalized()
-	var desired := (Basis(correction) * current_basis).orthonormalized()
-	var bounded := _bounded_weight(angle, weight, maximum_rate, delta)
-	node.global_basis = Basis(Quaternion(current_basis).slerp(Quaternion(desired), bounded)).orthonormalized()
 
 func _bounded_weight(angle: float, weight: float, maximum_rate: float, delta: float) -> float:
 	if angle <= 0.00001:

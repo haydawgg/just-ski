@@ -2,9 +2,9 @@ class_name SkierEquipment
 extends RefCounted
 
 const SKI_SIZE := Vector3(0.126, 0.025, 1.82)
-const POLE_SHAFT_RADIUS := 0.014
+const POLE_SHAFT_RADIUS := 0.016
 const POLE_SHAFT_LENGTH := 1.15
-const POLE_BASKET_RADIUS := 0.045
+const POLE_BASKET_RADIUS := 0.052
 const POLE_BASKET_THICKNESS := 0.018
 
 static func material(color: Color, roughness: float, metallic: float, specular: float = 0.5) -> StandardMaterial3D:

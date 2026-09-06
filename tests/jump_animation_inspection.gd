@@ -76,6 +76,13 @@ func _apply_stage(stage: int, progress: float) -> void:
 		frame.right_grounded = true
 		frame.left_contact_confidence = 1.0
 		frame.right_contact_confidence = 1.0
+		frame.contact_confidence = 1.0
+		frame.left_ground_distance = frame.seat_distance
+		frame.right_ground_distance = frame.seat_distance
+		frame.left_ski_target_valid = true
+		frame.right_ski_target_valid = true
+		frame.left_ski_target_world = Transform3D(Basis.IDENTITY, Vector3(-0.27, -0.21, -0.11))
+		frame.right_ski_target_world = Transform3D(Basis.IDENTITY, Vector3(0.27, -0.21, -0.11))
 		frame.compression = lerpf(0.12, 1.0, progress)
 		return
 	frame.locomotion_state = 1

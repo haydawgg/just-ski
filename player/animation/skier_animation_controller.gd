@@ -106,6 +106,9 @@ var _current_blend := 0.0
 var _layer_weight := 1.0
 var _grab_definitions_by_pose: Dictionary = {}
 var _grab_definition: Resource
+var _grab_previous_definition: Resource
+var _grab_definition_blend := 1.0
+var _grab_definition_blend_duration := 0.0
 var _grab_pose_id := TrickController.GrabPose.NONE
 var _grab_phase_name := "IDLE"
 var _grab_pose_weight := 0.0
@@ -124,6 +127,9 @@ var _grab_right_target_active := false
 var _grab_reach_requests: Array[SkierGrabReachRequest] = []
 var _style_definitions_by_pose: Dictionary = {}
 var _style_definition: Resource
+var _style_previous_definition: Resource
+var _style_definition_blend := 1.0
+var _style_definition_blend_duration := 0.0
 var _style_pose_id := TrickController.StylePose.NONE
 var _style_pose_weight := 0.0
 var _style_phase_name := "IDLE"
@@ -266,6 +272,7 @@ var _left_ski_target_smoothed := Transform3D.IDENTITY
 var _right_ski_target_smoothed := Transform3D.IDENTITY
 var _ski_targets_initialized := false
 var _leg_ik_weight := 0.0
+var _ski_target_reference := Transform3D.IDENTITY
 var _pelvis_ik_correction := Vector3.ZERO
 var _left_leg_ik_debug: Dictionary = {}
 var _right_leg_ik_debug: Dictionary = {}
@@ -498,6 +505,8 @@ func debug_snapshot() -> Dictionary:
 		"grab_target_ski": _grab_target_ski_name(),
 		"grab_phase": _grab_phase_name,
 		"grab_pose_weight": _grab_pose_weight,
+		"grab_definition_blend": _grab_definition_blend,
+		"grab_previous_pose": _grab_previous_definition.pose_id if _grab_previous_definition != null else TrickController.GrabPose.NONE,
 		"grab_contact_weight": _grab_contact_weight,
 		"grab_compactness": _grab_compactness,
 		"grab_input_strength": _grab_input_strength,
@@ -507,6 +516,8 @@ func debug_snapshot() -> Dictionary:
 		"style_pose": _style_pose_id,
 		"style_pose_name": _style_definition.display_name if _style_definition != null else "NONE",
 		"style_pose_weight": _style_pose_weight,
+		"style_definition_blend": _style_definition_blend,
+		"style_previous_pose": _style_previous_definition.pose_id if _style_previous_definition != null else TrickController.StylePose.NONE,
 		"style_phase": _style_phase_name,
 		"grab_target_left": _grab_left_target_world,
 		"grab_target_right": _grab_right_target_world,
@@ -617,9 +628,13 @@ func _release_incompatible_bail_layers() -> void:
 	_spin_open_weight = 0.0
 	_grab_pose_weight = 0.0
 	_grab_contact_weight = 0.0
+	_grab_previous_definition = null
+	_grab_definition_blend = 1.0
 	_grab_definition = null
 	_grab_reach_requests.clear()
 	_style_pose_weight = 0.0
+	_style_previous_definition = null
+	_style_definition_blend = 1.0
 	_clear_landing_state()
 
 func _begin_evaluated_pose_transition(next_owner: String, frame: SkierAnimationFrame) -> void:
@@ -629,6 +644,10 @@ func _begin_evaluated_pose_transition(next_owner: String, frame: SkierAnimationF
 	_transition_duration = profile.pose_handoff_duration
 	if frame.locomotion_state == STATE_GRIND:
 		_transition_duration = profile.rail_contact_duration + profile.rail_compression_duration
+	elif frame.locomotion_state == STATE_GROUND and _current_state == STATE_AIR:
+		_transition_duration = profile.landing_pose_handoff_duration
+	elif frame.locomotion_state == STATE_AIR and frame.takeoff_type == SkierAnimationFrame.TakeoffType.CHARGED_POP:
+		_transition_duration = profile.pop_pose_handoff_duration
 	elif frame.locomotion_state == STATE_BAIL and frame.crash_stage == CrashContext.Stage.RELEASE:
 		_transition_duration = profile.crash_release_duration
 	elif frame.crash_stage == CrashContext.Stage.RECOVERY:
@@ -700,6 +719,8 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 		target_weight = 0.0
 	_leg_ik_weight = _damp(_leg_ik_weight, target_weight, profile.leg_ik_weight_response, delta)
 	if _leg_ik_weight <= 0.001 or not targets_valid:
+		_ski_targets_initialized = false
+		_leg_ik_solver.reset()
 		_pelvis_ik_correction = _pelvis_ik_correction.lerp(Vector3.ZERO, 1.0 - exp(-profile.leg_ik_weight_response * delta))
 		_left_leg_ik_debug = {"valid": true, "reach_ratio": 0.0, "knee_correction": 0.0, "infeasibility": 0.0}
 		_right_leg_ik_debug = _left_leg_ik_debug.duplicate()
@@ -710,10 +731,27 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 		_right_ski_target_smoothed = frame.right_ski_target_world
 		_ski_targets_initialized = true
 	else:
+		# Contacts travel with the physics root. Filter changes in the support
+		# relative to that root, otherwise speed turns the filter into ski drag.
+		var root_motion := global_transform * _ski_target_reference.affine_inverse()
+		_left_ski_target_smoothed = _advect_ski_contact(_left_ski_target_smoothed, root_motion, frame.left_ski_target_world.basis.y)
+		_right_ski_target_smoothed = _advect_ski_contact(_right_ski_target_smoothed, root_motion, frame.right_ski_target_world.basis.y)
 		_left_ski_target_smoothed = _left_ski_target_smoothed.interpolate_with(frame.left_ski_target_world, target_blend)
 		_right_ski_target_smoothed = _right_ski_target_smoothed.interpolate_with(frame.right_ski_target_world, target_blend)
-	var left_boot_target := _left_ski_target_smoothed * _left_binding_rest
-	var right_boot_target := _right_ski_target_smoothed * _right_binding_rest
+	_ski_target_reference = global_transform
+	var left_contact_pose := _left_ski_target_smoothed
+	var right_contact_pose := _right_ski_target_smoothed
+	if frame.locomotion_state == STATE_GROUND:
+		# Support owns position and terrain normal; edging owns rotation around
+		# the ski's length. A flat support basis must not erase carve articulation.
+		var edge_roll := -_ski_carve * profile.carve_ski_roll
+		var edge_basis := Basis(Vector3.BACK, edge_roll)
+		left_contact_pose.origin += left_contact_pose.basis.y * absf(sin(edge_roll)) * 0.075
+		right_contact_pose.origin += right_contact_pose.basis.y * absf(sin(edge_roll)) * 0.075
+		left_contact_pose.basis = left_contact_pose.basis * edge_basis
+		right_contact_pose.basis = right_contact_pose.basis * edge_basis
+	var left_boot_target := left_contact_pose * _left_binding_rest
+	var right_boot_target := right_contact_pose * _right_binding_rest
 	_left_boot_target_world = left_boot_target
 	_right_boot_target_world = right_boot_target
 	var pelvis_space_left := pelvis.to_local(left_boot_target.origin)
@@ -723,19 +761,33 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 	_apply_bounded_pelvis_compensation(left_boot_target.origin, right_boot_target.origin, delta, feasibility_weight)
 	var left_direction := left_boot_target.origin - left_hip.global_position
 	var right_direction := right_boot_target.origin - right_hip.global_position
-	var left_pole := left_knee.global_position - left_hip.global_position
-	var right_pole := right_knee.global_position - right_hip.global_position
+	# Contact flexion stays in the skier's sagittal plane. A free-pose knee
+	# direction can reverse/twist the hinge as the landing pelvis drops past it.
+	var left_pole := global_basis.z
+	var right_pole := global_basis.z
 	if left_direction.length_squared() > 0.0001:
 		left_pole = left_pole.slide(left_direction.normalized())
 	if right_direction.length_squared() > 0.0001:
 		right_pole = right_pole.slide(right_direction.normalized())
-	_left_leg_ik_debug = _leg_ik_solver.solve_leg(left_hip, left_knee, left_boot, left_boot_target, left_pole, _leg_ik_weight * feasibility_weight, profile.leg_ik_max_angular_rate, delta, &"left")
-	_right_leg_ik_debug = _leg_ik_solver.solve_leg(right_hip, right_knee, right_boot, right_boot_target, right_pole, _leg_ik_weight * feasibility_weight, profile.leg_ik_max_angular_rate, delta, &"right")
+	# Impact compression moves the pelvis much faster than ordinary terrain
+	# suspension. Its contact solve must follow that motion within the same beat.
+	var angular_rate := profile.landing_leg_ik_max_angular_rate if _landing_active else profile.leg_ik_max_angular_rate
+	var solve_weight := _leg_ik_weight * feasibility_weight
+	_left_leg_ik_debug = _leg_ik_solver.solve_leg(left_hip, left_knee, left_boot, left_boot_target, left_pole, solve_weight, angular_rate, delta, &"left")
+	_right_leg_ik_debug = _leg_ik_solver.solve_leg(right_hip, right_knee, right_boot, right_boot_target, right_pole, solve_weight, angular_rate, delta, &"right")
 	if crossing:
 		_left_leg_ik_debug.infeasibility = 1.0
 		_right_leg_ik_debug.infeasibility = 1.0
 	left_ski.rotation = Vector3.ZERO
 	right_ski.rotation = Vector3.ZERO
+
+func _advect_ski_contact(previous: Transform3D, root_motion: Transform3D, normal: Vector3) -> Transform3D:
+	var moved := root_motion * previous
+	# Root seating moves into the support after impact; the skis must stay on
+	# its surface. Feed forward tangential travel only, then filter terrain change.
+	var support_up := normal.normalized()
+	moved.origin -= support_up * (moved.origin - previous.origin).dot(support_up)
+	return moved
 
 func _apply_bounded_pelvis_compensation(left_target: Vector3, right_target: Vector3, delta: float, weight: float) -> void:
 	var correction := Vector3.ZERO
@@ -751,14 +803,18 @@ func _apply_bounded_pelvis_compensation(left_target: Vector3, right_target: Vect
 			contributors += 1
 	if contributors > 0:
 		correction /= float(contributors)
-	correction = correction.limit_length(profile.leg_ik_pelvis_translation_limit) * weight
-	_pelvis_ik_correction = _pelvis_ik_correction.lerp(correction, 1.0 - exp(-profile.leg_ik_weight_response * delta))
+	var translation_limit := profile.landing_leg_ik_pelvis_translation_limit if _landing_active else profile.leg_ik_pelvis_translation_limit
+	correction = correction.limit_length(translation_limit) * weight
+	# On first contact the physics root is still seating. Acquire the reachable
+	# support pose promptly; ordinary suspension retains its softer response.
+	var response := profile.leg_ik_weight_response * (2.0 if _landing_active else 1.0)
+	_pelvis_ik_correction = _pelvis_ik_correction.lerp(correction, 1.0 - exp(-response * delta))
 	if pelvis.get_parent() is Node3D:
 		pelvis.position += (pelvis.get_parent() as Node3D).global_basis.inverse() * _pelvis_ik_correction
 	var stance := right_target - left_target
 	stance.y = 0.0
 	if stance.length_squared() > 0.0001:
-		var desired_yaw := Vector3.FORWARD.signed_angle_to(stance.normalized(), Vector3.UP)
+		var desired_yaw := global_basis.x.signed_angle_to(stance.normalized(), Vector3.UP)
 		var yaw_limit := profile.leg_ik_pelvis_rotation_limit
 		var extra_yaw := clampf(desired_yaw * 0.35 * weight, -yaw_limit, yaw_limit)
 		pelvis.rotate_object_local(Vector3.UP, extra_yaw * (1.0 - exp(-profile.leg_ik_weight_response * delta)))
@@ -889,6 +945,8 @@ func _update_trick_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	_spin_cycle = 0.0
 	if is_finite(frame.rotation_accumulated.y):
 		_spin_cycle = fposmod(absf(frame.rotation_accumulated.y), TAU) / TAU
+	if frame.trick_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT] and frame.rotation_accumulated.is_finite():
+		_spin_cycle = fposmod(frame.rotation_accumulated.length(), TAU) / TAU
 	_trick_active = frame.trick_active
 	_trick_intent = (
 		frame.trick_intent
@@ -948,6 +1006,8 @@ func _update_trick_animation(frame: SkierAnimationFrame, delta: float) -> void:
 		rate_demand * _trick_pose_weight * (1.0 - _spin_open_weight * 0.78),
 		gameplay_compactness * _trick_pose_weight
 	)
+	if frame.trick_active and meaningful_rotation:
+		visible_compactness = maxf(visible_compactness, 0.55 * _trick_pose_weight * (1.0 - _spin_open_weight))
 	_spin_compactness = _damp(
 		_spin_compactness,
 		visible_compactness,
@@ -1006,13 +1066,30 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var airborne := frame.locomotion_state == STATE_AIR
 	var pose_changed := live_pose != TrickController.GrabPose.NONE and live_pose != _grab_pose_id
 	if pose_changed:
+		if _grab_definition != null and _grab_pose_weight > 0.01:
+			_grab_previous_definition = _grab_definition
+			_grab_definition_blend = 0.0
+			_grab_definition_blend_duration = maxf(profile.pose_handoff_duration, 0.12)
+		else:
+			_grab_previous_definition = null
+			_grab_definition_blend = 1.0
 		_grab_pose_id = live_pose
 		_grab_definition = live_definition
 		_grab_contact_latched = false
 		_grab_contact_weight = minf(_grab_contact_weight, 0.2)
 	elif live_pose != TrickController.GrabPose.NONE and _grab_definition == null:
+		_grab_previous_definition = null
+		_grab_definition_blend = 1.0
 		_grab_pose_id = live_pose
 		_grab_definition = live_definition
+	if _grab_previous_definition != null:
+		_grab_definition_blend = clampf(
+			_grab_definition_blend + delta / maxf(_grab_definition_blend_duration, 0.001),
+			0.0,
+			1.0
+		)
+		if _grab_definition_blend >= 1.0:
+			_grab_previous_definition = null
 	if live_pose == TrickController.GrabPose.NONE:
 		input_strength = 0.0
 
@@ -1043,6 +1120,8 @@ func _update_grab_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	if live_pose == TrickController.GrabPose.NONE and _grab_pose_weight < 0.01:
 		_grab_pose_id = TrickController.GrabPose.NONE
 		_grab_definition = null
+		_grab_previous_definition = null
+		_grab_definition_blend = 1.0
 		_grab_left_target_active = false
 		_grab_right_target_active = false
 
@@ -1083,10 +1162,27 @@ func _update_style_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var live_definition := _style_definitions_by_pose.get(live_pose) as Resource
 	var input_strength := _style_pose_layer.input_strength(frame, TrickController.StylePose.NONE)
 	if live_pose != TrickController.StylePose.NONE and live_pose != _style_pose_id:
+		if _style_definition != null and _style_pose_weight > 0.01:
+			_style_previous_definition = _style_definition
+			_style_definition_blend = 0.0
+			_style_definition_blend_duration = maxf(profile.pose_handoff_duration, 0.12)
+		else:
+			_style_previous_definition = null
+			_style_definition_blend = 1.0
 		_style_pose_id = live_pose
 		_style_definition = live_definition
 	elif live_pose != TrickController.StylePose.NONE and _style_definition == null:
+		_style_previous_definition = null
+		_style_definition_blend = 1.0
 		_style_definition = live_definition
+	if _style_previous_definition != null:
+		_style_definition_blend = clampf(
+			_style_definition_blend + delta / maxf(_style_definition_blend_duration, 0.001),
+			0.0,
+			1.0
+		)
+		if _style_definition_blend >= 1.0:
+			_style_previous_definition = null
 	var rise_scale := float(_style_definition.pose_response_scale) if _style_definition != null else 1.0
 	var release_scale := float(_style_definition.release_response_scale) if _style_definition != null else 1.0
 	var response := profile.style_pose_response * (rise_scale if input_strength > _style_pose_weight else release_scale)
@@ -1095,6 +1191,8 @@ func _update_style_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	if live_pose == TrickController.StylePose.NONE and _style_pose_weight < 0.01:
 		_style_pose_id = TrickController.StylePose.NONE
 		_style_definition = null
+		_style_previous_definition = null
+		_style_definition_blend = 1.0
 
 func _finite_vector(value: Vector3) -> bool:
 	return value.is_finite()
@@ -1457,7 +1555,9 @@ func _apply_landing_layers(frame: SkierAnimationFrame) -> void:
 func _apply_stomp_layer(frame: SkierAnimationFrame) -> void:
 	if frame.locomotion_state != STATE_GROUND or _stomp_weight <= 0.005:
 		return
-	var amount := _stomp_weight * profile.stomp_stack_strength
+	# Let the knees absorb contact before the clean-landing extension. The
+	# previous simultaneous extension cancelled much of the compression beat.
+	var amount := _stomp_weight * profile.stomp_stack_strength * (1.0 - smoothstep(0.05, 0.25, _landing_compression))
 	_current_pose_name = "Clean Stomp"
 	_add_rotation(left_hip, Vector3(0.16 * amount, 0.0, -0.035 * amount))
 	_add_rotation(right_hip, Vector3(0.16 * amount, 0.0, 0.035 * amount))
@@ -1992,7 +2092,9 @@ func _apply_command_rotation_pose(frame: SkierAnimationFrame) -> void:
 	if frame.trick_kind in [TrickCommand.Kind.CORK_LEFT, TrickCommand.Kind.CORK_RIGHT]:
 		_apply_cork_family_pose(yaw_side, maxf(yaw_amount, roll_amount))
 
-	var compact := _spin_compactness
+	# Quarter-turn articulation belongs to yaw rotation. Applying a fixed yaw
+	# motif during a pure flip made its arms stay locked in an asymmetric set.
+	var compact := maxf(_spin_compactness, 0.55 * pose) * yaw_support
 	if compact > 0.01:
 		var leg_asymmetry := yaw_side * profile.trick_leg_asymmetry * compact
 		var cycle_angle := _spin_cycle * TAU
@@ -2020,57 +2122,71 @@ func _apply_command_rotation_pose(frame: SkierAnimationFrame) -> void:
 func _apply_flip_family_pose(frame: SkierAnimationFrame, amount: float) -> void:
 	var cycle := fposmod(absf(frame.rotation_accumulated.x), TAU) / TAU
 	var inversion := sin(cycle * PI)
+	var tuck_phase := smoothstep(0.06, 0.30, cycle) * (1.0 - smoothstep(0.68, 0.94, cycle))
 	if frame.trick_kind == TrickCommand.Kind.FRONTFLIP:
 		_current_pose_name = "Frontflip"
-		var fold := amount * lerpf(0.7, 1.0, inversion)
-		_add_rotation(pelvis, Vector3(-0.24 * fold, 0.0, 0.0))
-		_add_rotation(spine, Vector3(-0.38 * fold, 0.0, 0.0))
-		_add_rotation(chest, Vector3(-0.24 * fold, 0.0, 0.0))
-		_add_rotation(head, Vector3(0.16 * fold, 0.0, 0.0))
-		_add_rotation(left_hip, Vector3(-0.24 * fold, 0.0, -0.04 * fold))
-		_add_rotation(right_hip, Vector3(-0.24 * fold, 0.0, 0.04 * fold))
-		_add_rotation(left_knee, Vector3(0.62 * fold, 0.0, 0.0))
-		_add_rotation(right_knee, Vector3(0.62 * fold, 0.0, 0.0))
-		_add_rotation(left_ski, Vector3(0.16 * fold, 0.0, -0.04 * fold))
-		_add_rotation(right_ski, Vector3(0.16 * fold, 0.0, 0.04 * fold))
-		_add_rotation(left_shoulder, Vector3(-0.42 * fold, 0.0, -0.18 * fold))
-		_add_rotation(right_shoulder, Vector3(-0.42 * fold, 0.0, 0.18 * fold))
-		_position_targets[pelvis] += Vector3(0.0, -0.1 * fold, 0.08 * fold)
+		var fold := amount * lerpf(0.22, 1.0, tuck_phase)
+		var leg_shape := profile.trick_flip_leg_shape * amount * lerpf(0.35, 1.0, inversion)
+		var arm_shape := profile.trick_flip_arm_shape * amount * lerpf(0.45, 1.0, inversion)
+		_add_rotation(pelvis, Vector3(-0.28 * fold, 0.0, 0.0))
+		_add_rotation(spine, Vector3(-0.48 * fold, 0.0, 0.0))
+		_add_rotation(chest, Vector3(-0.32 * fold, 0.0, 0.0))
+		_add_rotation(head, Vector3(0.22 * fold, 0.0, 0.0))
+		_add_rotation(left_hip, Vector3(-0.8 * fold, 0.0, -leg_shape * 0.45))
+		_add_rotation(right_hip, Vector3(-0.8 * fold, 0.0, leg_shape * 0.45))
+		_add_rotation(left_knee, Vector3(0.82 * fold, 0.0, 0.0))
+		_add_rotation(right_knee, Vector3(0.72 * fold, 0.0, 0.0))
+		_add_rotation(left_ski, Vector3(0.2 * fold, 0.0, -leg_shape * 0.9))
+		_add_rotation(right_ski, Vector3(0.2 * fold, 0.0, leg_shape * 0.9))
+		_add_rotation(left_shoulder, Vector3(-0.5 * fold, 0.0, -0.18 * fold - arm_shape))
+		_add_rotation(right_shoulder, Vector3(-0.5 * fold, 0.0, 0.18 * fold + arm_shape))
+		_add_rotation(left_elbow, Vector3(-0.12 * fold, 0.0, -arm_shape * 0.45))
+		_add_rotation(right_elbow, Vector3(-0.12 * fold, 0.0, arm_shape * 0.45))
+		_position_targets[pelvis] += Vector3(0.0, -0.13 * fold, 0.1 * fold)
 	else:
 		_current_pose_name = "Backflip"
 		var opening := amount * (1.0 - smoothstep(0.12, 0.42, cycle))
-		var tuck := amount * smoothstep(0.18, 0.5, inversion)
-		_add_rotation(pelvis, Vector3(0.22 * opening + 0.06 * tuck, 0.0, 0.0))
-		_add_rotation(spine, Vector3(0.38 * opening + 0.12 * tuck, 0.0, 0.0))
-		_add_rotation(chest, Vector3(0.3 * opening + 0.08 * tuck, 0.0, 0.0))
-		_add_rotation(head, Vector3(-0.2 * opening + 0.08 * tuck, 0.0, 0.0))
-		_add_rotation(left_hip, Vector3(-0.12 * tuck, 0.0, -0.05 * amount))
-		_add_rotation(right_hip, Vector3(-0.12 * tuck, 0.0, 0.05 * amount))
-		_add_rotation(left_knee, Vector3(0.12 * tuck, 0.0, 0.0))
-		_add_rotation(right_knee, Vector3(0.12 * tuck, 0.0, 0.0))
-		_add_rotation(left_ski, Vector3(-0.2 * tuck, 0.0, -0.05 * amount))
-		_add_rotation(right_ski, Vector3(-0.2 * tuck, 0.0, 0.05 * amount))
-		_add_rotation(left_shoulder, Vector3(0.44 * opening + 0.22 * tuck, 0.0, -0.3 * amount))
-		_add_rotation(right_shoulder, Vector3(0.44 * opening + 0.22 * tuck, 0.0, 0.3 * amount))
-		_position_targets[pelvis] += Vector3(0.0, 0.04 * opening - 0.05 * tuck, -0.05 * opening)
+		var tuck := amount * tuck_phase
+		var leg_shape := profile.trick_flip_leg_shape * amount * lerpf(0.4, 1.0, inversion)
+		var arm_shape := profile.trick_flip_arm_shape * amount * lerpf(0.45, 1.0, inversion)
+		_add_rotation(pelvis, Vector3(0.26 * opening + 0.08 * tuck, 0.0, 0.0))
+		_add_rotation(spine, Vector3(0.46 * opening + 0.12 * tuck, 0.0, 0.0))
+		_add_rotation(chest, Vector3(0.36 * opening + 0.08 * tuck, 0.0, 0.0))
+		_add_rotation(head, Vector3(-0.25 * opening + 0.1 * tuck, 0.0, 0.0))
+		_add_rotation(left_hip, Vector3(-0.55 * tuck, 0.0, -leg_shape * 0.4))
+		_add_rotation(right_hip, Vector3(-0.55 * tuck, 0.0, leg_shape * 0.4))
+		_add_rotation(left_knee, Vector3(1.02 * tuck, 0.0, 0.0))
+		_add_rotation(right_knee, Vector3(1.12 * tuck, 0.0, 0.0))
+		_add_rotation(left_ski, Vector3(-0.28 * tuck, 0.0, -leg_shape * 0.85))
+		_add_rotation(right_ski, Vector3(-0.28 * tuck, 0.0, leg_shape * 0.85))
+		_add_rotation(left_shoulder, Vector3(0.56 * opening + 0.3 * tuck, 0.0, -0.3 * amount - arm_shape))
+		_add_rotation(right_shoulder, Vector3(0.56 * opening + 0.3 * tuck, 0.0, 0.3 * amount + arm_shape))
+		_add_rotation(left_elbow, Vector3(0.12 * tuck, 0.0, -arm_shape * 0.35))
+		_add_rotation(right_elbow, Vector3(0.12 * tuck, 0.0, arm_shape * 0.35))
+		_position_targets[pelvis] += Vector3(0.0, 0.05 * opening - 0.08 * tuck, -0.06 * opening)
 
 func _apply_cork_family_pose(side: float, amount: float) -> void:
 	if amount <= 0.01:
 		return
 	_current_pose_name = "Cork %s" % ("Left" if side < 0.0 else "Right")
-	_add_rotation(pelvis, Vector3(-0.14 * amount, side * 0.08 * amount, side * 0.2 * amount))
-	_add_rotation(spine, Vector3(-0.18 * amount, -side * 0.16 * amount, -side * 0.24 * amount))
-	_add_rotation(chest, Vector3(-0.08 * amount, -side * 0.22 * amount, -side * 0.28 * amount))
-	_add_rotation(head, Vector3(0.08 * amount, side * 0.18 * amount, side * 0.12 * amount))
-	_add_rotation(left_hip, Vector3(-0.42 * amount * (1.0 - side * 0.45), 0.0, -side * 0.18 * amount))
-	_add_rotation(right_hip, Vector3(-0.42 * amount * (1.0 + side * 0.45), 0.0, -side * 0.18 * amount))
-	_add_rotation(left_knee, Vector3(0.72 * amount * (1.0 - side * 0.42), 0.0, 0.0))
-	_add_rotation(right_knee, Vector3(0.72 * amount * (1.0 + side * 0.42), 0.0, 0.0))
-	_add_rotation(left_ski, Vector3(0.18 * amount * (1.0 - side * 0.35), 0.0, -side * 0.14 * amount))
-	_add_rotation(right_ski, Vector3(0.18 * amount * (1.0 + side * 0.35), 0.0, -side * 0.14 * amount))
-	_add_rotation(left_shoulder, Vector3(-0.26 * amount, side * 0.12 * amount, -0.38 * amount))
-	_add_rotation(right_shoulder, Vector3(0.08 * amount, side * 0.08 * amount, 0.24 * amount))
-	_position_targets[pelvis] += Vector3(side * 0.14 * amount, -0.1 * amount, 0.07 * amount)
+	amount *= lerpf(0.45, 1.0, sin(_spin_cycle * PI)) * (1.0 - _spin_open_weight * 0.65)
+	var leg_shape := profile.trick_cork_leg_shape * amount
+	var arm_shape := profile.trick_cork_arm_shape * amount
+	_add_rotation(pelvis, Vector3(-0.18 * amount, side * 0.1 * amount, side * 0.16 * amount))
+	_add_rotation(spine, Vector3(-0.24 * amount, -side * 0.2 * amount, -side * 0.16 * amount))
+	_add_rotation(chest, Vector3(-0.12 * amount, -side * 0.28 * amount, -side * 0.18 * amount))
+	_add_rotation(head, Vector3(0.12 * amount, side * 0.23 * amount, side * 0.16 * amount))
+	_add_rotation(left_hip, Vector3(-0.5 * amount * (1.0 - side * 0.45), 0.0, -side * (0.18 * amount + leg_shape)))
+	_add_rotation(right_hip, Vector3(-0.5 * amount * (1.0 + side * 0.45), 0.0, -side * (0.18 * amount - leg_shape)))
+	_add_rotation(left_knee, Vector3(1.05 * amount * (1.0 - side * 0.22), 0.0, 0.0))
+	_add_rotation(right_knee, Vector3(1.05 * amount * (1.0 + side * 0.22), 0.0, 0.0))
+	_add_rotation(left_ski, Vector3(0.22 * amount * (1.0 - side * 0.35), 0.0, -side * (0.14 * amount + leg_shape * 0.8)))
+	_add_rotation(right_ski, Vector3(0.22 * amount * (1.0 + side * 0.35), 0.0, -side * (0.14 * amount - leg_shape * 0.8)))
+	_add_rotation(left_shoulder, Vector3(-0.32 * amount, side * 0.15 * amount, -0.38 * amount - arm_shape))
+	_add_rotation(right_shoulder, Vector3(0.12 * amount, side * 0.1 * amount, 0.24 * amount + arm_shape * 0.65))
+	_add_rotation(left_elbow, Vector3(-0.12 * amount, 0.0, -arm_shape * 0.3))
+	_add_rotation(right_elbow, Vector3(0.08 * amount, 0.0, arm_shape * 0.25))
+	_position_targets[pelvis] += Vector3(side * 0.17 * amount, -0.13 * amount, 0.09 * amount)
 
 func _is_rotation_kind(kind: int) -> bool:
 	return kind in [
@@ -2439,6 +2555,9 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 	if frame.locomotion_state != STATE_AIR or _grab_definition == null or _grab_pose_weight <= 0.005:
 		return
 	var definition: Resource = _grab_definition
+	var previous_definition: Resource = _grab_previous_definition
+	var definition_blend := clampf(_grab_definition_blend, 0.0, 1.0)
+	var previous_definition_weight := 1.0 - definition_blend if previous_definition != null else 0.0
 	var leg_stage := smoothstep(0.02, 0.52, _grab_pose_weight)
 	var body_stage := smoothstep(0.12, 0.72, _grab_pose_weight)
 	var arm_stage := smoothstep(0.34, 0.9, _grab_pose_weight)
@@ -2450,10 +2569,18 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 	)
 	var arm_weight := arm_stage * profile.grab_silhouette_scale
 	var owns_visual_reach := rig_adapter != null and rig_adapter.owns_grab_reach()
+	# Reserve the held ski's leg before adding the authored grab. Otherwise a
+	# spin's phase motif moves the target out from under a successfully held hand.
+	var reserve := leg_stage * definition_blend
+	for is_left: bool in [true, false]:
+		var selected: bool = definition.target_ski == GrabDefinition.Ski.BOTH or definition.target_ski == (GrabDefinition.Ski.LEFT if is_left else GrabDefinition.Ski.RIGHT)
+		if selected:
+			for entry: Array in [[left_hip if is_left else right_hip, Vector3(-0.2, 0.0, 0.0)], [left_knee if is_left else right_knee, Vector3(0.4, 0.0, 0.0)], [left_boot if is_left else right_boot, Vector3(-0.25, 0.0, 0.0)], [left_ski if is_left else right_ski, Vector3.ZERO]]:
+				_rotation_targets[entry[0]] = (_rotation_targets[entry[0]] as Vector3).lerp(entry[1] as Vector3, reserve)
 	_current_pose_name = "%s / %s" % [definition.display_name, _grab_phase_name.capitalize()]
-	_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + definition.pelvis_offset * body_weight
-	var shared_compact := maxf(_spin_compactness, _grab_compactness)
-	var extra_compact := maxf(0.0, shared_compact - _spin_compactness)
+	# Spin compactness lowers the pelvis but never shortens the chest segment.
+	# Subtracting it here removed the grab's body assistance during fast spins.
+	var extra_compact := _grab_compactness
 	_position_targets[chest] = (_position_targets[chest] as Vector3) + Vector3(
 		0.0,
 		-profile.grab_chest_drop * extra_compact,
@@ -2463,19 +2590,21 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 	_add_rotation(right_hip, Vector3(-profile.grab_leg_tuck * extra_compact * 0.24, 0.0, 0.0))
 	_add_rotation(left_knee, Vector3(profile.grab_leg_tuck * extra_compact * 0.85, 0.0, 0.0))
 	_add_rotation(right_knee, Vector3(profile.grab_leg_tuck * extra_compact * 0.85, 0.0, 0.0))
-	_apply_pose_shape(definition, body_weight, leg_weight, arm_weight)
-	# Counter the torso fold so the gaze stays forward: no grab definition
-	# authors a head look, and deep folds (Japan spine -0.4 / chest -0.24)
-	# would otherwise bury the face in the knees.
-	var grab_torso_fold: float = (definition.spine_rotation.x + definition.chest_rotation.x) * body_weight
-	_add_rotation(head, Vector3(-grab_torso_fold * 0.45, 0.0, 0.0))
-	_apply_grab_tweak(definition, frame.grab_tweak, body_weight)
+	# Resource definitions must crossfade independently of the lifecycle weight.
+	# Swapping a full pose at an already-held grab weight produces the visible
+	# mannequin/IK snap seen when the production showcase advances to its next grab.
+	_apply_grab_definition_shape(previous_definition, previous_definition_weight, body_weight, leg_weight, arm_weight, frame.grab_tweak)
+	_apply_grab_definition_shape(definition, definition_blend, body_weight, leg_weight, arm_weight, frame.grab_tweak)
 	var reach_weight := clampf(
 		arm_stage * profile.grab_reach * definition.reach_response_scale,
 		0.0,
 		1.0
 	)
-	reach_weight = maxf(reach_weight, _grab_contact_weight * 0.92)
+	# Let the authored silhouette arrive before production IK starts pulling the
+	# hand toward a new marker. Existing contact is retained only after the new
+	# definition owns the handoff.
+	reach_weight *= definition_blend
+	reach_weight = maxf(reach_weight, _grab_contact_weight * 0.92 * definition_blend)
 	if definition.hand == GrabDefinition.Hand.LEFT or definition.hand == GrabDefinition.Hand.BOTH:
 		var left_marker := _grab_target_marker(GrabDefinition.Ski.LEFT if definition.target_ski == GrabDefinition.Ski.BOTH else definition.target_ski, definition.target)
 		if left_marker != null:
@@ -2483,7 +2612,7 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 			_grab_left_target_world = left_marker.global_position
 			if owns_visual_reach:
 				var left_request := GrabReachRequestModule.new() as SkierGrabReachRequest
-				_grab_reach_requests.append(left_request.configure(&"left", left_marker, reach_weight))
+				_grab_reach_requests.append(left_request.configure(&"left", left_marker, reach_weight, definition.clavicle_assist_scale, definition.upper_spine_assist_scale))
 			else:
 				_grab_left_reach_error = left_hand.global_position.distance_to(_grab_left_target_world)
 				_aim_arm_at(left_shoulder, left_elbow, left_hand, _grab_left_target_world, reach_weight, -1.0)
@@ -2494,10 +2623,33 @@ func _apply_grab_layer(frame: SkierAnimationFrame) -> void:
 			_grab_right_target_world = right_marker.global_position
 			if owns_visual_reach:
 				var right_request := GrabReachRequestModule.new() as SkierGrabReachRequest
-				_grab_reach_requests.append(right_request.configure(&"right", right_marker, reach_weight))
+				_grab_reach_requests.append(right_request.configure(&"right", right_marker, reach_weight, definition.clavicle_assist_scale, definition.upper_spine_assist_scale))
 			else:
 				_grab_right_reach_error = right_hand.global_position.distance_to(_grab_right_target_world)
 				_aim_arm_at(right_shoulder, right_elbow, right_hand, _grab_right_target_world, reach_weight, 1.0)
+
+func _apply_grab_definition_shape(definition: Resource, definition_weight: float, body_weight: float, leg_weight: float, arm_weight: float, grab_tweak: Vector2) -> void:
+	if definition == null or definition_weight <= 0.001:
+		return
+	var weighted_body := body_weight * definition_weight
+	var weighted_legs := leg_weight * definition_weight
+	var weighted_arms := arm_weight * definition_weight
+	_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + definition.pelvis_offset * weighted_body
+	_apply_pose_shape(definition, weighted_body, weighted_legs, weighted_arms)
+	# Bring the selected ski up beside the pelvis before the short production
+	# arm reaches. A spine solver must not drag the whole chest down to the ski.
+	for is_left: bool in [true, false]:
+		var selected: bool = definition.target_ski == GrabDefinition.Ski.BOTH or definition.target_ski == (GrabDefinition.Ski.LEFT if is_left else GrabDefinition.Ski.RIGHT)
+		if selected and definition.target != GrabDefinition.Target.NOSE:
+			_add_rotation(left_hip if is_left else right_hip, Vector3(profile.grab_ski_lift_hip * weighted_legs, 0.0, 0.0))
+			_add_rotation(left_knee if is_left else right_knee, Vector3(profile.grab_ski_lift_knee * weighted_legs, 0.0, 0.0))
+			_add_rotation(left_boot if is_left else right_boot, Vector3(-0.65 * weighted_legs, 0.0, 0.0))
+	# Counter the torso fold so the gaze stays forward: no grab definition
+	# authors a head look, and deep folds (Japan spine -0.4 / chest -0.24)
+	# would otherwise bury the face in the knees.
+	var grab_torso_fold: float = (definition.spine_rotation.x + definition.chest_rotation.x) * weighted_body
+	_add_rotation(head, Vector3(-grab_torso_fold * 0.45, 0.0, 0.0))
+	_apply_grab_tweak(definition, grab_tweak, weighted_body)
 
 func _sync_grab_visual_metrics() -> void:
 	if rig_adapter == null or not rig_adapter.owns_grab_reach():
@@ -2533,8 +2685,14 @@ func _apply_style_layer(frame: SkierAnimationFrame) -> void:
 	if frame.locomotion_state != STATE_AIR or _style_definition == null or _style_pose_weight <= 0.005:
 		return
 	_current_pose_name = "%s / %s" % [_style_definition.display_name, _style_phase_name.capitalize()]
-	_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + _style_definition.pelvis_offset * _style_pose_weight
-	_apply_pose_shape(_style_definition, _style_pose_weight, _style_pose_weight)
+	var definition_blend := clampf(_style_definition_blend, 0.0, 1.0)
+	if _style_previous_definition != null:
+		var previous_weight := _style_pose_weight * (1.0 - definition_blend)
+		_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + _style_previous_definition.pelvis_offset * previous_weight
+		_apply_pose_shape(_style_previous_definition, previous_weight, previous_weight)
+	var current_weight := _style_pose_weight * definition_blend
+	_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + _style_definition.pelvis_offset * current_weight
+	_apply_pose_shape(_style_definition, current_weight, current_weight)
 
 func _apply_pose_shape(definition: Resource, body_weight: float, leg_weight: float, arm_weight: float = -1.0) -> void:
 	if arm_weight < 0.0:
@@ -2832,10 +2990,13 @@ func _enforce_joint_limits() -> void:
 	var elbow_maximum := Vector3(profile.grab_elbow_limit, 0.55, 0.55)
 	_clamp_rotation_target(left_elbow, elbow_minimum, elbow_maximum)
 	_clamp_rotation_target(right_elbow, elbow_minimum, elbow_maximum)
-	_clamp_rotation_target(left_hip, Vector3(-1.4, -0.7, -0.72), Vector3(0.72, 0.7, 0.72))
-	_clamp_rotation_target(right_hip, Vector3(-1.4, -0.7, -0.72), Vector3(0.72, 0.7, 0.72))
-	_clamp_rotation_target(left_knee, Vector3(-0.45, -0.28, -0.35), Vector3(2.30, 0.28, 0.35))
-	_clamp_rotation_target(right_knee, Vector3(-0.45, -0.28, -0.35), Vector3(2.30, 0.28, 0.35))
+	var grab_fold := _grab_pose_weight if _current_state == STATE_AIR else 0.0
+	var hip_min := lerpf(-1.4, -1.95, grab_fold)
+	var knee_max := lerpf(2.3, profile.grab_knee_flex_limit, grab_fold)
+	_clamp_rotation_target(left_hip, Vector3(hip_min, -0.7, -0.72), Vector3(0.72, 0.7, 0.72))
+	_clamp_rotation_target(right_hip, Vector3(hip_min, -0.7, -0.72), Vector3(0.72, 0.7, 0.72))
+	_clamp_rotation_target(left_knee, Vector3(-0.45, -0.28, -0.35), Vector3(knee_max, 0.28, 0.35))
+	_clamp_rotation_target(right_knee, Vector3(-0.45, -0.28, -0.35), Vector3(knee_max, 0.28, 0.35))
 	_clamp_rotation_target(left_boot, Vector3(-0.9, -0.45, -0.5), Vector3(0.55, 0.45, 0.5))
 	_clamp_rotation_target(right_boot, Vector3(-0.9, -0.45, -0.5), Vector3(0.55, 0.45, 0.5))
 	_clamp_rotation_target(left_ski, Vector3(-0.48, -0.5, -0.48), Vector3(0.48, 0.5, 0.48))
@@ -2991,6 +3152,8 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_trick_intent = false
 	_trick_kind = TrickCommand.Kind.NONE
 	_grab_definition = null
+	_grab_previous_definition = null
+	_grab_definition_blend = 1.0
 	_grab_pose_id = TrickController.GrabPose.NONE
 	_grab_phase_name = "IDLE"
 	_grab_pose_weight = 0.0
@@ -3006,6 +3169,8 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_grab_left_reach_error = 0.0
 	_grab_right_reach_error = 0.0
 	_style_definition = null
+	_style_previous_definition = null
+	_style_definition_blend = 1.0
 	_style_pose_id = TrickController.StylePose.NONE
 	_style_pose_weight = 0.0
 	_style_phase_name = "IDLE"

@@ -198,6 +198,10 @@ extends Resource
 @export var trick_leg_asymmetry: float = 0.06
 @export var trick_pole_lag: float = 0.14
 @export_range(0.0, 1.0) var trick_multi_axis_weight: float = 0.65
+@export var trick_flip_leg_shape: float = 0.22
+@export var trick_flip_arm_shape: float = 0.28
+@export var trick_cork_leg_shape: float = 0.24
+@export var trick_cork_arm_shape: float = 0.34
 
 @export_category("Landing")
 @export var landing_anticipation_time: float = 0.55
@@ -272,6 +276,9 @@ extends Resource
 @export_range(0.0, 1.0) var grab_late_hold_floor: float = 0.28
 @export var grab_chest_drop: float = 0.34
 @export var grab_leg_tuck: float = 0.58
+@export var grab_ski_lift_knee: float = 0.9
+@export var grab_ski_lift_hip: float = -0.1
+@export var grab_knee_flex_limit: float = 2.65
 @export var grab_upper_arm_length: float = 0.42
 @export var grab_forearm_length: float = 0.37
 @export var grab_shoulder_pitch_limit: float = 1.35
@@ -327,11 +334,15 @@ extends Resource
 @export_range(0.0, 1.0) var bail_leg_ik_weight: float = 0.0
 @export var leg_ik_weight_response: float = 12.0
 @export var leg_ik_max_angular_rate: float = 8.0
+@export var landing_leg_ik_max_angular_rate: float = 24.0
+@export var landing_leg_ik_pelvis_translation_limit: float = 0.28
 @export var leg_ik_pelvis_translation_limit: float = 0.14
 @export var leg_ik_pelvis_rotation_limit: float = 0.14
 @export var leg_ik_max_reach_ratio: float = 1.02
 @export var leg_ik_min_stance_width: float = 0.16
 @export var pose_handoff_duration: float = 0.2
+@export var landing_pose_handoff_duration: float = 0.08
+@export var pop_pose_handoff_duration: float = 0.08
 @export var rail_contact_duration: float = 0.12
 @export var rail_compression_duration: float = 0.2
 

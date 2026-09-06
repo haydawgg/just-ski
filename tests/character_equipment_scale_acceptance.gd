@@ -124,8 +124,8 @@ func _check_collar_skirt(adapter: SkeletonSkierRig) -> void:
 		"Jacket collar skirt is missing above the 0.62 cut (%d verts)" % above)
 
 func _report_production_torso_surface(adapter: SkeletonSkierRig) -> void:
-	# Samples the imported base-mesh torso wall (bind pose) so jacket-detail
-	# depths can be calibrated to production, not just to the primitive proxy.
+	# Compare attachments with the posed production mesh, not bind-pose vertices.
+	# Pelvis translation and torso articulation move both mesh and attachments.
 	# Single mesh traversal: caches torso-band verts once, answers everything.
 	var cloud := PackedVector3Array()
 	var head_idx := int(adapter.bone_indices[&"head"])
@@ -140,8 +140,24 @@ func _report_production_torso_surface(adapter: SkeletonSkierRig) -> void:
 			if arrays.size() <= Mesh.ARRAY_VERTEX:
 				continue
 			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			for v: Vector3 in verts:
-				var w: Vector3 = instance.global_transform * v
+			var skin_transforms: Array[Transform3D] = []
+			if instance.skin != null:
+				for bind: int in instance.skin.get_bind_count():
+					var bone := instance.skin.get_bind_bone(bind)
+					var bone_name := instance.skin.get_bind_name(bind)
+					if not bone_name.is_empty():
+						bone = adapter.skeleton.find_bone(bone_name)
+					skin_transforms.append(adapter.skeleton.global_transform * adapter.skeleton.get_bone_global_pose(bone) * instance.skin.get_bind_pose(bind))
+			var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+			var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+			var influences := bones.size() / maxi(verts.size(), 1)
+			for vertex: int in verts.size():
+				var w: Vector3 = instance.global_transform * verts[vertex]
+				if not skin_transforms.is_empty() and influences > 0:
+					w = Vector3.ZERO
+					for influence: int in influences:
+						var index := vertex * influences + influence
+						w += (skin_transforms[bones[index]] * verts[vertex]) * weights[index]
 				if w.y > 1.2 and w.y < 1.62:
 					cloud.append(w)
 				if absf(w.x) < 0.05 and w.y > head_y - 0.10 and w.y < head_y + 0.16:
@@ -172,7 +188,7 @@ func _report_production_torso_surface(adapter: SkeletonSkierRig) -> void:
 		else:
 			gap = (part.global_position.z + box.size.z * 0.5) - wall_front
 		_check(gap >= -0.002 and gap <= 0.010,
-			"Production %s hovers off the torso wall (gap %.1fmm)" % [part_name, gap * 1000.0])
+			"Production %s is outside the torso seating envelope (signed embedding %.1fmm)" % [part_name, gap * 1000.0])
 	var pocket := adapter.find_child("JacketChestPocket", true, false) as MeshInstance3D
 	if pocket != null:
 		var bins := [-0.16, -0.12, -0.08, -0.04, 0.0]

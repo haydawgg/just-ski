@@ -206,3 +206,53 @@ For a focused production contact review, use the capture-only grab showcase. It 
 ```
 
 Output is written under `.godot_user/captures/`.
+
+### Presentation audit follow-up (2026-09-06)
+
+This pass addresses the seven animation handoff areas; passing the mechanical
+checks is not a claim that every pose is artistically finished.
+
+- Spins/flips: rotation-phase leg articulation and separate front-fold/back-arch
+  tuck/open envelopes replace the largely constant rotation support pose.
+- Corks: phase-dependent asymmetry opens out late. The inspection root now makes
+  a closed tilted-axis turn with matching angular telemetry, enough inversion
+  clearance, and a separate 0.6-second rail approach. These fixture changes do
+  not alter gameplay rotation physics. The showcase is now 22.2 seconds long.
+- Landing: impact handoff is shorter, stomp extension waits for compression,
+  and contact IK has a landing-specific rate and pelvis reach allowance.
+  Tangential root feedforward removes target drag without pushing contacts down
+  during root seating. The analytic knee hinge avoids the Euler branch change
+  above 90 degrees and uses a stable body-relative bend plane.
+- Cork/rail handoff: the fixture finishes and opens the cork before acquiring
+  rail support; ground and rail captures both supply production-style targets.
+- Grabs: the selected leg reserves the authored contact shape during spins,
+  ski lift assists reach, and spine/clavicle assistance is bounded. Production
+  leg segment calibration and pelvis translation now agree with the canonical
+  solver. Jacket seating tests compare against skinned, posed mesh vertices.
+- Carve/takeoff: pelvis, torso and arm responses follow the load sooner; support
+  IK preserves ski edge roll. Capture charge, contact and POP timing are coherent.
+- Secondary motion: hands/poles respond sooner; pole stabilization uses the skier
+  frame, including cross-body hand placement, rather than world gravity and the
+  imported model's rotated axes.
+
+The new `animation_presentation_quality_acceptance.tscn` covers moving contact,
+production boot/pelvis agreement, visible compression, bounded grab torso
+assistance, flip rhythm, and slope-tangent contact advection. It is included in
+the 16-scene animation runtime shard. Environment inspection also writes JSON
+beside each image with contact and presentation measurements.
+
+Verification for this pass: animation runtime shard, terrain suspension course,
+crest unweighting acceptance, ground hover probe, and the static gate. Rendered
+review uses both showcase commands above, jump inspection, and environment
+inspection; motion review sheets are under
+`.godot_user/captures/presentation_repairs_final/`.
+
+The rendered follow-up fixed the two remaining confirmed issues from the prior
+review: the Nose shoulder envelope was reduced from 1.735 rad to 1.125 rad
+without losing contact, and the first grounded frame now seats the gameplay
+root at the configured 0.190 m support offset. The imported jacket remains a
+stylized skinned mesh under extreme poses, so normal gameplay review should
+still check unusual grab combinations and control feel; deterministic fixtures
+do not establish those.
+The environment capture exits successfully but reports seven leaked texture RIDs
+at renderer shutdown; that warning has not been resolved in this animation pass.

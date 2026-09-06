@@ -707,6 +707,7 @@ func _handle_landing() -> void:
 	if int(result.outcome) == LandingSolver.Outcome.BAIL:
 		enter_crash(_landing_crash_context(result))
 		return
+	_snap_to_contact_seat()
 	if should_present_landing:
 		AudioManager.landing_feedback(float(result.score), float(result.impact))
 		landed.emit(result)
@@ -736,6 +737,19 @@ func _handle_landing() -> void:
 	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
 	rail_pose = 0
 	state_changed.emit("Ground")
+
+func _snap_to_contact_seat() -> void:
+	if not contact.grounded or contact.average_hit_position.length_squared() < 0.001:
+		return
+	var normal := contact.average_normal.normalized()
+	if normal.length_squared() < 0.001:
+		normal = Vector3.UP
+	var current_offset := (global_position - contact.average_hit_position).dot(normal)
+	var correction := profile.ground_attach_height - current_offset
+	# Landing has authoritative ski contact already. Seat only along the
+	# measured terrain normal so downhill momentum and lateral travel remain
+	# untouched while the next animation frame starts on the support surface.
+	global_position += normal * correction
 
 func _begin_landing_control_recovery(severity: float) -> void:
 	var bounded_severity := clampf(severity, 0.0, 1.0)

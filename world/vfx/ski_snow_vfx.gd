@@ -33,18 +33,21 @@ var last_mode := "none"
 var last_landing_severity := 0.0
 var last_brake_response := 0.0
 var last_bail_surface_speed := 0.0
+var last_valid_contact_center := Vector3.ZERO
+var last_valid_contact_normal := Vector3.UP
+var last_valid_contact_allows_snow := false
 
 func _ready() -> void:
 	skier = get_parent() as SkierController
 	_build_track_mesh()
-	carve_spray = _build_particles("CarveSpray", 48, 0.48, Vector2(0.5, 2.4), Vector2(0.022, 0.065), Color(0.86, 0.93, 0.98, 0.74))
-	skid_spray = _build_particles("SkidSpray", 96, 0.72, Vector2(1.8, 6.8), Vector2(0.028, 0.11), Color(0.79, 0.89, 0.96, 0.82))
-	landing_spray = _build_particles("LandingBurst", 64, 0.62, Vector2(2.2, 7.8), Vector2(0.032, 0.13), Color(0.9, 0.96, 1.0, 0.9))
+	carve_spray = _build_particles("CarveSpray", 48, 0.38, Vector2(0.5, 2.4), Vector2(0.014, 0.042), Color(0.86, 0.93, 0.98, 0.74), 2.5)
+	skid_spray = _build_particles("SkidSpray", 96, 0.56, Vector2(1.8, 6.8), Vector2(0.018, 0.062), Color(0.79, 0.89, 0.96, 0.82), 3.0)
+	landing_spray = _build_particles("LandingBurst", 72, 0.32, Vector2(1.6, 5.2), Vector2(0.02, 0.07), Color(0.9, 0.96, 1.0, 0.88), 2.4)
 	landing_spray.one_shot = true
 	landing_spray.explosiveness = 1.0
 	landing_spray.emitting = false
-	speed_snow = _build_particles("SpeedSnow", 32, 0.42, Vector2(7.0, 13.0), Vector2(0.012, 0.032), Color(0.92, 0.97, 1.0, 0.46))
-	bail_scrape = _build_particles("BailScrape", 44, 0.68, Vector2(0.9, 4.6), Vector2(0.024, 0.085), Color(0.83, 0.91, 0.95, 0.72))
+	speed_snow = _build_particles("SpeedSnow", 32, 0.34, Vector2(7.0, 13.0), Vector2(0.008, 0.024), Color(0.92, 0.97, 1.0, 0.46), 3.2)
+	bail_scrape = _build_particles("BailScrape", 44, 0.54, Vector2(0.9, 4.6), Vector2(0.016, 0.052), Color(0.83, 0.91, 0.95, 0.72), 2.7)
 	if skier != null:
 		skier.landed.connect(_on_landed)
 	GameSettings.settings_applied.connect(_apply_quality)
@@ -56,6 +59,10 @@ func update_from_existing_contact(delta: float) -> void:
 	# SkiContactPresentation captures skier.contact.left_hit_position and
 	# skier.contact.right_hit_position once for every presentation adapter.
 	contact_presentation.capture(skier.contact)
+	if contact_presentation.left_valid or contact_presentation.right_valid:
+		last_valid_contact_center = _presentation_center()
+		last_valid_contact_normal = _presentation_normal()
+		last_valid_contact_allows_snow = contact_presentation.allows_snow_effects()
 	_age_track_samples(delta)
 	var speed := skier.velocity.length()
 	var grounded := skier.state == SkierController.State.GROUND and skier.contact.grounded
@@ -83,7 +90,9 @@ func clear_transient_effects() -> void:
 	skid_spray.emitting = false
 	speed_snow.emitting = false
 	bail_scrape.emitting = false
-	landing_spray.emitting = false
+	# Landing feedback is a one-shot event. The skier emits `landed` before
+	# entering control recovery, so clearing the continuous effects here must
+	# not erase a burst that was just restarted by _on_landed().
 
 func debug_snapshot() -> Dictionary:
 	return {
@@ -100,7 +109,7 @@ func debug_snapshot() -> Dictionary:
 		"bail_surface_speed": last_bail_surface_speed,
 		"bail_scrape_active": bail_scrape.emitting if bail_scrape != null else false,
 		"surface_class": contact_presentation.surface_class,
-		"snow_contact": contact_presentation.allows_snow_effects(),
+		"snow_contact": contact_presentation.allows_snow_effects() or last_valid_contact_allows_snow,
 		"uses_existing_contact": skier != null,
 	}
 
@@ -117,13 +126,13 @@ func _build_track_mesh() -> void:
 	track_mesh_instance.material_override = material
 	add_child(track_mesh_instance)
 
-func _build_particles(label: String, amount: int, lifetime: float, velocity_range: Vector2, scale_range: Vector2, color: Color) -> GPUParticles3D:
+func _build_particles(label: String, amount: int, lifetime: float, velocity_range: Vector2, scale_range: Vector2, color: Color, shape_aspect: float = 1.65) -> GPUParticles3D:
 	var particles := GPUParticles3D.new()
 	particles.name = label
 	particles.amount = amount
 	particles.lifetime = lifetime
-	particles.randomness = 0.38
-	particles.explosiveness = 0.08
+	particles.randomness = 0.5
+	particles.explosiveness = 0.12
 	particles.visibility_aabb = AABB(Vector3(-9.0, -3.0, -9.0), Vector3(18.0, 11.0, 18.0))
 	particles.visibility_range_begin = 0.18
 	particles.visibility_range_end = 72.0
@@ -162,17 +171,18 @@ func _build_particles(label: String, amount: int, lifetime: float, velocity_rang
 	alpha_ramp.gradient = alpha_gradient
 	process_material.color_ramp = alpha_ramp
 	particles.process_material = process_material
-	var particle_mesh := SphereMesh.new()
-	particle_mesh.radius = 0.5
-	particle_mesh.height = 1.0
-	particle_mesh.radial_segments = 8
-	particle_mesh.rings = 4
+	# A camera-facing quad keeps the spray light and directional. The old
+	# low-resolution sphere read as a string of obvious white beads whenever a
+	# carve or skid emitter crossed the camera.
+	var particle_mesh := QuadMesh.new()
+	particle_mesh.size = Vector2(1.0, 1.0)
 	var particle_material := ShaderMaterial.new()
 	particle_material.shader = PARTICLE_SHADER
 	particle_material.set_shader_parameter("snow_tint", color)
 	particle_material.set_shader_parameter("height_limit", 2.25)
 	particle_material.set_shader_parameter("height_fade_range", 0.65)
 	particle_material.set_shader_parameter("emitter_base_height", 0.0)
+	particle_material.set_shader_parameter("shape_aspect", shape_aspect)
 	particle_mesh.material = particle_material
 	particles.draw_pass_1 = particle_mesh
 	add_child(particles)
@@ -182,7 +192,7 @@ func _apply_quality() -> void:
 	var premium := int(GameSettings.active.get("snow_quality", 1)) == 1
 	carve_spray.amount = 38 if premium else 22
 	skid_spray.amount = 78 if premium else 44
-	landing_spray.amount = 64 if premium else 38
+	landing_spray.amount = 72 if premium else 42
 	speed_snow.amount = 24 if premium else 14
 	bail_scrape.amount = 44 if premium else 24
 
@@ -383,23 +393,40 @@ func _update_speed_snow(speed: float) -> void:
 func _on_landed(result: Dictionary) -> void:
 	var severity := clampf(float(result.get("impact_severity", 0.0)), 0.0, 1.0)
 	last_landing_severity = severity
-	if severity < 0.08:
+	# Clean, low-energy landings still need a small contact cue. Suppressing
+	# every burst below the old threshold made a successful stomp look like a
+	# frame of hovering with no snow response.
+	if severity < 0.03:
 		return
 	contact_presentation.capture(skier.contact)
-	if not contact_presentation.allows_snow_effects():
+	var current_contact_allows_snow := contact_presentation.allows_snow_effects()
+	var authoritative_landing_contact := (
+		skier.contact.grounded
+		and skier.contact.surface_class == SkiContactSolver.SurfaceClass.SNOW
+		and skier.contact.average_hit_position.length_squared() > 0.001
+	)
+	if not current_contact_allows_snow and not authoritative_landing_contact and not last_valid_contact_allows_snow:
 		return
-	var normal := _presentation_normal()
-	landing_spray.global_position = _presentation_center() + normal * 0.1
+	# The landing signal can arrive before the per-ski confidence values finish
+	# their transition back to grounded. Prefer the solver's current averaged hit
+	# point in that narrow window so the burst follows the actual landing rather
+	# than the last contact point from takeoff.
+	var use_authoritative_contact := authoritative_landing_contact and not current_contact_allows_snow
+	var normal := _presentation_normal() if current_contact_allows_snow else (skier.contact.average_normal if use_authoritative_contact else last_valid_contact_normal)
+	var center := _presentation_center() if current_contact_allows_snow else (skier.contact.average_hit_position if use_authoritative_contact else last_valid_contact_center)
+	if normal.length_squared() < 0.001:
+		normal = Vector3.UP
+	landing_spray.global_position = center + normal * 0.1
 	_set_particle_emitter_height(landing_spray, landing_spray.global_position.y)
 	var process_material := landing_spray.process_material as ParticleProcessMaterial
 	var lateral := float(result.get("lateral_velocity", 0.0))
 	var travel := skier.velocity.slide(normal).normalized()
 	var right := travel.cross(normal).normalized() if travel.length_squared() > 0.01 else skier.global_basis.x
 	process_material.direction = (normal * 0.9 + right * signf(lateral) * minf(absf(lateral) / 8.0, 0.65) - travel * 0.18).normalized()
-	process_material.spread = lerpf(48.0, 68.0, severity)
-	process_material.initial_velocity_min = lerpf(1.8, 4.2, severity)
-	process_material.initial_velocity_max = lerpf(4.0, 8.6, severity)
-	landing_spray.amount_ratio = lerpf(0.28, 1.0, severity)
+	process_material.spread = lerpf(44.0, 62.0, severity)
+	process_material.initial_velocity_min = lerpf(1.25, 3.2, severity)
+	process_material.initial_velocity_max = lerpf(2.8, 6.2, severity)
+	landing_spray.amount_ratio = lerpf(0.34, 0.88, severity)
 	landing_spray.emitting = true
 	landing_spray.restart()
 
