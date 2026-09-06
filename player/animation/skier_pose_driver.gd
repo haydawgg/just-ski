@@ -24,7 +24,7 @@ const REST_POSITIONS := {
 	&"left_pole": Vector3.ZERO,
 	&"right_pole": Vector3.ZERO,
 }
-const GRAB_TAIL_OFFSET := Vector3(0.0, 0.04, 0.30)
+const GRAB_TAIL_OFFSET := Vector3(0.0, 0.04, 0.20)
 
 var joints: Dictionary = {}
 var grab_targets: Dictionary = {}

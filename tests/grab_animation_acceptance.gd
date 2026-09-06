@@ -182,7 +182,8 @@ func _test_spin_grab_layering() -> void:
 			failures.append("Grab suppressed Phase 8 during %.1f rad/s spin" % spin_rate)
 		if float(snapshot.get("grab_pose_weight", 0.0)) < 0.45:
 			failures.append("Spin suppressed the active grab at %.1f rad/s" % spin_rate)
-		if absf(float((snapshot.left_knee_rotation as Vector3).x)) > 2.32:
+		# Rotation may not add flex beyond the authored production grab envelope.
+		if absf(float((snapshot.left_knee_rotation as Vector3).x)) > rig.profile.grab_knee_flex_limit + 0.02:
 			failures.append("Spin and grab compactness double-stacked beyond knee limits (rate %.1f knee %.3f)" % [spin_rate, absf(float((snapshot.left_knee_rotation as Vector3).x))])
 		if absf(float((snapshot.head_rotation as Vector3).y)) > rig.profile.trick_head_yaw_limit + 0.08:
 			failures.append("Grab overrode bounded Phase 8 head spotting")
