@@ -45,6 +45,11 @@ func _test_visualizer_contract() -> void:
 func _test_game_ui_teaching_surfaces() -> void:
 	var ui := GameUI.new()
 	add_child(ui)
+	ui._layout_menus(Vector2(1280, 720))
+	for panel: Control in [ui.pause_panel, ui.results_panel, ui.trick_guide_panel, ui.challenge_panel, ui.options_panel]:
+		var rect := Rect2(panel.position, panel.size)
+		if rect.position.x < 0.0 or rect.position.y < 0.0 or rect.end.x > 1280.0 or rect.end.y > 720.0:
+			failures.append("Menu panel %s exceeded the 1280x720 viewport (position=%s size=%s)" % [panel.name, panel.position, panel.size])
 	if ui.find_child("TrickVisualizer", true, false) == null:
 		failures.append("Gameplay HUD is missing the Flick-It visualizer")
 	if ui.find_child("TrickGuidePanel", true, false) == null:
@@ -61,6 +66,8 @@ func _test_game_ui_teaching_surfaces() -> void:
 	var restart_button := ui.find_child("RestartButton", true, false) as Button
 	if resume_button == null or resume_button.icon == null or options_button == null or options_button.icon == null or restart_button == null or restart_button.icon == null:
 		failures.append("Pause menu is missing the restrained project icon set")
+	if options_button != null and options_button.text != "Settings":
+		failures.append("Pause menu does not expose the in-game Settings entry")
 	if ui.find_child("AntiAliasing", true, false) == null:
 		failures.append("Options menu is missing anti-aliasing control")
 	if ui.find_child("ShadowQuality", true, false) == null:
@@ -69,6 +76,10 @@ func _test_game_ui_teaching_surfaces() -> void:
 		failures.append("Options menu is missing global illumination control")
 	if ui.find_child("EnvironmentPreset", true, false) == null:
 		failures.append("Options menu is missing the Day / Golden Hour / Sunset control")
+	for control_name: String in ["RenderScale", "AntiAliasing", "ShadowQuality", "GI"]:
+		var control := ui.find_child(control_name, true, false) as Control
+		if control == null or control.focus_mode == Control.FOCUS_NONE:
+			failures.append("Settings control %s is not controller-focusable" % control_name)
 	if ui.find_child("RunResultsPanel", true, false) == null:
 		failures.append("Gameplay UI is missing the run results panel")
 	var guide_text := ""
@@ -100,6 +111,42 @@ func _test_game_ui_teaching_surfaces() -> void:
 		failures.append("Options GI Cancel did not restore the pending value")
 	if int(GameSettings.pending["environment_preset"]) != int(GameSettings.active["environment_preset"]):
 		failures.append("Options time-of-day Cancel did not restore the pending value")
+	var settings_title_found := false
+	for node: Node in ui.options_panel.find_children("*", "Label", true, false):
+		if "SETTINGS" in (node as Label).text:
+			settings_title_found = true
+			break
+	if not settings_title_found:
+		failures.append("In-game settings panel is missing its Settings title")
+	ui._set_menu_visible(ui.results_panel)
+	get_tree().paused = true
+	var cancel_event := InputEventAction.new()
+	cancel_event.action = &"ui_cancel"
+	cancel_event.pressed = true
+	ui._unhandled_input(cancel_event)
+	if get_tree().paused or ui.results_panel.visible:
+		failures.append("Escape did not dismiss the run results panel")
+	get_tree().paused = false
+	var original_active := GameSettings.active.duplicate(true)
+	var live_preset := 0 if int(original_active["graphics_preset"]) != 0 else 2
+	ui._open_options()
+	var preset_control := ui.find_child("Preset", true, false) as OptionButton
+	var apply_button := ui.find_child("ApplyButton", true, false) as Button
+	if preset_control == null or apply_button == null:
+		failures.append("Settings menu is missing live graphics Apply controls")
+	else:
+		preset_control.item_selected.emit(live_preset)
+		apply_button.pressed.emit()
+		var expected_scale := float(GameSettings.active["render_scale"])
+		if int(GameSettings.active["graphics_preset"]) != live_preset:
+			failures.append("Settings Apply did not promote the graphics preset")
+		if not is_equal_approx(get_viewport().scaling_3d_scale, expected_scale):
+			failures.append("Settings Apply did not update the live render scale")
+		if not FileAccess.file_exists(GameSettings.CONFIG_PATH):
+			failures.append("Settings Apply did not persist the live graphics change")
+	GameSettings.pending = original_active.duplicate(true)
+	GameSettings.apply_pending()
+	ui._resume()
 	if ui._quality_name(LandingSolver.Outcome.CLEAN) != "CLEAN" or ui._quality_name(LandingSolver.Outcome.SKETCHY) != "SKETCHY" or ui._quality_name(LandingSolver.Outcome.HARD) != "HARD":
 		failures.append("Landing labels did not use explicit outcomes")
 	ui._process(10.0)

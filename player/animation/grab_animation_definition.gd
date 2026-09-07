@@ -14,3 +14,4 @@ enum Target { NONE, BINDING_OUTSIDE, BINDING_INSIDE, NOSE, TAIL }
 @export var reach_response_scale: float = 1.0
 @export_range(0.0, 1.0) var clavicle_assist_scale: float = 1.0
 @export_range(0.0, 4.0) var upper_spine_assist_scale: float = 1.0
+@export_range(0.25, 3.0) var contact_response_scale: float = 1.0

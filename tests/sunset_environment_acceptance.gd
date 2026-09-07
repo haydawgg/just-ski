@@ -101,7 +101,7 @@ func _test_gi_policy(sunset_resort: Node3D, env: Environment) -> void:
 	if not env.sdfgi_enabled:
 		failures.append("Applying GI with a capable profile and preset did not enable SDFGI")
 	var active_before_save_failure := GameSettings.active.duplicate(true)
-	var save_error := GameSettings.save_settings("res://tests")
+	var save_error := GameSettings.save_settings("res://tests", false)
 	if save_error == OK or not env.sdfgi_enabled or GameSettings.active != active_before_save_failure:
 		failures.append("A GI save failure did not preserve the applied runtime state")
 	GameSettings.active = original_active

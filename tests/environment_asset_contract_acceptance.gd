@@ -1,5 +1,6 @@
 extends Node
 
+const DEFAULT_CATALOG := preload("res://resources/environment/default_environment_asset_catalog.tres")
 var failures: Array[String] = []
 
 @onready var resort: Node3D = $Resort
@@ -25,6 +26,10 @@ func _validate_catalog() -> void:
 	if catalog == null:
 		failures.append("Resort did not expose an environment asset catalog")
 		return
+	if catalog == DEFAULT_CATALOG:
+		failures.append("Resort mutated the shared environment catalog resource")
+	if DEFAULT_CATALOG.mode != EnvironmentAssetCatalog.AssetMode.AUTO:
+		failures.append("Shared environment catalog mode was changed by a resort instance")
 	for reason: String in catalog.validate(false):
 		failures.append("Catalog validation failed: %s" % reason)
 	if catalog.mode != EnvironmentAssetCatalog.AssetMode.AUTO:

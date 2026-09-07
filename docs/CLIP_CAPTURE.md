@@ -1,7 +1,10 @@
 # Clip capture
 
-F9 arms the next summit run for a 960×540, 30 fps MJPEG-in-MP4 capture. The
-JPEG worker is bounded so capture cannot grow an unbounded queue or block the
+F9 arms the next summit run for a 960×540, 30 fps MJPEG-in-MP4 capture. Press
+F9 again while the recorder is idle to cancel that pending arm. The pending
+arm survives a run ending before summit capture starts and is consumed when a
+summit run begins. While recording, F9 stops the current capture. The JPEG
+worker is bounded so capture cannot grow an unbounded queue or block the
 gameplay thread.
 
 ## Timing contract
@@ -25,7 +28,11 @@ but `Mp4Encoder.write_to_file()` streams the `mdat` samples and writes the
 that file to Downloads in bounded 1 MiB chunks, falling back to Godot's user
 data directory if Downloads is unavailable. It joins the JPEG worker before
 assembling the timeline and joins the mux worker before publishing
-`clip_saved` or `clip_failed`.
+`clip_saved` or `clip_failed`. Normal capture stops drain queued JPEG frames
+before muxing. If the recorder exits, incomplete capture data is discarded,
+any active encode is joined, and the temporary MP4 is deleted; no partial
+clip is published. An MP4 worker that cannot start clears its encoding state,
+removes its temporary output, and emits `clip_failed`.
 
 The compatibility `Mp4Encoder.encode()` byte-returning API remains available
 for small acceptance fixtures. The long-capture diagnostic uses the streaming

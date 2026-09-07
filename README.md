@@ -78,7 +78,7 @@ The playable slice includes:
 - Procedural skier presentation driven from gameplay telemetry, with a production Skeleton3D rig and a primitive fallback adapter.
 - Triplanar snow shading with Fast and Premium tiers, procedural environment presentation, snow spray, audio, rumble, HUD feedback, scoring, combos, and finish results.
 - A data-driven downhill park with jump, flow, and jib routes assembled from reusable procedural features.
-- Controller-navigable options with staged Apply / Cancel / Reset behavior and persisted settings.
+- Controller-navigable Settings menu with staged Apply / Cancel / Reset behavior, live graphics changes, and persisted settings.
 - Gameplay clip capture to MJPEG-in-MP4.
 
 ## Documentation

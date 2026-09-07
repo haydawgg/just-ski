@@ -32,13 +32,18 @@ func request_respawn_to(value: Transform3D) -> void:
 func clear_marker() -> void:
 	has_marker = false
 
-func submit_score(score: int) -> bool:
+func submit_score(score: int, progress_path: String = PROGRESS_PATH) -> bool:
 	if score <= best_score:
 		return false
-	best_score = score
 	var progress := ConfigFile.new()
-	progress.set_value("records", "best_score", best_score)
-	var error := progress.save(PROGRESS_PATH)
+	var load_error := progress.load(progress_path)
+	if load_error != OK and load_error != ERR_FILE_NOT_FOUND:
+		push_warning("Could not load personal best: %s" % error_string(load_error))
+		return false
+	progress.set_value("records", "best_score", score)
+	var error := progress.save(progress_path)
 	if error != OK:
 		push_warning("Could not save personal best: %s" % error_string(error))
+		return false
+	best_score = score
 	return true

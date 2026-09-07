@@ -6,6 +6,10 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $project = Get-Content -Raw (Join-Path $RepoRoot "project.godot")
 $graphics = Get-Content -Raw (Join-Path $RepoRoot "docs/GRAPHICS.md")
+$contentDesign = Get-Content -Raw (Join-Path $RepoRoot "docs/CONTENT_DESIGN_PLAN.md")
+$contentPass = Get-Content -Raw (Join-Path $RepoRoot "docs/CONTENT_PASS_IMPLEMENTATION.md")
+$knownIssues = Get-Content -Raw (Join-Path $RepoRoot "docs/KNOWN_ISSUES.md")
+$animationDoc = Get-Content -Raw (Join-Path $RepoRoot "docs/ANIMATION.md")
 $settings = Get-Content -Raw (Join-Path $RepoRoot "autoload/game_settings.gd")
 $resort = Get-Content -Raw (Join-Path $RepoRoot "world/resort.gd")
 $workflow = Get-Content -Raw (Join-Path $RepoRoot ".github/workflows/quality.yml")
@@ -54,6 +58,26 @@ if ($resort -notmatch 'resolve_effective_gi' -or $resort -notmatch 'effective_gi
 }
 if ($graphics -notmatch 'gi_enabled' -or $graphics -notmatch 'Low and Medium forbid it') {
 	$failures.Add("GRAPHICS.md does not document the profile/user/preset GI ownership model.")
+}
+if ($contentDesign -notmatch 'Current automated status and human gates' -or $contentDesign -notmatch 'human-only') {
+	$failures.Add("CONTENT_DESIGN_PLAN.md does not separate automated completion from human-only gates.")
+}
+if ($contentDesign -match 'The best first code/content change' -or $contentDesign -match '(?m)^1\. Rework only the \*\*Summit Fundamentals') {
+	$failures.Add("CONTENT_DESIGN_PLAN.md still presents the superseded first implementation slice as current work.")
+}
+foreach ($requiredContentStatus in @('ParkFeatureSpec', 'Session Yard', 'M2 metadata', 'M4 optional challenges', 'M5 opt-in Session Yard')) {
+	if ($contentDesign -notmatch [regex]::Escape($requiredContentStatus)) {
+		$failures.Add("CONTENT_DESIGN_PLAN.md is missing current/deferred status text: $requiredContentStatus")
+	}
+}
+if ($contentPass -notmatch 'animation-presentation-audit' -or $contentPass -notmatch 'lower-run/hub' -or $contentPass -notmatch 'Human-only gates still open') {
+	$failures.Add("CONTENT_PASS_IMPLEMENTATION.md does not document deterministic animation/art evidence and remaining human gates.")
+}
+if ($knownIssues -notmatch 'Deterministic animation presentation coverage' -or $knownIssues -notmatch 'texture-RID shutdown warning' -or $knownIssues -notmatch 'human') {
+	$failures.Add("KNOWN_ISSUES.md is missing the separate deterministic status or unresolved human/shutdown warnings.")
+}
+if ($animationDoc -notmatch 'capture-animation-presentation-audit' -or $animationDoc -notmatch '30\s*,\s*60\s*,\s*and\s*120' -or $animationDoc -notmatch 'human-only gates') {
+	$failures.Add("ANIMATION.md does not document the multi-rate presentation audit and deferred human gates.")
 }
 if ($project -notmatch 'theme/custom="res://ui/theme/summit_theme\.tres"') {
 	$failures.Add("project.godot does not select the project-wide UI theme.")

@@ -9,6 +9,8 @@ extends Node3D
 
 enum AssetKind { PARK_TREE, ROUTE_GATE, COURSE_BOUNDARY, LIFT_TOWER, SNOWMAKER, TRAIL_BOARD, SNOW_BOULDER }
 
+const DEFAULT_LOD_DISTANCES := Vector3(35.0, 105.0, 230.0)
+
 @export var asset_kind: AssetKind = AssetKind.PARK_TREE
 
 var _built := false
@@ -20,6 +22,10 @@ func build_now() -> void:
 	if _built:
 		return
 	_built = true
+	var has_catalog_lod := has_meta("lod_distances_m")
+	var lod_distances := _lod_distances()
+	set_meta("lod_distances_m", lod_distances)
+	set_meta("lod_source", "catalog" if has_catalog_lod else "asset_default")
 	var render := Node3D.new()
 	render.name = "Render"
 	add_child(render)
@@ -216,12 +222,44 @@ func _configure_lod(instance: GeometryInstance3D, begin: float, end: float, cast
 	# Near LODs ground the prop with a real shadow; far LODs retain the cheap
 	# silhouette and stop contributing duplicate shadow maps. A guide's fabric
 	# can opt out while its posts remain shadow-casting.
+	var catalog_lod := _lod_distances()
+	var resolved_begin := begin
+	var resolved_end := end
+	if begin <= 0.01:
+		# High-detail geometry remains visible through the catalog's middle-band
+		# boundary. The overlap with the low-detail band prevents a visible hole
+		# while the renderer cross-fades the two representations.
+		resolved_end = catalog_lod.y
+	elif begin >= 60.0:
+		# Existing authored calls use a large begin value to identify their low
+		# LOD. Its start and cull horizon come from the catalog, not the helper's
+		# historical per-asset constants.
+		resolved_begin = catalog_lod.x
+		resolved_end = catalog_lod.z
+	else:
+		# Small non-zero ranges are intentionally authored sub-parts (for example
+		# route-flag fabric). Keep their near fade but still use the catalog's
+		# middle boundary as the end of the high-detail band.
+		resolved_end = catalog_lod.y
 	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if casts_shadow and begin <= 0.0 else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	instance.visibility_range_begin = begin
-	instance.visibility_range_begin_margin = 18.0 if begin > 0.0 else 0.0
-	instance.visibility_range_end = end
+	instance.visibility_range_begin = resolved_begin
+	instance.visibility_range_begin_margin = 18.0 if resolved_begin > 0.0 else 0.0
+	instance.visibility_range_end = resolved_end
 	instance.visibility_range_end_margin = 24.0
 	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	instance.set_meta("lod_distances_m", catalog_lod)
+	instance.set_meta("lod_source", "catalog" if get_meta("lod_source", "asset_default") == "catalog" else "asset_default")
+	instance.set_meta("lod_cull_start_m", resolved_begin)
+	instance.set_meta("lod_cull_end_m", resolved_end)
+
+func _lod_distances() -> Vector3:
+	var value = get_meta("lod_distances_m", DEFAULT_LOD_DISTANCES)
+	if value is Vector3:
+		var distances := value as Vector3
+		if is_finite(distances.x) and is_finite(distances.y) and is_finite(distances.z) \
+			and distances.x > 0.0 and distances.x < distances.y and distances.y < distances.z:
+			return distances
+	return DEFAULT_LOD_DISTANCES
 
 func _material(color: Color, roughness: float, metallic: float = 0.0, alpha: float = 1.0, double_sided: bool = false) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()

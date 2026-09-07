@@ -43,6 +43,8 @@ var onboarding_remaining := 8.0
 var clean_capture_mode := false
 const ONBOARDING_FADE_TIME := 2.5
 var _stored_mouse_mode := Input.MOUSE_MODE_VISIBLE
+var _bound_player: SkierController
+var _bound_content_tracker: ParkContentTracker
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -56,6 +58,8 @@ func _ready() -> void:
 	_build_options_menu()
 	_build_notice_overlay()
 	_build_recovery_overlay()
+	_layout_menus()
+	get_viewport().size_changed.connect(_layout_menus)
 	InputManager.device_changed.connect(_on_device_changed)
 	SessionManager.marker_changed.connect(_on_marker_changed)
 	InputManager.controller_connection_changed.connect(_on_controller_connection)
@@ -68,8 +72,26 @@ func _ready() -> void:
 	ClipRecorder.clip_info.connect(_show_notice)
 	_update_hint()
 
+func _exit_tree() -> void:
+	if get_viewport() != null and get_viewport().size_changed.is_connected(_layout_menus):
+		get_viewport().size_changed.disconnect(_layout_menus)
+	if InputManager.device_changed.is_connected(_on_device_changed):
+		InputManager.device_changed.disconnect(_on_device_changed)
+	if SessionManager.marker_changed.is_connected(_on_marker_changed):
+		SessionManager.marker_changed.disconnect(_on_marker_changed)
+	if InputManager.controller_connection_changed.is_connected(_on_controller_connection):
+		InputManager.controller_connection_changed.disconnect(_on_controller_connection)
+	if GameSettings.settings_save_failed.is_connected(_on_settings_save_failed):
+		GameSettings.settings_save_failed.disconnect(_on_settings_save_failed)
+	_unbind_player()
+	_unbind_content_tracker()
+
 func bind_player(value: SkierController) -> void:
+	_unbind_player()
 	player = value
+	_bound_player = value
+	if player == null:
+		return
 	player.telemetry_updated.connect(_on_telemetry)
 	player.trick.trick_changed.connect(_on_trick_changed)
 	player.scoring.score_awarded.connect(_on_score_awarded)
@@ -83,10 +105,44 @@ func bind_camera(value: SkiCameraController) -> void:
 	camera_rig = value
 
 func bind_content_tracker(value: ParkContentTracker) -> void:
+	_unbind_content_tracker()
 	content_tracker = value
+	_bound_content_tracker = value
+	if content_tracker == null:
+		return
 	content_tracker.spot_changed.connect(_on_content_spot_changed)
 	content_tracker.challenge_updated.connect(_on_challenge_updated)
 	_refresh_challenges()
+
+func _unbind_player() -> void:
+	if _bound_player == null or not is_instance_valid(_bound_player):
+		_bound_player = null
+		return
+	if _bound_player.telemetry_updated.is_connected(_on_telemetry):
+		_bound_player.telemetry_updated.disconnect(_on_telemetry)
+	if _bound_player.trick.trick_changed.is_connected(_on_trick_changed):
+		_bound_player.trick.trick_changed.disconnect(_on_trick_changed)
+	if _bound_player.scoring.score_awarded.is_connected(_on_score_awarded):
+		_bound_player.scoring.score_awarded.disconnect(_on_score_awarded)
+	if _bound_player.scoring.score_changed.is_connected(_on_score_changed):
+		_bound_player.scoring.score_changed.disconnect(_on_score_changed)
+	if _bound_player.scoring.run_finished.is_connected(_on_run_finished):
+		_bound_player.scoring.run_finished.disconnect(_on_run_finished)
+	if _bound_player.landed.is_connected(_on_landed):
+		_bound_player.landed.disconnect(_on_landed)
+	if _bound_player.crashed.is_connected(_on_crashed):
+		_bound_player.crashed.disconnect(_on_crashed)
+	_bound_player = null
+
+func _unbind_content_tracker() -> void:
+	if _bound_content_tracker == null or not is_instance_valid(_bound_content_tracker):
+		_bound_content_tracker = null
+		return
+	if _bound_content_tracker.spot_changed.is_connected(_on_content_spot_changed):
+		_bound_content_tracker.spot_changed.disconnect(_on_content_spot_changed)
+	if _bound_content_tracker.challenge_updated.is_connected(_on_challenge_updated):
+		_bound_content_tracker.challenge_updated.disconnect(_on_challenge_updated)
+	_bound_content_tracker = null
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and options_panel.visible:
@@ -95,6 +151,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 	if event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and get_tree().paused):
 		if results_panel.visible:
+			_results_continue()
 			get_viewport().set_input_as_handled()
 			return
 		if trick_guide_panel.visible:
@@ -271,7 +328,7 @@ func _build_pause_menu() -> void:
 	box.add_child(_named_button("SetMarkerButton", "Set Marker Here", _set_marker_from_menu))
 	box.add_child(_named_button("TrickGuideButton", "Trick Guide", _open_trick_guide))
 	box.add_child(_named_button("ChallengesButton", "Spot Challenges", _open_challenges))
-	box.add_child(_named_button("OptionsButton", "Options", _open_options))
+	box.add_child(_named_button("OptionsButton", "Settings", _open_options))
 	box.add_child(_named_button("RestartButton", "Restart from Summit", _restart_summit))
 	box.add_child(_named_button("QuitButton", "Quit to Desktop", _quit_game))
 	_wire_vertical_focus(box)
@@ -299,7 +356,8 @@ func _build_results_panel() -> void:
 	results_detail_label.name = "ResultsDetails"
 	results_detail_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	results_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	results_detail_label.custom_minimum_size = Vector2(610, 220)
+	results_detail_label.custom_minimum_size = Vector2(610, 0)
+	results_detail_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(results_detail_label)
 	box.add_child(_named_button("ResultsRetryButton", "Retry from Summit", _restart_summit))
 	box.add_child(_named_button("ResultsMarkerButton", "Return to Marker", _results_return_marker))
@@ -321,7 +379,8 @@ func _build_trick_guide() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(900, 650)
+	scroll.custom_minimum_size = Vector2(900, 0)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(scroll)
 	var guide := VBoxContainer.new()
 	guide.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -369,7 +428,8 @@ func _build_challenge_panel() -> void:
 	challenge_list_label = _label("Ride into a park spot to see its challenges.", 19)
 	challenge_list_label.name = "ChallengeList"
 	challenge_list_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	challenge_list_label.custom_minimum_size = Vector2(690, 470)
+	challenge_list_label.custom_minimum_size = Vector2(690, 0)
+	challenge_list_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(challenge_list_label)
 	box.add_child(_named_button("ChallengesBack", "Back", _close_challenges))
 
@@ -393,11 +453,11 @@ func _build_options_menu() -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	options_panel.add_child(box)
-	var title := _label("OPTIONS — CHANGES ARE STAGED", 26)
+	var title := _label("SETTINGS — CHANGES ARE STAGED", 26)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var tabs := TabContainer.new()
-	tabs.custom_minimum_size = Vector2(820, 650)
+	tabs.custom_minimum_size = Vector2(820, 0)
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(tabs)
 
@@ -591,12 +651,14 @@ func _build_options_menu() -> void:
 	buttons.add_child(_named_button("ApplyButton", "Apply", _apply_options))
 	buttons.add_child(_named_button("CancelButton", "Cancel", _cancel_options))
 	buttons.add_child(_named_button("ResetButton", "Reset Defaults", _reset_options))
+	_wire_options_focus(tabs)
 
 func _row(label_text: String, control: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	var label := _label(label_text, 18)
 	label.custom_minimum_size = Vector2(310, 48)
 	control.custom_minimum_size = Vector2(300, 48)
+	control.focus_mode = Control.FOCUS_ALL
 	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(label)
 	row.add_child(control)
@@ -649,6 +711,48 @@ func _wire_vertical_focus(box: VBoxContainer) -> void:
 		buttons[index].focus_neighbor_bottom = buttons[index].get_path_to(next_button)
 		buttons[index].focus_previous = buttons[index].get_path_to(previous)
 		buttons[index].focus_next = buttons[index].get_path_to(next_button)
+		buttons[index].focus_neighbor_left = buttons[index].get_path_to(buttons[index])
+		buttons[index].focus_neighbor_right = buttons[index].get_path_to(buttons[index])
+
+func _wire_options_focus(tabs: TabContainer) -> void:
+	for tab_root: Node in tabs.get_children():
+		var controls: Array[Control] = []
+		for node: Node in tab_root.find_children("*", "Control", true, false):
+			var control := node as Control
+			if control is OptionButton or control is SpinBox or control is HSlider or control is CheckButton:
+				control.focus_mode = Control.FOCUS_ALL
+				controls.append(control)
+		_wire_focus_ring(controls)
+
+func _wire_focus_ring(controls: Array[Control]) -> void:
+	if controls.size() < 2:
+		return
+	for index: int in controls.size():
+		var previous := controls[(index - 1 + controls.size()) % controls.size()]
+		var next_control := controls[(index + 1) % controls.size()]
+		controls[index].focus_neighbor_top = controls[index].get_path_to(previous)
+		controls[index].focus_neighbor_bottom = controls[index].get_path_to(next_control)
+		controls[index].focus_previous = controls[index].get_path_to(previous)
+		controls[index].focus_next = controls[index].get_path_to(next_control)
+
+func _layout_menus(viewport_size_override: Vector2 = Vector2.ZERO) -> void:
+	var viewport_size := viewport_size_override
+	if viewport_size.length_squared() < 1.0:
+		viewport_size = get_viewport().get_visible_rect().size
+	if viewport_size.x < 1.0 or viewport_size.y < 1.0:
+		return
+	_fit_menu_panel(pause_panel, Vector2(540, 580), viewport_size)
+	_fit_menu_panel(results_panel, Vector2(660, 650), viewport_size)
+	_fit_menu_panel(trick_guide_panel, Vector2(940, 790), viewport_size)
+	_fit_menu_panel(challenge_panel, Vector2(740, 630), viewport_size)
+	_fit_menu_panel(options_panel, Vector2(870, 815), viewport_size)
+
+func _fit_menu_panel(panel: Control, desired_size: Vector2, viewport_size: Vector2) -> void:
+	if panel == null:
+		return
+	var available := Vector2(maxf(viewport_size.x - 48.0, 240.0), maxf(viewport_size.y - 48.0, 180.0))
+	panel.size = Vector2(minf(desired_size.x, available.x), minf(desired_size.y, available.y))
+	panel.position = (viewport_size - panel.size) * 0.5
 
 func _focus_first_pause_button() -> void:
 	var resume := pause_panel.find_child("ResumeButton", true, false) as Button
@@ -679,6 +783,9 @@ func _pause() -> void:
 	_focus_first_pause_button()
 
 func _resume() -> void:
+	var focused := get_viewport().gui_get_focus_owner()
+	if focused != null:
+		focused.release_focus()
 	options_panel.visible = false
 	trick_guide_panel.visible = false
 	challenge_panel.visible = false
@@ -825,8 +932,10 @@ func _sync_options() -> void:
 	(options_panel.find_child("Response", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_response"]))
 
 func _apply_options() -> void:
-	GameSettings.apply_pending()
+	var save_error := GameSettings.apply_pending()
 	_close_options(true)
+	if save_error == OK:
+		_show_notice("SETTINGS SAVED")
 
 func _cancel_options() -> void:
 	_close_options(false)

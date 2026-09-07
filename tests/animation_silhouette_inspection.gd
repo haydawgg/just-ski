@@ -14,6 +14,16 @@ const GRAB_SHOWCASE_POSES: Array[int] = [
 	TrickController.GrabPose.NOSE,
 	TrickController.GrabPose.DOUBLE,
 ]
+const AUDIT_SEGMENT_DURATION := 1.25
+const AUDIT_VIEWS: Array[String] = ["front", "side", "opposite", "three_quarter"]
+const AUDIT_VIEW_HEADINGS: Array[float] = [0.0, PI * 0.5, PI, -PI * 0.5]
+const AUDIT_STYLE_POSES: Array[int] = [
+	TrickController.StylePose.SPREAD_EAGLE,
+	TrickController.StylePose.DAFFY,
+	TrickController.StylePose.SHIFTY_LEFT,
+	TrickController.StylePose.SHIFTY_RIGHT,
+]
+const AUDIT_GRAB_LIBRARY := preload("res://resources/animation/default_grab_animation_library.tres")
 
 var rig: SkierAnimationController
 var skier: SkierController
@@ -25,18 +35,32 @@ var review_index := 0
 var capture_mode := false
 var presentation_capture := false
 var grab_showcase_mode := false
+var presentation_audit_mode := false
 var capture_finished := false
 var output_directory := ""
 var inspection_rail: MeshInstance3D
 var inspection_rail_supports: Array[MeshInstance3D] = []
 var _grab_showcase_root_heading := 0.0
 var _minimum_inversion_clearance := INF
+var _audit_pose_ids: Array[int] = []
+var _audit_capture_schedule: Array[Dictionary] = []
+var _audit_capture_index := 0
+var _audit_samples: Array[Dictionary] = []
+var _audit_previous_rotations: Dictionary = {}
+var _audit_matrix_started := false
+var _audit_duration := DURATION
+var _audit_rate_label := "unspecified"
 
 func _ready() -> void:
 	_build_view()
 	presentation_capture = OS.get_cmdline_user_args().has("--capture-character-presentation")
 	grab_showcase_mode = OS.get_cmdline_user_args().has("--capture-production-grab-showcase")
-	capture_mode = OS.get_cmdline_user_args().has("--capture-silhouette-showcase") or presentation_capture or grab_showcase_mode
+	presentation_audit_mode = OS.get_cmdline_user_args().has("--capture-animation-presentation-audit")
+	_audit_rate_label = _argument_value("--audit-fps=", "unspecified")
+	_audit_pose_ids = _grab_pose_ids()
+	if presentation_audit_mode:
+		_configure_presentation_audit()
+	capture_mode = OS.get_cmdline_user_args().has("--capture-silhouette-showcase") or presentation_capture or grab_showcase_mode or presentation_audit_mode
 	skier = SkierController.new()
 	skier.process_mode = Node.PROCESS_MODE_DISABLED
 	add_child(skier)
@@ -57,9 +81,11 @@ func _ready() -> void:
 			capture_path = "res://.godot_user/captures/phase_17_after"
 		elif grab_showcase_mode:
 			capture_path = "res://.godot_user/captures/production_grab_showcase"
+		elif presentation_audit_mode:
+			capture_path = "res://.godot_user/captures/animation_presentation_audit_%s" % _audit_rate_label
 		output_directory = ProjectSettings.globalize_path(capture_path)
 		DirAccess.make_dir_recursive_absolute(output_directory)
-		if not presentation_capture and not grab_showcase_mode:
+		if not presentation_capture and not grab_showcase_mode and not presentation_audit_mode:
 			ClipRecorder.clip_saved.connect(_on_clip_saved)
 			ClipRecorder.clip_failed.connect(_on_clip_failed)
 			ClipRecorder._start_recording()
@@ -68,18 +94,36 @@ func _process(delta: float) -> void:
 	if capture_finished:
 		return
 	elapsed += delta
-	var duration := GRAB_SHOWCASE_DURATION if grab_showcase_mode else DURATION
+	var duration := _audit_duration if presentation_audit_mode else GRAB_SHOWCASE_DURATION if grab_showcase_mode else DURATION
 	var timeline := minf(elapsed, duration - 0.001)
-	if grab_showcase_mode:
+	if presentation_audit_mode:
+		if elapsed < DURATION:
+			_apply_timeline(minf(elapsed, DURATION - 0.001), delta)
+		else:
+			_apply_presentation_audit(elapsed - DURATION, delta)
+	elif grab_showcase_mode:
 		_apply_grab_showcase(timeline, delta)
 	else:
 		_apply_timeline(timeline, delta)
 	camera_rig._physics_process(delta)
+	if presentation_audit_mode and elapsed < DURATION:
+		_record_audit_sample("timeline", "production", _timeline_audit_label(elapsed), elapsed)
 	var review_times: Array[float] = GRAB_SHOWCASE_REVIEW_TIMES if grab_showcase_mode else REVIEW_TIMES
-	if capture_mode and review_index < review_times.size() and elapsed >= review_times[review_index]:
+	if capture_mode and not presentation_audit_mode and review_index < review_times.size() and elapsed >= review_times[review_index]:
 		_capture_review_frame(review_index)
 		review_index += 1
-	if grab_showcase_mode and elapsed >= duration:
+	# The audit records every timeline frame in JSON. Keep PNG readbacks focused
+	# on the fixed pose/view holds so multi-rate evidence remains practical.
+	if presentation_audit_mode:
+		while _audit_capture_index < _audit_capture_schedule.size() and elapsed >= float(_audit_capture_schedule[_audit_capture_index].time):
+			_capture_audit_frame(str(_audit_capture_schedule[_audit_capture_index].label))
+			_audit_capture_index += 1
+	if presentation_audit_mode and elapsed >= duration:
+		_write_presentation_audit_json()
+		capture_finished = true
+		print("ANIMATION_PRESENTATION_AUDIT_CAPTURED: %s" % output_directory)
+		get_tree().quit(0)
+	elif grab_showcase_mode and elapsed >= duration:
 		capture_finished = true
 		print("PRODUCTION_GRAB_SHOWCASE_CAPTURED: %s" % output_directory)
 		get_tree().quit(0)
@@ -87,15 +131,219 @@ func _process(delta: float) -> void:
 		capture_finished = true
 		print("CHARACTER_PRESENTATION_CAPTURED: %s" % output_directory)
 		get_tree().quit(0)
-	elif capture_mode and elapsed >= duration and ClipRecorder._recording:
+	elif capture_mode and not presentation_audit_mode and elapsed >= duration and ClipRecorder._recording:
 		ClipRecorder._stop_recording()
-	if capture_mode and not presentation_capture and not grab_showcase_mode and elapsed > duration + 12.0:
+	if capture_mode and not presentation_capture and not grab_showcase_mode and not presentation_audit_mode and elapsed > duration + 12.0:
 		push_error("SILHOUETTE_INSPECTION_FAIL: capture did not finish")
 		get_tree().quit(1)
 	elif not capture_mode and elapsed >= duration:
 		elapsed = 0.0
 		previous_stage = -1
 		rig.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
+
+func _argument_value(prefix: String, fallback: String) -> String:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with(prefix):
+			return argument.trim_prefix(prefix)
+	return fallback
+
+func _grab_pose_ids() -> Array[int]:
+	var pose_ids: Array[int] = []
+	var definitions: Array = AUDIT_GRAB_LIBRARY.get("definitions") as Array
+	for definition: Resource in definitions:
+		if definition == null:
+			continue
+		var pose := int(definition.get("pose_id"))
+		if pose != TrickController.GrabPose.NONE and not pose_ids.has(pose):
+			pose_ids.append(pose)
+	pose_ids.sort()
+	return pose_ids
+
+func _configure_presentation_audit() -> void:
+	var segment_count := _audit_pose_ids.size() * AUDIT_VIEWS.size() + AUDIT_STYLE_POSES.size() * AUDIT_VIEWS.size()
+	_audit_duration = DURATION + 0.2 + float(segment_count) * AUDIT_SEGMENT_DURATION
+	_audit_capture_schedule.clear()
+	for segment: int in segment_count:
+		var grab_view_count := _audit_pose_ids.size() * AUDIT_VIEWS.size()
+		var label := "segment_%02d" % segment
+		if segment < grab_view_count:
+			var pose := _audit_pose_ids[segment / AUDIT_VIEWS.size()]
+			var view := AUDIT_VIEWS[segment % AUDIT_VIEWS.size()]
+			label = "grab_%02d_%s_%s_hold.png" % [pose, TrickController.GRAB_NAMES[pose].to_lower().replace(" ", "_"), view]
+		else:
+			var style_segment := segment - grab_view_count
+			var style := AUDIT_STYLE_POSES[style_segment / AUDIT_VIEWS.size()]
+			var style_view := AUDIT_VIEWS[style_segment % AUDIT_VIEWS.size()]
+			label = "style_%02d_%s_%s_hold.png" % [style, TrickController.STYLE_NAMES[style].to_lower().replace(" ", "_"), style_view]
+		_audit_capture_schedule.append({
+			"time": DURATION + 0.2 + float(segment) * AUDIT_SEGMENT_DURATION + 0.70,
+			"label": label,
+		})
+
+func _apply_presentation_audit(matrix_time: float, delta: float) -> void:
+	if not _audit_matrix_started:
+		_audit_matrix_started = true
+		rig.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
+		skier.position = Vector3(0.0, 1.0, -0.2)
+		_audit_previous_rotations.clear()
+	frame.reset()
+	frame.speed_mps = 18.0
+	frame.speed_ratio = 0.82
+	var segment := clampi(int(maxf(matrix_time - 0.2, 0.0) / AUDIT_SEGMENT_DURATION), 0, _audit_capture_schedule.size() - 1)
+	var segment_time := fmod(maxf(matrix_time - 0.2, 0.0), AUDIT_SEGMENT_DURATION)
+	var phase_name := "setup"
+	if segment_time >= 0.18 and segment_time < 0.45:
+		phase_name = "reach"
+	elif segment_time < 0.88:
+		phase_name = "hold"
+	elif segment_time < 1.06:
+		phase_name = "release"
+	else:
+		phase_name = "recovery"
+	var phase_progress := clampf(segment_time / AUDIT_SEGMENT_DURATION, 0.0, 1.0)
+	var view_index := segment % AUDIT_VIEWS.size()
+	var grab_view_count := _audit_pose_ids.size() * AUDIT_VIEWS.size()
+	var pose_id := TrickController.GrabPose.NONE
+	var style_id := TrickController.StylePose.NONE
+	var subject_name := "style"
+	if segment < grab_view_count:
+		pose_id = _audit_pose_ids[segment / AUDIT_VIEWS.size()]
+		subject_name = TrickController.GRAB_NAMES[pose_id]
+		frame.grab_pose = pose_id if phase_name == "reach" or phase_name == "hold" else TrickController.GrabPose.NONE
+		frame.grab_amount = 1.0 if phase_name == "hold" else smoothstep(0.0, 1.0, clampf((segment_time - 0.18) / 0.27, 0.0, 1.0)) if phase_name == "reach" else 0.0
+		frame.grab_input_strength = frame.grab_amount
+		frame.grab_hold_time = maxf(0.0, segment_time - 0.45)
+		frame.grab_release_time = maxf(0.0, segment_time - 0.88)
+		frame.trick_phase = TrickCommand.PresentationPhase.RELEASE if phase_name == "release" else TrickCommand.PresentationPhase.OPEN if phase_name == "recovery" else TrickCommand.PresentationPhase.GRAB
+	else:
+		var style_segment := segment - grab_view_count
+		style_id = AUDIT_STYLE_POSES[style_segment / AUDIT_VIEWS.size()]
+		subject_name = TrickController.STYLE_NAMES[style_id]
+		frame.style_pose = style_id if phase_name != "release" and phase_name != "recovery" else TrickController.StylePose.NONE
+		frame.style_amount = 1.0 if phase_name == "hold" else smoothstep(0.0, 1.0, clampf((segment_time - 0.18) / 0.27, 0.0, 1.0)) if phase_name == "reach" else 0.0
+		frame.trick_phase = TrickCommand.PresentationPhase.OPEN if phase_name == "recovery" else TrickCommand.PresentationPhase.GRAB
+	_set_air(0.68, 0.42)
+	skier.position.y = 1.0
+	_grab_showcase_root_heading = lerp_angle(
+		_grab_showcase_root_heading,
+		AUDIT_VIEW_HEADINGS[view_index],
+		1.0 - exp(-8.0 * delta)
+	)
+	skier.rotation.y = _grab_showcase_root_heading
+	frame.ski_forward = -skier.global_basis.z
+	frame.ski_up = skier.global_basis.y
+	frame.body_up = skier.global_basis.y
+	frame.angular_velocity_world = skier.global_basis * frame.angular_velocity
+	rig.apply_frame(frame, delta)
+	_record_audit_sample(subject_name, AUDIT_VIEWS[view_index], phase_name, DURATION + 0.2 + matrix_time)
+
+func _timeline_audit_label(time: float) -> String:
+	for index: int in REVIEW_TIMES.size():
+		if time <= REVIEW_TIMES[index] + 0.35:
+			return REVIEW_LABELS[index]
+	return "runout"
+
+func _record_audit_sample(subject_name: String, view_name: String, phase_name: String, sample_time: float) -> void:
+	if rig == null:
+		return
+	var snapshot := rig.debug_snapshot()
+	var attachment := rig.equipment_attachment_snapshot()
+	var current_rotations := {
+		"torso": snapshot.get("chest_rotation", Vector3.ZERO),
+		"left_shoulder": snapshot.get("left_shoulder_rotation", Vector3.ZERO),
+		"right_shoulder": snapshot.get("right_shoulder_rotation", Vector3.ZERO),
+		"left_knee": snapshot.get("left_knee_rotation", Vector3.ZERO),
+		"right_knee": snapshot.get("right_knee_rotation", Vector3.ZERO),
+		"head": snapshot.get("head_rotation", Vector3.ZERO),
+	}
+	var motion: Dictionary = {}
+	for key: String in current_rotations:
+		var value := current_rotations[key] as Vector3
+		var previous := _audit_previous_rotations.get(key, value) as Vector3
+		motion["%s_delta" % key] = value.distance_to(previous)
+		_audit_previous_rotations[key] = value
+	var max_pole_offset := 0.0
+	var max_boot_gap := 0.0
+	if bool(attachment.get("valid", false)):
+		max_pole_offset = maxf(float(attachment.get("left_pole_hand_offset_m", 0.0)), float(attachment.get("right_pole_hand_offset_m", 0.0)))
+		max_boot_gap = maxf(float(attachment.get("left_boot_binding_position_error", 0.0)), float(attachment.get("right_boot_binding_position_error", 0.0)))
+	var terrain_clearance = null
+	if str(snapshot.get("state", "")) in ["GROUND", "GRIND"]:
+		terrain_clearance = minf(absf(float(snapshot.get("left_gap", 0.0))), absf(float(snapshot.get("right_gap", 0.0))))
+	var finite := true
+	for value_key: String in ["grab_reach_error", "grab_contact_weight", "landing_compression", "landing_recovery", "left_boot_binding_position_error", "right_boot_binding_position_error", "left_gap", "right_gap"]:
+		if not _audit_value_is_finite(snapshot.get(value_key, 0.0)):
+			finite = false
+	_audit_samples.append({
+			"time_s": snappedf(sample_time, 0.001),
+			"subject": subject_name,
+			"view": view_name,
+			"phase": phase_name,
+			"pose_owner": str(snapshot.get("pose_owner", "")),
+			"state": str(snapshot.get("state", "")),
+			"hand_to_target_error_m": float(snapshot.get("grab_reach_error", 0.0)),
+			"grab_contact_weight": float(snapshot.get("grab_contact_weight", 0.0)),
+			"contact_latched": float(snapshot.get("grab_contact_weight", 0.0)) > 0.2,
+			"pole_to_hand_offset_m": max_pole_offset,
+			"pole_continuity_ok": max_pole_offset <= 1.6,
+			"boot_binding_gap_m": max_boot_gap,
+			"torso_motion_delta_rad": float(motion.get("torso_delta", 0.0)),
+			"shoulder_motion_delta_rad": maxf(float(motion.get("left_shoulder_delta", 0.0)), float(motion.get("right_shoulder_delta", 0.0))),
+			"knee_motion_delta_rad": maxf(float(motion.get("left_knee_delta", 0.0)), float(motion.get("right_knee_delta", 0.0))),
+			"head_motion_delta_rad": float(motion.get("head_delta", 0.0)),
+			"landing_handoff_timing": {
+				"phase": str(snapshot.get("landing_phase", "Idle")),
+				"blend": float(snapshot.get("landing_blend", 0.0)),
+				"alignment": float(snapshot.get("landing_alignment", 0.0)),
+				"anticipation": float(snapshot.get("landing_anticipation", 0.0)),
+			},
+			"landing_compression": float(snapshot.get("landing_compression", 0.0)),
+			"landing_recovery": float(snapshot.get("landing_recovery", 0.0)),
+			"minimum_inversion_clearance_m": _minimum_inversion_clearance if is_finite(_minimum_inversion_clearance) else null,
+			"terrain_clearance_m": terrain_clearance,
+			"production_skeleton": str(snapshot.get("rig_adapter", "")) == "skeleton",
+			"finite_transforms": finite,
+			"state_transition_valid": float(snapshot.get("transition_progress", 0.0)) >= -0.001 and float(snapshot.get("transition_progress", 0.0)) <= 1.001,
+		})
+
+func _audit_value_is_finite(value) -> bool:
+	if value is Vector3:
+		return (value as Vector3).is_finite()
+	if value is float or value is int:
+		return is_finite(float(value))
+	return true
+
+func _capture_audit_frame(label: String) -> void:
+	if OS.has_feature("headless") or DisplayServer.get_name() == "headless":
+		return
+	RenderingServer.force_draw(true)
+	var viewport_texture := get_viewport().get_texture()
+	if viewport_texture == null:
+		return
+	var image := viewport_texture.get_image()
+	if image == null or image.is_empty():
+		return
+	image.resize(960, 540, Image.INTERPOLATE_BILINEAR)
+	image.save_png(output_directory.path_join(label))
+
+func _write_presentation_audit_json() -> void:
+	var payload := {
+		"format": "animation_presentation_audit_v1",
+		"rate_hint": _audit_rate_label,
+		"duration_s": _audit_duration,
+		"supported_grabs": _audit_pose_ids,
+		"supported_styles": AUDIT_STYLE_POSES,
+		"views": AUDIT_VIEWS,
+		"capture_count": _audit_capture_schedule.size(),
+		"samples": _audit_samples,
+	}
+	var path := output_directory.path_join("animation_presentation_audit.json")
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: could not open %s" % path)
+		return
+	file.store_string(JSON.stringify(payload, "\t"))
+	file.close()
 
 func _apply_grab_showcase(time: float, delta: float) -> void:
 	frame.reset()
@@ -398,13 +646,18 @@ func _apply_inspection_root_motion(time: float) -> void:
 	skier.position.y = root_height
 
 func _capture_review_frame(index: int) -> void:
+	if OS.has_feature("headless") or DisplayServer.get_name() == "headless":
+		return
 	RenderingServer.force_draw(true)
-	var image := get_viewport().get_texture().get_image()
+	var viewport_texture := get_viewport().get_texture()
+	if viewport_texture == null:
+		return
+	var image := viewport_texture.get_image()
 	if image == null or image.is_empty():
 		return
 	image.resize(960, 540, Image.INTERPOLATE_BILINEAR)
 	var label: String = GRAB_SHOWCASE_REVIEW_LABELS[index] if grab_showcase_mode else REVIEW_LABELS[index] if index < REVIEW_LABELS.size() else "pose"
-	var filename := "character_%02d_%s.png" % [index + 1, label] if presentation_capture else "grab_%02d_%s.png" % [index + 1, label] if grab_showcase_mode else "silhouette_%02d.png" % (index + 1)
+	var filename := "audit_timeline_%02d_%s.png" % [index + 1, label] if presentation_audit_mode else "character_%02d_%s.png" % [index + 1, label] if presentation_capture else "grab_%02d_%s.png" % [index + 1, label] if grab_showcase_mode else "silhouette_%02d.png" % (index + 1)
 	image.save_png(output_directory.path_join(filename))
 
 func _on_clip_saved(path: String) -> void:
@@ -487,19 +740,20 @@ func _configure_capture_camera() -> void:
 	# changing the gameplay camera resource. The regular silhouette timeline uses
 	# the same close subject scale as the production grab artifact, while the grab
 	# branch retains a little extra distance for hand-to-ski contact.
-	camera_rig.follow_distance = 3.85 if grab_showcase_mode else 3.65
-	camera_rig.follow_height = 1.12 if grab_showcase_mode else 1.16
+	var close_character_capture := grab_showcase_mode or presentation_audit_mode
+	camera_rig.follow_distance = 3.85 if close_character_capture else 3.65
+	camera_rig.follow_height = 1.12 if close_character_capture else 1.16
 	camera_rig.speed_distance_gain = 0.0
 	camera_rig.speed_height_gain = 0.0
 	camera_rig.air_distance_delta = 0.0
 	camera_rig.air_height_delta = 0.0
-	camera_rig.air_height = 0.12 if grab_showcase_mode else 0.18
-	camera_rig.base_fov = 58.0 if grab_showcase_mode else 60.0
+	camera_rig.air_height = 0.12 if close_character_capture else 0.18
+	camera_rig.base_fov = 58.0 if close_character_capture else 60.0
 	camera_rig.speed_fov_gain = 0.0
-	camera_rig.look_ahead_min = 1.0 if grab_showcase_mode else 0.8
-	camera_rig.look_ahead_max = 6.0 if grab_showcase_mode else 4.0
-	camera_rig.look_ahead_gain = 0.12 if grab_showcase_mode else 0.08
-	camera_rig.composition_inner_rect = Rect2(0.18, 0.15, 0.64, 0.62) if grab_showcase_mode else Rect2(0.2, 0.15, 0.6, 0.64)
+	camera_rig.look_ahead_min = 1.0 if close_character_capture else 0.8
+	camera_rig.look_ahead_max = 6.0 if close_character_capture else 4.0
+	camera_rig.look_ahead_gain = 0.12 if close_character_capture else 0.08
+	camera_rig.composition_inner_rect = Rect2(0.18, 0.15, 0.64, 0.62) if close_character_capture else Rect2(0.2, 0.15, 0.6, 0.64)
 	camera_rig.composition_hard_rect = Rect2(0.05, 0.05, 0.9, 0.9)
 
 func _set_inspection_rail_visible(visible: bool) -> void:

@@ -36,6 +36,7 @@ var _profile_process_max_usec := 0
 var _mix_solver := AudioMixSolverModule.new()
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Headless acceptance runs do not have a listener or an audio device. Avoid
 	# creating an AudioStreamGeneratorPlayback in that mode: the engine keeps a
 	# short-lived playback reference in the audio server until the process exits,

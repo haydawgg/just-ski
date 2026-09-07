@@ -14,7 +14,7 @@ func evaluate(
 	body_basis: Basis,
 	velocity_fallback: Vector3
 ) -> CrashContext:
-	if state not in [0, 1]:
+	if state not in [0, 1, 2]:
 		return null
 	for diagnostic: Dictionary in diagnostics:
 		if (int(diagnostic.get("collider_layer", 0)) & 4) == 0:

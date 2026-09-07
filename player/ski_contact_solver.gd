@@ -10,6 +10,7 @@ const NORMAL_DISAGREEMENT_SOFT := 0.08
 const NORMAL_DISAGREEMENT_HARD := 0.5
 const DISTANCE_DISCONTINUITY_SOFT := 0.12
 const DISTANCE_DISCONTINUITY_HARD := 0.5
+const DEFAULT_MAX_GROUND_ANGLE_DEGREES := 62.0
 ## Fallback for direct solver callers that do not have a physics profile. The
 ## production controller supplies the same geometry from SkiPhysicsProfile.
 const PROBE_OFFSETS := [
@@ -67,6 +68,11 @@ func sample(
 	probe_origin_height: float = 0.35
 ) -> void:
 	grounded_band = maxf(band, 0.05)
+	# These values describe this sample only. last_normal remains the probe
+	# direction fallback when no terrain ray returns a hit.
+	average_normal = Vector3.UP
+	average_distance = distance
+	average_hit_position = Vector3.ZERO
 	var active_probe_offsets := PROBE_OFFSETS if probe_offsets.is_empty() else probe_offsets
 	var safe_probe_origin_height := maxf(probe_origin_height, 0.0)
 	var previous_left_distance := left_distance
@@ -202,6 +208,9 @@ func sample(
 		right_grounded = right_distance <= grounded_band
 	confidence = float(hit_points.size()) / maxf(float(active_probe_offsets.size()), 1.0)
 	grounded = confidence >= 0.5 and average_distance <= grounded_band
+	if normal_sum.length_squared() > 0.0001:
+		average_normal = normal_sum.normalized()
+		last_normal = average_normal
 	left_contact_confidence = _side_contact_confidence(
 		left_front_valid, left_rear_valid,
 		left_front_distance, left_rear_distance,
@@ -219,8 +228,6 @@ func sample(
 	_left_had_contact = left_front_valid or left_rear_valid
 	_right_had_contact = right_front_valid or right_rear_valid
 	if grounded:
-		average_normal = normal_sum.normalized()
-		last_normal = average_normal
 		var most_hits := 0
 		for kind: int in range(surface_counts.size()):
 			if surface_counts[kind] > most_hits:
@@ -282,12 +289,18 @@ func _side_contact_confidence(
 	var grounded_quality := 1.0 if authoritative_grounded and side_is_grounded else (0.3 if side_is_grounded else 0.0)
 	return clampf(coverage * distance_quality * height_quality * normal_quality * continuity_quality * grounded_quality, 0.0, 1.0)
 
-func merge_capsule_floor(on_floor: bool, floor_normal: Vector3) -> void:
+func merge_capsule_floor(
+	on_floor: bool,
+	floor_normal: Vector3,
+	maximum_ground_angle_degrees: float = DEFAULT_MAX_GROUND_ANGLE_DEGREES
+) -> void:
 	if grounded:
 		return
 	if not on_floor or floor_normal.length_squared() < 0.01:
 		return
-	if floor_normal.dot(Vector3.UP) < 0.35:
+	var bounded_angle := clampf(maximum_ground_angle_degrees, 0.0, 89.0)
+	var minimum_up_dot := cos(deg_to_rad(bounded_angle))
+	if floor_normal.normalized().dot(Vector3.UP) < minimum_up_dot:
 		return
 	grounded = true
 	average_normal = floor_normal.normalized()

@@ -93,6 +93,8 @@ static func _build_production_feature(parent: Node3D, spec: Dictionary, physics_
 	instance.set_meta("asset_id", asset_id)
 	instance.set_meta("asset_source", "production_scene")
 	instance.set_meta("accent_color", spec.get("color", readability.get("guide_color", Color("#55d6be"))))
+	if definition != null:
+		instance.set_meta("lod_distances_m", definition.lod_distances_m)
 	var collision_root: Node
 	if definition != null and definition.collision_scene != null:
 		collision_root = definition.collision_scene.instantiate()
@@ -100,6 +102,8 @@ static func _build_production_feature(parent: Node3D, spec: Dictionary, physics_
 			collision_root.name = "%s_Collision" % asset_id
 			instance.add_child(collision_root)
 	parent.add_child(instance)
+	if instance.has_method("build_now"):
+		instance.call("build_now")
 	if collision_root != null:
 		_configure_production_collision(collision_root, definition.asset_class, asset_id)
 	if definition != null:

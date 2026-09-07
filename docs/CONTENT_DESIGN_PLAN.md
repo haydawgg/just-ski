@@ -2,6 +2,14 @@
 
 > Implementation status (2026-09-04): the six-spot data pass, semantic metadata, runtime propagation, optional challenges, opt-in Session Yard profile, local telemetry, and automated content acceptance coverage are implemented. The capability audit found no M1 criterion that requires a new geometry kind: the existing profiled side hit, berm, tabletop, and multi-point rail builders cover the current layouts. Clean-player human playtests and reviewed preview screenshots remain acceptance gates; typed `ParkFeatureSpec` migration and default-menu exposure of Session Yard intentionally wait for those results. See `docs/CONTENT_PASS_IMPLEMENTATION.md`.
 
+## Current automated status and human gates
+
+This file is a design specification plus historical implementation record. The M2 metadata/spot work, M4 optional challenges, M5 opt-in Session Yard, and M6 local telemetry described below are structurally implemented and covered by automated acceptance. Their design intent remains useful, but their old imperative wording must not be read as an instruction to rebuild those systems.
+
+The current non-human work is deterministic animation presentation QA and catalog-backed lower-run/hub dressing. The audit covers all supported grabs and style poses at 30, 60, and 120 Hz from four fixed views; the art pass checks deterministic placement, grounding, non-collision decoration, catalog LOD contracts, and unchanged feature/collision ownership. Evidence is generated under `.godot_user/captures/` and `world/generated/`, both ignored.
+
+Human-only gates remain open: controller hardware, subjective skiing/camera/landing/rail feel, clean-player route readability, unusual grab combinations, final cloth/pole review, target-display/GPU review, and long-session validation. Typed `ParkFeatureSpec` migration, default Session Yard menu exposure, and new geometry remain deferred until their stated gates are met.
+
 This plan defines the next content-design phase for Summit Sessions. The goal is to get more value out of the existing skiing, trick, rail, landing, scoring, marker, and procedural-course systems before expanding into large new product systems.
 
 The guiding product loop is:
@@ -269,15 +277,15 @@ Turn `StepDownTable`, `FinalCannon`, `FinalBox`, `FinalDFDRail`, `FinalCatchBerm
 
 ---
 
-# Milestone 2 — Add content semantics and designer-facing structure
+# Milestone 2 — Content semantics and designer-facing structure (implemented structural pass)
 
 **Priority: P0/P1**
 
-The current dictionary-based `feature_specs()` is useful for fast iteration, but it carries too little semantic information for a richer park. Add metadata before adding a challenge system or larger resort.
+The current dictionary-based `feature_specs()` remains the runtime source shape, but the semantic metadata and spot definitions required by this milestone are implemented and propagated through the builders. The typed-resource migration remains intentionally deferred until human acceptance stabilizes the field set.
 
-## M2.1 — Extend feature metadata
+## M2.1 — Extend feature metadata (implemented)
 
-Add backward-compatible spec fields such as:
+The implemented pass carries backward-compatible fields such as:
 
 ```text
 spot_id
@@ -315,9 +323,9 @@ style
 
 ---
 
-## M2.2 — Add spot definitions
+## M2.2 — Add spot definitions (implemented)
 
-Introduce a lightweight spot definition owned by the course profile. A spot should contain at minimum:
+The course profile now owns lightweight spot definitions. A spot contains at minimum:
 
 ```text
 id
@@ -436,19 +444,19 @@ Possible implementation approaches:
 
 ---
 
-# Milestone 4 — Add optional spot and line challenges
+# Milestone 4 — Optional spot and line challenges (implemented)
 
 **Priority: P1**
 
-Challenges should teach possibilities and create goals without turning the game into a locked campaign.
+Challenges teach possibilities and create goals without turning the game into a locked campaign. The current definitions and evaluator implement this milestone.
 
 ## Design rule
 
 Challenges are suggestions, not gates. A player should always be able to ignore them and free ski.
 
-## M4.1 — Challenge definition data
+## M4.1 — Challenge definition data (implemented)
 
-Add challenge definitions that reference stable `spot_id` and feature IDs rather than node paths.
+Challenge definitions reference stable `spot_id` and feature IDs rather than node paths.
 
 Useful condition types:
 
@@ -527,11 +535,11 @@ Avoid a large mission UI until playtests prove players want it.
 
 ---
 
-# Milestone 5 — Dedicated session content
+# Milestone 5 — Dedicated session content (implemented opt-in)
 
 **Priority: P2 after the main resort proves the design**
 
-Build a compact `Session Yard` only after M1 playtests confirm that players enjoy staying at individual spots.
+The compact `Session Yard` profile is implemented as opt-in content. It remains hidden from default progression/menu exposure until M1 clean-player playtests confirm that players enjoy staying at individual spots.
 
 The Session Yard should maximize attempts per minute rather than simulate a full downhill run.
 
@@ -607,25 +615,21 @@ A strong spot should show:
 
 ---
 
-# Recommended implementation order
+# Current status and next gates
 
-Use this order unless playtesting reveals a blocker:
+The previous implementation-order list is historical and is retained only by the milestone sections above. It is not a current work queue: M2 metadata, M4 challenges, M5 Session Yard structure, and M6 telemetry are already implemented.
 
-```text
-1. M1 Summit Fundamentals
-2. M1 Upper Fork
-3. M1 Technical Yard
-4. M1 Transfer Zone
-5. M1 Lower Hero Spot
-6. M1 Finale
-7. M2 feature + spot metadata
-8. playtest the complete redesigned resort
-9. M3 only the new feature kinds that the playtest still needs
-10. M4 optional challenges
-11. M5 Session Yard
-```
+| Gate | Status | Evidence or dependency |
+| --- | --- | --- |
+| Automated content metadata/challenges/Session Yard contracts | Complete | Content, runtime, challenge, session-flow, and static acceptance scenes |
+| Deterministic animation presentation QA | Complete for automated coverage | Multi-angle audit JSON/stills at 30/60/120 Hz; human visual acceptance remains open |
+| Lower-run/hub procedural dressing and catalog LOD contract | Complete for automated coverage | Environment production/visual acceptance and ignored resort previews |
+| Clean-player acceptance of six spots and generated previews | Deferred | Requires human gameplay sessions and sight-line review |
+| Typed `ParkFeatureSpec` migration | Deferred | Wait for stable fields after clean-player acceptance |
+| Default Session Yard menu/progression exposure | Deferred | Wait for main-resort content gate |
+| New spine/bank/stair geometry | Deferred | Add only if accepted lines prove current procedural vocabulary insufficient |
 
-Do not implement all new feature types before the M1 redesign. The existing vocabulary is already broad enough to prove whether the spot/line philosophy works.
+The next actionable work is the human acceptance pass when a player or target display becomes available. Until then, do not mark controller feel, subjective presentation, unusual grabs, cloth/pole review, target GPU, or long-session behavior complete.
 
 ---
 
@@ -666,15 +670,6 @@ The current priority is to prove that one resort can remain interesting because 
 
 ---
 
-# First implementation slice
+# Historical first implementation slice
 
-The best first code/content change is deliberately small:
-
-1. Rework only the **Summit Fundamentals** and **Upper Fork** feature positions/specs in `ParkCourseProfile.feature_specs()`.
-2. Do not change physics or trick tuning.
-3. Bake the resort preview and review sight lines/spacing.
-4. Run the full quality gate.
-5. Playtest whether a new player can identify the safe route and whether an experienced player can find at least one crossover/transfer.
-6. Iterate geometry before continuing farther downhill.
-
-If that slice works, apply the same design rules to the Technical Yard, Transfer Zone, Lower Hero Spot, and Finale.
+The original Summit Fundamentals/Upper Fork slice has been superseded by the implemented six-spot content pass and deterministic evidence work. Keep the slice criteria as design intent for the later clean-player review, but do not treat this section as an instruction to rework only those two areas or to mark the remaining human gates complete without playtesting.

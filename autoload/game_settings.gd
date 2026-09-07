@@ -1,6 +1,7 @@
 extends Node
 
 signal settings_applied
+signal settings_saved
 signal settings_save_failed(error: Error)
 
 const CONFIG_PATH := "user://settings.cfg"
@@ -80,15 +81,16 @@ static func graphics_preset_allows_gi(preset: int) -> bool:
 	# and Custom may use GI when the environment profile and user setting allow it.
 	return clampi(preset, 0, 4) >= 2
 
-func apply_pending() -> void:
+func apply_pending() -> Error:
 	active = _validated_settings(pending)
 	pending = active.duplicate(true)
 	_apply_display()
 	_apply_audio()
-	var save_error := save_settings()
+	var save_error := save_settings(CONFIG_PATH, false)
 	if save_error != OK:
 		push_warning("GAME_SETTINGS_SAVE_WARNING: Active settings were applied but could not be persisted (%s)" % error_string(save_error))
 	settings_applied.emit()
+	return save_error
 
 func apply_preset(preset: int) -> void:
 	var selected_preset := clampi(preset, 0, 4)
@@ -109,14 +111,17 @@ func apply_preset(preset: int) -> void:
 	pending["fog_enabled"] = selected_preset >= 1
 	pending["gi_enabled"] = graphics_preset_allows_gi(selected_preset)
 
-func save_settings(path: String = CONFIG_PATH) -> Error:
+func save_settings(path: String = CONFIG_PATH, warn_on_failure := true) -> Error:
 	var config := ConfigFile.new()
 	for key: String in active.keys():
 		config.set_value("settings", key, active[key])
 	var error := config.save(path)
 	if error != OK:
-		push_warning("GAME_SETTINGS_SAVE_ERROR: Could not save settings (%s)" % error_string(error))
+		if warn_on_failure:
+			push_warning("GAME_SETTINGS_SAVE_ERROR: Could not save settings (%s)" % error_string(error))
 		settings_save_failed.emit(error)
+	else:
+		settings_saved.emit()
 	return error
 
 func _validated(key: String, value: Variant) -> Variant:

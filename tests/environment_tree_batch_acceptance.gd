@@ -30,6 +30,7 @@ func _ready() -> void:
 			continue
 		if tree.find_children("*", "CollisionShape3D", true, false).is_empty():
 			failures.append("A batched tree lost its independent collision companion")
+	await _test_repeated_commit_does_not_duplicate_placements()
 	if failures.is_empty():
 		print("ENVIRONMENT_TREE_BATCH_PASS: deterministic tree collisions use a bounded MultiMesh render batch")
 		AudioManager.shutdown_audio()
@@ -39,3 +40,18 @@ func _ready() -> void:
 		push_error("ENVIRONMENT_TREE_BATCH_FAIL: " + failure)
 	AudioManager.shutdown_audio()
 	get_tree().quit(1)
+
+func _test_repeated_commit_does_not_duplicate_placements() -> void:
+	var batch := ParkTreeBatch.new()
+	add_child(batch)
+	batch.add_tree(Transform3D(Basis.IDENTITY, Vector3.ZERO))
+	batch.commit()
+	await get_tree().process_frame
+	batch.add_tree(Transform3D(Basis.IDENTITY, Vector3(2.0, 0.0, 0.0)))
+	batch.commit()
+	await get_tree().process_frame
+	for node: Node in batch.find_children("*", "MultiMeshInstance3D", true, false):
+		var render := node as MultiMeshInstance3D
+		if render != null and render.multimesh != null and render.multimesh.instance_count != 1:
+			failures.append("Repeated tree-batch commit accumulated stale placements")
+	batch.queue_free()
