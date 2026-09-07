@@ -1147,7 +1147,10 @@ func _update_grab_contact_latch(frame: SkierAnimationFrame, delta: float) -> voi
 			reach_error
 		)
 	var contact_target := 1.0 if _grab_contact_latched else 0.0
-	_grab_contact_weight = _damp(_grab_contact_weight, contact_target, profile.grab_contact_response, delta)
+	var contact_response := profile.grab_contact_response
+	if _grab_definition != null:
+		contact_response *= clampf(float(_grab_definition.contact_response_scale), 0.25, 3.0)
+	_grab_contact_weight = _damp(_grab_contact_weight, contact_target, contact_response, delta)
 	_grab_phase_name = _grab_pose_layer.phase_name(
 		_grab_definition,
 		_grab_pose_weight,

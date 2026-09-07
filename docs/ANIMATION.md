@@ -199,13 +199,37 @@ For deterministic visual review, generate the silhouette comparison with:
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-silhouette-showcase
 ```
 
-For a focused production contact review, use the capture-only grab showcase. It writes deterministic stills for Mute, Japan, Tail, Nose, and Double to `.godot_user/captures/production_grab_showcase`:
+For a focused production contact review, use the capture-only grab showcase. It writes deterministic stills for the five representative production poses Mute, Japan, Tail, Nose, and Double to `.godot_user/captures/production_grab_showcase`:
 
 ```powershell
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-production-grab-showcase
 ```
 
 Output is written under `.godot_user/captures/`.
+
+For the complete presentation audit, run all supported production grabs from
+`default_grab_animation_library.tres` and all four style poses through setup,
+reach, hold/contact, release, and recovery from four fixed views at 30, 60, and
+120 Hz:
+
+```powershell
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-animation-presentation-audit --audit-fps=30
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 60 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-animation-presentation-audit --audit-fps=60
+.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 120 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-animation-presentation-audit --audit-fps=120
+```
+
+Each run writes `animation_presentation_audit.json` and fixed hold stills under
+`.godot_user/captures/animation_presentation_audit_<fps>/`. The JSON records the
+pose, view, phase, hand-to-target error/contact state, pole-to-hand continuity,
+boot/binding gap, torso/shoulder/knee/head motion deltas, landing handoff and
+compression/recovery fields, inversion and terrain-clearance telemetry, finite
+transform status, and state-transition validity. The acceptance scene also
+checks final hold reach against the existing `0.12 m` maintenance envelope,
+equipment attachment, landing handoff, and frame-rate-normalized continuity.
+
+This is automated evidence only. Controller hardware, subjective skiing and
+camera feel, unusual grab combinations, final cloth/pole visual review,
+target-display/GPU review, and long-session validation remain human-only gates.
 
 ### Presentation audit follow-up (2026-09-06)
 
@@ -237,9 +261,11 @@ checks is not a claim that every pose is artistically finished.
 
 The new `animation_presentation_quality_acceptance.tscn` covers moving contact,
 production boot/pelvis agreement, visible compression, bounded grab torso
-assistance, flip rhythm, and slope-tangent contact advection. It is included in
-the 16-scene animation runtime shard. Environment inspection also writes JSON
-beside each image with contact and presentation measurements.
+assistance, all supported production grabs, all style poses, final contact
+reach, landing handoff, flip rhythm, and slope-tangent contact advection. It is
+included in the 16-scene animation runtime shard. The silhouette inspection
+audit writes JSON beside its fixed images with contact and presentation
+measurements.
 
 Verification for this pass: animation runtime shard, terrain suspension course,
 crest unweighting acceptance, ground hover probe, and the static gate. Rendered

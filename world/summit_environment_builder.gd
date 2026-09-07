@@ -212,11 +212,15 @@ static func _instantiate_catalog_asset(parent: Node3D, catalog: EnvironmentAsset
 	instance.set_meta("asset_id", asset_id)
 	instance.set_meta("asset_source", "production_scene")
 	instance.set_meta("style_variant", variant)
-	parent.add_child(instance)
 	var definition := catalog.definition_for(asset_id)
 	if definition != null:
+		instance.set_meta("lod_distances_m", definition.lod_distances_m)
 		instance.set_meta("asset_class", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
 		instance.set_meta("collision_policy", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
+	parent.add_child(instance)
+	if instance.has_method("build_now"):
+		instance.call("build_now")
+	if definition != null:
 		for reason: String in definition.validate_instance(instance):
 			if catalog.should_use_production_scenes():
 				push_error("ENVIRONMENT_ASSET_FAIL: %s: %s" % [asset_id, reason])

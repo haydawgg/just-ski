@@ -6,6 +6,8 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 - **Crest unweighting is covered and tuned.** Production roller geometry now has deterministic front/rear contact, tip-load, vertical-response, partial-support, and runout-recontact coverage in `tests/crest_unweighting_acceptance.tscn`. The active profile uses symmetric `0.84m` front/rear probe offsets; `tip_grip_gain` remains at its existing value.
 - **Production grab contact is calibrated.** The default `Skeleton3D` adapter measures its scaled rest-pose arm lengths, follows attached equipment markers, and evaluates a calibrated palm point with `0.18 m` acquisition and `0.12 m` maintenance caps. Remaining grab presentation issues are limited to the intersections listed below.
+- **Deterministic animation presentation coverage is complete for automated gates.** All grabs in `default_grab_animation_library.tres`, all four style poses, the transition phases, fixed front/side/opposite/three-quarter views, and 30/60/120 Hz continuity are covered by `animation_presentation_quality_acceptance.tscn` and the ignored `animation_presentation_audit_<fps>` captures. This does not close human feel or final cloth/pole review.
+- **Lower-run and hub procedural dressing is contract-tested.** Deterministic catalog-backed boulders are grounded, non-colliding, outside the authored feature routes, and inherit finite ordered catalog LOD ranges. Final art direction and target-display/performance review remain open.
 
 ## Ski feel and controls
 
@@ -25,7 +27,8 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 - **Snow presentation still needs representative GPU profiling.** Fast and Premium snow compile and run, but near/far detail blending, crystal response, subsurface strength, and production GPU cost need a dedicated profiling pass.
 - **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, FPS cap, and a profile-gated GI toggle. FSR2, HDR, reflection-quality controls, and risky-resolution confirmation are not implemented.
-- **The resort is not final production art.** The summit-to-first-landing slice now has authored deterministic terrain shoulders, ridge backdrop, lift-line dressing, and cataloged boulder decorations. The lower run and hub remain graybox-oriented and still need a separate art/LOD pass plus a profiler-driven 1080p High optimization pass.
+- **The resort is not final production art.** The summit-to-first-landing slice and the lower-run/hub edge dressing now have deterministic procedural coverage. The lower run and hub remain graybox-oriented in their broader terrain/feature language and still need human art-direction review plus a profiler-driven 1080p High optimization pass.
+- **The texture-RID shutdown warning remains unresolved.** The environment capture can exit successfully while reporting seven leaked texture RIDs at renderer shutdown. This is tracked separately from animation and content acceptance.
 
 ## Audio and capture
 

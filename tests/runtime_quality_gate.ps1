@@ -5,6 +5,7 @@ param(
 	[string]$LogDirectory = "",
 	[string]$CaptureDirectory = "",
 	[string]$Shard = "",
+	[int]$FixedFps = 0,
 	[int]$TimeoutMilliseconds = 120000
 )
 
@@ -97,6 +98,7 @@ function Invoke-GodotScene {
 		[string]$WorkingDirectory,
 		[string]$Scene,
 		[int]$TimeoutMs,
+		[int]$FixedFps,
 		[string]$StdoutPath,
 		[string]$StderrPath
 	)
@@ -107,7 +109,8 @@ function Invoke-GodotScene {
 	# Headless CI must not wait on a runner-provided audio device. The runtime
 	# scenes assert gameplay/rendering behavior; audio timing is profiled in a
 	# separate non-headless diagnostic.
-	$startInfo.Arguments = '--headless --audio-driver Dummy --path "' + $escapedRoot + '" ' + $Scene
+	$fixedFpsArgument = if ($FixedFps -gt 0) { ' --fixed-fps ' + $FixedFps } else { '' }
+	$startInfo.Arguments = '--headless --audio-driver Dummy' + $fixedFpsArgument + ' --path "' + $escapedRoot + '" ' + $Scene
 	$startInfo.WorkingDirectory = $WorkingDirectory
 	$startInfo.UseShellExecute = $false
 	$startInfo.CreateNoWindow = $true
@@ -266,7 +269,7 @@ foreach ($scene in $scenes) {
 	$stdoutPath = Join-Path $LogDirectory ($safeName + ".stdout.log")
 	$stderrPath = Join-Path $LogDirectory ($safeName + ".stderr.log")
 	$sceneTimer = [System.Diagnostics.Stopwatch]::StartNew()
-	$result = Invoke-GodotScene -Executable $godot -WorkingDirectory $RepoRoot -Scene $scene -TimeoutMs $TimeoutMilliseconds -StdoutPath $stdoutPath -StderrPath $stderrPath
+	$result = Invoke-GodotScene -Executable $godot -WorkingDirectory $RepoRoot -Scene $scene -TimeoutMs $TimeoutMilliseconds -FixedFps $FixedFps -StdoutPath $stdoutPath -StderrPath $stderrPath
 	$sceneTimer.Stop()
 	$exitCode = [int]$result.ExitCode
 	$output = [string]$result.Output

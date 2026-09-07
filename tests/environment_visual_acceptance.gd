@@ -156,6 +156,7 @@ func _physics_process(_delta: float) -> void:
 	var landmarks := get_tree().get_nodes_in_group("course_landmarks")
 	if landmarks.size() < 8:
 		failures.append("Course edge lacks sparse resort scale landmarks")
+	_validate_lower_run_hub_dressing(failures)
 	var skier := resort.get_node_or_null("Skier") as SkierController
 	if skier == null:
 		failures.append("Resort did not create the skier")
@@ -208,6 +209,108 @@ func _physics_process(_delta: float) -> void:
 			push_error("ENVIRONMENT_VISUAL_FAIL: " + failure)
 		AudioManager.shutdown_audio()
 		get_tree().quit(1)
+
+func _validate_lower_run_hub_dressing(failures: Array[String]) -> void:
+	var catalog := resort.get("environment_asset_catalog") as EnvironmentAssetCatalog
+	var dressing := get_tree().get_nodes_in_group("lower_run_hub_dressing")
+	if dressing.size() < 12:
+		failures.append("Lower-run/hub dressing is incomplete (%d deterministic props; expected 12)" % dressing.size())
+	var zone_counts: Dictionary = {}
+	for node: Node in dressing:
+		var prop := node as Node3D
+		if prop == null:
+			failures.append("Lower-run/hub dressing group contains a non-spatial node")
+			continue
+		var zone := str(prop.get_meta("dressing_zone", ""))
+		zone_counts[zone] = int(zone_counts.get(zone, 0)) + 1
+		if str(prop.get_meta("asset_id", "")) != "snow_boulder":
+			failures.append("Lower-run/hub dressing used an unexpected asset: %s" % prop.get_meta("asset_id", ""))
+		if str(prop.get_meta("asset_class", "")) != "DECORATION":
+			failures.append("Lower-run/hub dressing %s is not classified as DECORATION" % prop.name)
+		if not prop.find_children("*", "CollisionObject3D", true, false).is_empty():
+			failures.append("Lower-run/hub decoration %s introduced a collision object" % prop.name)
+		var expected_position := prop.get_meta("dressing_expected_position", Vector3.INF) as Vector3
+		if expected_position.is_finite() and prop.global_position.distance_to(expected_position) > 0.01:
+			failures.append("Dressing prop %s moved away from its deterministic anchor" % prop.name)
+		if zone != "hub":
+			_validate_dressing_feature_clearance(prop, resort.get("course_profile") as ParkCourseProfile, failures)
+		var definition := catalog.definition_for(str(prop.get_meta("asset_id", ""))) if catalog != null else null
+		if definition == null:
+			failures.append("Dressing prop %s is not present in the environment catalog" % prop.name)
+			continue
+		var authored_lod := prop.get_meta("lod_distances_m", Vector3.ZERO) as Vector3
+		if authored_lod != definition.lod_distances_m:
+			failures.append("Dressing prop %s did not inherit catalog LOD distances" % prop.name)
+		var near_shadow := false
+		var far_silhouette := false
+		for mesh_node: Node in prop.find_children("*", "GeometryInstance3D", true, false):
+			var mesh := mesh_node as GeometryInstance3D
+			if mesh == null:
+				continue
+			if str(mesh.get_meta("lod_source", "")) != "catalog":
+				failures.append("Dressing mesh %s does not declare catalog-driven LOD" % mesh.get_path())
+			if mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_ON and mesh.visibility_range_begin <= 0.01 and mesh.visibility_range_end <= definition.lod_distances_m.y + 0.01:
+				near_shadow = true
+			if mesh.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_OFF and mesh.visibility_range_begin >= definition.lod_distances_m.x - 0.01 and mesh.visibility_range_end <= definition.lod_distances_m.z + 0.01:
+				far_silhouette = true
+		if not near_shadow:
+			failures.append("Dressing prop %s has no catalog-bounded near shadow mesh" % prop.name)
+		if not far_silhouette:
+			failures.append("Dressing prop %s has no catalog-bounded far silhouette" % prop.name)
+	for required_zone: String in ["lower_run", "finale", "hub"]:
+		if int(zone_counts.get(required_zone, 0)) < 4:
+			failures.append("Dressing zone %s has fewer than four deterministic props" % required_zone)
+
+func _validate_dressing_feature_clearance(prop: Node3D, course_profile: ParkCourseProfile, failures: Array[String]) -> void:
+	if course_profile == null:
+		failures.append("Dressing prop %s could not verify course corridor clearance without a course profile" % prop.name)
+		return
+	var anchor_variant: Variant = prop.get_meta("dressing_anchor_xz", Vector2.INF)
+	if not anchor_variant is Vector2:
+		failures.append("Dressing prop %s is missing its authored X/Z clearance anchor" % prop.name)
+		return
+	var anchor: Vector2 = anchor_variant
+	var nearest_distance: float = INF
+	var nearest_feature := ""
+	for spec: Dictionary in course_profile.feature_specs():
+		var distance: float = _dressing_distance_to_feature(anchor, spec)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_feature = str(spec.get("name", spec.get("kind", "feature")))
+	if nearest_distance < 5.5:
+		failures.append("Dressing prop %s is only %.2fm from the %s approach/landing corridor" % [prop.name, nearest_distance, nearest_feature])
+
+func _dressing_distance_to_feature(anchor: Vector2, spec: Dictionary) -> float:
+	var kind := str(spec.get("kind", ""))
+	var points: Array[Vector2] = []
+	if kind == "rail":
+		for point_variant in spec.get("points", []):
+			if point_variant is Vector3:
+				var point: Vector3 = point_variant
+				points.append(Vector2(point.x, point.y))
+	else:
+		var center := Vector2(float(spec.get("x", 0.0)), float(spec.get("z", 0.0)))
+		points.append(center)
+		var length := float(spec.get("length", 0.0))
+		if length > 0.0:
+			points.append(center + Vector2(0.0, length * 0.5))
+			points.append(center - Vector2(0.0, length * 0.5))
+	if points.is_empty():
+		return INF
+	var minimum := INF
+	for point in points:
+		minimum = minf(minimum, anchor.distance_to(point))
+	for index in range(points.size() - 1):
+		minimum = minf(minimum, _distance_to_segment(anchor, points[index], points[index + 1]))
+	return minimum
+
+func _distance_to_segment(point: Vector2, start: Vector2, finish: Vector2) -> float:
+	var segment := finish - start
+	var length_squared := segment.length_squared()
+	if length_squared <= 0.0001:
+		return point.distance_to(start)
+	var t := clampf((point - start).dot(segment) / length_squared, 0.0, 1.0)
+	return point.distance_to(start + segment * t)
 
 func _test_environment_preset_application(env: Environment, active_sun: DirectionalLight3D, failures: Array[String]) -> void:
 	if active_sun == null:

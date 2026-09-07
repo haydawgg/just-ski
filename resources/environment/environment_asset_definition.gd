@@ -63,11 +63,12 @@ func validate_instance(instance: Node3D) -> Array[String]:
 		if mesh_instance == null or mesh_instance.mesh == null:
 			continue
 		var mesh_bounds := mesh_instance.mesh.get_aabb()
+		var mesh_to_instance := _mesh_to_instance_transform(instance, mesh_instance)
 		for corner: Vector3 in _aabb_corners(mesh_bounds):
 			# Validate in the asset root's authored coordinate system. Resort
 			# placement, slope rotation, and an intentional per-instance scale
 			# override must not change the source scene's meter dimensions.
-			var local_point := instance.to_local(mesh_instance.to_global(corner))
+			var local_point := mesh_to_instance * corner
 			if not has_bounds:
 				bounds = AABB(local_point, Vector3.ZERO)
 				has_bounds = true
@@ -90,6 +91,18 @@ func validate_instance(instance: Node3D) -> Array[String]:
 		var direction := "below" if bounds.position.y < 0.0 else "above"
 		failures.append("scene origin is %s the snow-contact point by %.3f m" % [direction, absf(bounds.position.y)])
 	return failures
+
+func _mesh_to_instance_transform(instance: Node3D, mesh_instance: MeshInstance3D) -> Transform3D:
+	if instance.is_inside_tree():
+		return instance.global_transform.affine_inverse() * mesh_instance.global_transform
+	var relative := Transform3D.IDENTITY
+	var cursor: Node3D = mesh_instance
+	while cursor != null and cursor != instance:
+		relative = cursor.transform * relative
+		cursor = cursor.get_parent() as Node3D
+	if cursor != instance:
+		return Transform3D.IDENTITY
+	return relative
 
 func _aabb_corners(value: AABB) -> Array[Vector3]:
 	var p := value.position

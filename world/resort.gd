@@ -216,6 +216,7 @@ func _build_resort() -> void:
 	_add_lodge(lodge_pos)
 	_add_tree_clusters()
 	_add_course_dressing()
+	_add_lower_run_hub_dressing()
 	_add_distant_terrain_skirt()
 	_add_distant_ridges()
 	# The high-altitude cloud card is a presentation layer. Keep it out of
@@ -428,6 +429,7 @@ func _add_tree_clusters() -> void:
 	var tree_definition := environment_asset_catalog.definition_for("park_tree") if environment_asset_catalog != null else null
 	if tree_definition != null and tree_definition.visual_scene != null and tree_definition.collision_scene != null and environment_asset_catalog.mode != EnvironmentAssetCatalog.AssetMode.GRAYBOX_FALLBACK:
 		tree_batch = ParkTreeBatchModule.new()
+		tree_batch.set_meta("lod_distances_m", tree_definition.lod_distances_m)
 		add_child(tree_batch)
 	var tree_specs: Array[Vector4] = [
 		Vector4(-43.0, 139.0, 1.18, -12.0), Vector4(-47.0, 134.0, 0.82, 34.0), Vector4(-41.5, 128.0, 1.04, 8.0),
@@ -619,6 +621,50 @@ func _add_course_dressing() -> void:
 	_add_lift_tower(ParkLayout.snow_at(-30.0, 126.0), 6.5)
 	_add_lift_tower(ParkLayout.snow_at(31.0, 42.0), 5.5)
 
+func _add_lower_run_hub_dressing() -> void:
+	# These are deliberately cataloged DECORATION assets. They add edge scale to
+	# the graybox-oriented lower run and hub without introducing a new collision
+	# surface or narrowing a feature approach. The table is deterministic so
+	# preview captures and repeated resort builds agree exactly.
+	var placements: Array[Dictionary] = [
+		{"zone": "lower_run", "asset_id": "snow_boulder", "x": -29.0, "z": -36.0, "scale": 1.15, "yaw": 14.0, "variant": 0},
+		{"zone": "lower_run", "asset_id": "snow_boulder", "x": 29.0, "z": -43.0, "scale": 0.92, "yaw": -21.0, "variant": 1},
+		{"zone": "lower_run", "asset_id": "snow_boulder", "x": -30.5, "z": -61.0, "scale": 1.28, "yaw": 32.0, "variant": 2},
+		{"zone": "lower_run", "asset_id": "snow_boulder", "x": -30.0, "z": -70.0, "scale": 0.86, "yaw": -8.0, "variant": 0},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": -29.5, "z": -94.0, "scale": 1.08, "yaw": 19.0, "variant": 1},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": 29.0, "z": -103.0, "scale": 1.22, "yaw": -28.0, "variant": 2},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": -30.0, "z": -123.0, "scale": 0.9, "yaw": 6.0, "variant": 0},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": 30.5, "z": -133.0, "scale": 1.14, "yaw": 27.0, "variant": 1},
+		{"zone": "hub", "asset_id": "snow_boulder", "x": -31.0, "z": -14.0, "scale": 1.16, "yaw": -16.0, "variant": 2},
+		{"zone": "hub", "asset_id": "snow_boulder", "x": 31.0, "z": -12.0, "scale": 0.94, "yaw": 24.0, "variant": 0},
+		{"zone": "hub", "asset_id": "snow_boulder", "x": -27.0, "z": 14.0, "scale": 1.3, "yaw": 9.0, "variant": 1},
+		{"zone": "hub", "asset_id": "snow_boulder", "x": 27.0, "z": 16.0, "scale": 0.88, "yaw": -31.0, "variant": 2},
+	]
+	for placement: Dictionary in placements:
+		var zone := str(placement.get("zone", "lower_run"))
+		var x := float(placement.get("x", 0.0))
+		var z := float(placement.get("z", 0.0))
+		var position := ParkLayout.snow_at(x, z)
+		if zone == "hub":
+			# BottomHub is a flat authored pad rather than the sloped face. Keep
+			# the logical hub anchor as the source for its world placement.
+			position = ParkLayout.hub_position() + Vector3(x, 3.0, z)
+		var metadata := {
+			"dressing_zone": zone,
+			"dressing_expected_position": position,
+			"dressing_anchor_xz": Vector2(x, z),
+		}
+		_try_add_environment_asset(
+			str(placement.get("asset_id", "snow_boulder")),
+			position,
+			float(placement.get("yaw", 0.0)),
+			Vector3.ONE * float(placement.get("scale", 1.0)),
+			Color.TRANSPARENT,
+			int(placement.get("variant", 0)),
+			false,
+			metadata
+		)
+
 func _add_lift_tower(position: Vector3, height: float) -> void:
 	if _try_add_environment_asset("lift_tower", position, 0.0, Vector3(1.0, height / 6.3, 1.0)):
 		return
@@ -770,7 +816,7 @@ func _simple_material(color: Color, roughness: float) -> StandardMaterial3D:
 func _production_assets_required() -> bool:
 	return environment_asset_catalog != null and environment_asset_catalog.should_use_production_scenes()
 
-func _try_add_environment_asset(asset_id: String, position: Vector3, yaw_degrees: float, scale: Vector3, accent_color: Color = Color.TRANSPARENT, style_variant: int = 0, slope_aligned: bool = false) -> bool:
+func _try_add_environment_asset(asset_id: String, position: Vector3, yaw_degrees: float, scale: Vector3, accent_color: Color = Color.TRANSPARENT, style_variant: int = 0, slope_aligned: bool = false, metadata: Dictionary = {}) -> bool:
 	if environment_asset_catalog == null or not environment_asset_catalog.should_use_scene(asset_id):
 		return false
 	var scene := environment_asset_catalog.scene_for(asset_id)
@@ -787,13 +833,21 @@ func _try_add_environment_asset(asset_id: String, position: Vector3, yaw_degrees
 	instance.set_meta("asset_id", asset_id)
 	instance.set_meta("asset_source", "production_scene")
 	instance.set_meta("style_variant", style_variant)
+	for metadata_key: String in metadata:
+		instance.set_meta(metadata_key, metadata[metadata_key])
 	if asset_id == "park_tree":
 		instance.add_to_group("park_trees")
 	elif asset_id in ["lift_tower", "course_boundary", "snowmaker", "trail_board"]:
 		instance.add_to_group("course_landmarks")
+	if metadata.has("dressing_zone"):
+		instance.add_to_group("lower_run_hub_dressing")
 	if accent_color.a > 0.0:
 		instance.set_meta("accent_color", accent_color)
 	var definition := environment_asset_catalog.definition_for(asset_id)
+	if definition != null:
+		# LowPolyEnvironmentAsset reads this metadata during _ready(), after the
+		# instance has been configured but before its procedural geometry builds.
+		instance.set_meta("lod_distances_m", definition.lod_distances_m)
 	var collision_root: Node
 	if definition != null:
 		if definition.collision_scene != null:
@@ -802,6 +856,8 @@ func _try_add_environment_asset(asset_id: String, position: Vector3, yaw_degrees
 				collision_root.name = "%s_Collision" % asset_id
 				instance.add_child(collision_root)
 	add_child(instance)
+	if instance.has_method("build_now"):
+		instance.call("build_now")
 	if definition != null:
 		if collision_root != null:
 			_configure_environment_collisions(collision_root, definition.asset_class, asset_id)
