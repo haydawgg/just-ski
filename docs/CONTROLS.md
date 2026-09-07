@@ -19,7 +19,7 @@ Summit Sessions is designed around a standard gamepad, with keyboard bindings ke
 | Pause | Menu / Start | Esc |
 | Settings | Pause → Settings | Pause → Settings |
 | Debug overlay | — | F3 |
-| Arm / stop clip capture | — | F9 |
+| Arm / cancel / stop clip capture | — | F9 |
 
 The HUD changes prompt families based on the most recently used input device.
 
@@ -114,11 +114,11 @@ F3 toggles gameplay and presentation telemetry. The exact fields evolve with the
 
 F9 controls the built-in run recorder:
 
-1. Press F9 while not recording to arm capture.
-2. Start a run from the summit.
-3. Capture begins automatically.
-4. It ends at the finish trigger, when F9 is pressed again, or at the 90-second safety cap.
-5. Encoding finishes after recording stops.
+1. Press F9 while idle to arm capture for the next summit run.
+2. Press F9 again while idle to cancel the pending arm; ending an unstarted run does not cancel it.
+3. Start a run from the summit; the pending arm is consumed and capture begins automatically.
+4. While recording, press F9 to stop the capture. It also ends at the finish trigger or 90-second safety cap.
+5. Encoding finishes after recording stops; leaving the game discards incomplete data and any temporary encode output.
 
 Capture format:
 

@@ -33,7 +33,7 @@ This file tracks unresolved behavior, missing production work, and checks that s
 ## Audio and capture
 
 - **Most gameplay audio is procedural, but its measured average is within budget.** The refreshed uncapped profile records roughly 0.08–0.10 ms average processing; work is capped to prevent the old multi-millisecond first-fill spike. Authored powder, ice, ambience, wind, and spatial feature recordings remain future content work rather than a current performance blocker.
-- **Gameplay clips use MJPEG-in-MP4 and contain no game audio.** F9 arms the next summit run for capture. The recorder writes JPEG video frames into an MP4 container, which produces larger files and has weaker browser/Discord compatibility than H.264. H.264 encoding and synchronized game audio are future work.
+- **Gameplay clips use MJPEG-in-MP4 and contain no game audio.** The recorder writes JPEG video frames into an MP4 container, which produces larger files and has weaker browser/Discord compatibility than H.264. H.264 encoding and synchronized game audio are future work.
 
 ## Recovery presentation
 

@@ -2,8 +2,8 @@ extends Node
 
 const ClipTimelineModule = preload("res://util/clip_timeline.gd")
 
-## F9-armed gameplay clip capture. Pressing F9 arms the recorder; the next
-## run started from the summit spawn is recorded until the finish trigger
+## F9-toggleable gameplay clip capture. Pressing F9 arms or cancels the
+## recorder; the next run started from the summit spawn is recorded until the finish trigger
 ## (or an early save / 90 s safety cap) and saved to the user's Downloads
 ## folder (user:// fallback) as an MJPEG-in-MP4 file. Frames are
 ## JPEG-encoded during capture and the MP4 is muxed on a background thread
@@ -41,22 +41,33 @@ var _jpeg_worker_stop := false
 var _jpeg_worker_available := false
 var _capture_frame_count := 0
 var _dropped_capture_frames := 0
+var _shutting_down := false
+var _encode_temporary_path := ""
+# Acceptance tests use this seam to exercise the Thread.start() failure path.
+var _encode_thread_start_override: Callable = Callable()
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
+func _exit_tree() -> void:
+	_shutdown_capture_workers()
+
 func _unhandled_input(event: InputEvent) -> void:
+	if _shutting_down:
+		return
 	if event.is_action_pressed("save_clip"):
 		get_viewport().set_input_as_handled()
 		if _recording:
 			_stop_recording()
+		elif armed:
+			disarm()
 		elif _encoding:
 			clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — TRY AGAIN IN A MOMENT")
 		else:
 			arm()
 
 func _process(delta: float) -> void:
-	if not _recording or get_tree().paused:
+	if _shutting_down or not _recording or get_tree().paused:
 		return
 	_capture_accum += maxf(delta, 0.0)
 	var interval := 1.0 / CAPTURE_FPS
@@ -102,13 +113,22 @@ func is_recording() -> bool:
 	return _recording
 
 func arm() -> void:
-	if _recording or armed:
+	if _shutting_down or _recording or armed:
 		return
 	armed = true
 	armed_changed.emit(true)
 	clip_info.emit("RECORDER ARMED — TAKE A RUN FROM THE SUMMIT")
 
+func disarm() -> void:
+	if _shutting_down or not armed:
+		return
+	armed = false
+	armed_changed.emit(false)
+	clip_info.emit("RECORDER DISARMED")
+
 func begin_run_capture() -> void:
+	if _shutting_down:
+		return
 	if _encoding:
 		# Previous clip is still muxing; stay armed so the next run records.
 		clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — WAIT A MOMENT")
@@ -119,13 +139,12 @@ func begin_run_capture() -> void:
 	_start_recording()
 
 func end_run_capture() -> void:
-	if armed:
-		armed = false
-		armed_changed.emit(false)
+	if _shutting_down:
+		return
 	_stop_recording()
 
 func _start_recording() -> void:
-	if _encoding:
+	if _shutting_down or _encoding:
 		clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — TRY AGAIN IN A MOMENT")
 		return
 	if _recording:
@@ -163,10 +182,25 @@ func _stop_recording() -> void:
 	_encoding = true
 	encoding_changed.emit(true)
 	var temporary_path := "user://.clip_encode_%d.mp4" % Time.get_ticks_usec()
+	_encode_temporary_path = temporary_path
+	var start_error := _start_encode_thread(frames, temporary_path)
+	if start_error != OK:
+		_encode_thread = null
+		_encoding = false
+		encoding_changed.emit(false)
+		_remove_file(temporary_path)
+		_encode_temporary_path = ""
+		_fail("MP4 encoding could not start (%s)" % error_string(start_error))
+
+func _start_encode_thread(frames: Array, temporary_path: String) -> int:
 	_encode_thread = Thread.new()
-	_encode_thread.start(_encode_clip.bind(frames, CAPTURE_WIDTH, CAPTURE_HEIGHT, temporary_path))
+	if _encode_thread_start_override.is_valid():
+		return int(_encode_thread_start_override.call(_encode_thread, frames, CAPTURE_WIDTH, CAPTURE_HEIGHT, temporary_path))
+	return _encode_thread.start(_encode_clip.bind(frames, CAPTURE_WIDTH, CAPTURE_HEIGHT, temporary_path))
 
 func _start_jpeg_worker() -> void:
+	if _shutting_down:
+		return
 	_stop_jpeg_worker()
 	_jpeg_mutex.lock()
 	_jpeg_queue.clear()
@@ -181,12 +215,19 @@ func _start_jpeg_worker() -> void:
 		return
 	_jpeg_worker_available = true
 
-func _stop_jpeg_worker() -> void:
+func _stop_jpeg_worker(discard_pending := false) -> void:
 	if _jpeg_thread == null:
 		_jpeg_worker_available = false
+		_jpeg_mutex.lock()
+		_jpeg_queue.clear()
+		_jpeg_worker_stop = false
+		_jpeg_mutex.unlock()
+		_jpeg_semaphore = Semaphore.new()
 		return
 	_jpeg_mutex.lock()
 	_jpeg_worker_stop = true
+	if discard_pending:
+		_jpeg_queue.clear()
 	_jpeg_mutex.unlock()
 	_jpeg_semaphore.post()
 	_jpeg_thread.wait_to_finish()
@@ -196,6 +237,7 @@ func _stop_jpeg_worker() -> void:
 	_jpeg_queue.clear()
 	_jpeg_worker_stop = false
 	_jpeg_mutex.unlock()
+	_jpeg_semaphore = Semaphore.new()
 
 func _can_queue_jpeg_frame() -> bool:
 	_jpeg_mutex.lock()
@@ -216,22 +258,48 @@ func _queue_jpeg_frame(image: Image, capture_slot: int = -1) -> bool:
 func _jpeg_worker() -> void:
 	while true:
 		_jpeg_semaphore.wait()
-		var item: Dictionary = {}
-		var should_stop := false
-		_jpeg_mutex.lock()
-		if not _jpeg_queue.is_empty():
-			item = _jpeg_queue.pop_front()
-		elif _jpeg_worker_stop:
-			should_stop = true
-		_jpeg_mutex.unlock()
-		if not item.is_empty():
-			var image: Image = item.get("image") as Image
-			var capture_slot := int(item.get("slot", -1))
-			var encoded := _encode_jpeg_frame(image)
-			if not encoded.is_empty():
-				_store_encoded_frame(encoded, capture_slot)
-		elif should_stop:
-			return
+		while true:
+			var item: Dictionary = {}
+			var should_stop := false
+			_jpeg_mutex.lock()
+			if not _jpeg_queue.is_empty():
+				item = _jpeg_queue.pop_front()
+			elif _jpeg_worker_stop:
+				should_stop = true
+			_jpeg_mutex.unlock()
+			if not item.is_empty():
+				var image: Image = item.get("image") as Image
+				var capture_slot := int(item.get("slot", -1))
+				var encoded := _encode_jpeg_frame(image)
+				if not encoded.is_empty():
+					_store_encoded_frame(encoded, capture_slot)
+				continue
+			if should_stop:
+				return
+			break
+
+func _shutdown_capture_workers() -> void:
+	if _shutting_down:
+		return
+	_shutting_down = true
+	# Teardown is deliberately silent: no partial clip is published and no
+	# signals are emitted while subscribers may already be leaving the tree.
+	armed = false
+	_recording = false
+	_stop_jpeg_worker(true)
+	if _encode_thread != null:
+		_encode_thread.wait_to_finish()
+		_encode_thread = null
+	if not _encode_temporary_path.is_empty():
+		_remove_file(_encode_temporary_path)
+	_encode_temporary_path = ""
+	_encoding = false
+	_frames.clear()
+	_jpeg_mutex.lock()
+	_encoded_frames_by_slot.clear()
+	_jpeg_queue.clear()
+	_jpeg_worker_stop = false
+	_jpeg_mutex.unlock()
 
 func _store_encoded_frame(encoded: PackedByteArray, capture_slot: int = -1) -> void:
 	_jpeg_mutex.lock()
@@ -253,6 +321,11 @@ func _encode_clip(frames: Array, width: int, height: int, temporary_path: String
 	_on_encoded_file.call_deferred(temporary_path, error)
 
 func _on_encoded_file(temporary_path: String, error: Error) -> void:
+	if _shutting_down:
+		_remove_file(temporary_path)
+		if _encode_temporary_path == temporary_path:
+			_encode_temporary_path = ""
+		return
 	if _encode_thread != null:
 		_encode_thread.wait_to_finish()
 		_encode_thread = null
@@ -260,6 +333,8 @@ func _on_encoded_file(temporary_path: String, error: Error) -> void:
 	encoding_changed.emit(false)
 	if error != OK:
 		_remove_file(temporary_path)
+		if _encode_temporary_path == temporary_path:
+			_encode_temporary_path = ""
 		_fail("MP4 encoding failed (%s)" % error_string(error))
 		return
 	var directory := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
@@ -275,9 +350,13 @@ func _on_encoded_file(temporary_path: String, error: Error) -> void:
 		last_error = _copy_file(temporary_path, path)
 		if last_error == OK:
 			_remove_file(temporary_path)
+			if _encode_temporary_path == temporary_path:
+				_encode_temporary_path = ""
 			clip_saved.emit(path)
 			return
 	_remove_file(temporary_path)
+	if _encode_temporary_path == temporary_path:
+		_encode_temporary_path = ""
 	_fail("Could not write clip (%s)" % error_string(last_error))
 
 func _copy_file(source: String, destination: String) -> Error:

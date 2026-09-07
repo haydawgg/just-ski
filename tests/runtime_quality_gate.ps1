@@ -229,6 +229,7 @@ $sceneShards = [ordered]@{
 		"res://tests/performance_profile_schema_acceptance.tscn",
 		"res://tests/audio_mix_solver_acceptance.tscn",
 		"res://tests/clip_recorder_worker_acceptance.tscn",
+		"res://tests/clip_recorder_lifecycle_acceptance.tscn",
 		"res://tests/settings_acceptance.tscn",
 		"res://tests/input_manager_acceptance.tscn",
 		"res://tests/skier_input_frame_acceptance.tscn",
