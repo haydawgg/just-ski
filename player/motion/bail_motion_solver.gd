@@ -65,6 +65,8 @@ func resolve_rest(
 			result.rest_detected = true
 			result.rest_elapsed = 0.0
 			result.stage = CrashContext.Stage.REST
+		elif not grounded and elapsed >= profile.crash_max_duration:
+			result.should_respawn = true
 	else:
 		result.stage = CrashContext.Stage.REST
 		result.rest_elapsed = rest_elapsed + delta

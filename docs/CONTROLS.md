@@ -17,6 +17,7 @@ Summit Sessions is designed around a standard gamepad, with keyboard bindings ke
 | Save marker | D-pad Up | T |
 | Return to marker | Y / Triangle or D-pad Down | R |
 | Pause | Menu / Start | Esc |
+| Settings | Pause → Settings | Pause → Settings |
 | Debug overlay | — | F3 |
 | Arm / stop clip capture | — | F9 |
 

@@ -5,13 +5,18 @@ var failures: Array[String] = []
 func _ready() -> void:
 	_test_guarded_crash_entry_and_respawn_cleanup()
 	_test_repeated_crash_respawn_cycles()
+	_test_reseat_landing_outcomes_and_trick_cleanup()
+	_test_finished_respawn_starts_new_run()
 	await _test_failed_landing_emits_crash_only()
 	await _test_feature_collision_thresholds()
+	await _test_airborne_bail_timeout_respawns()
+	await _test_airborne_contact_normal_refresh()
+	await _test_grind_feature_collision_enters_bail()
 	await _test_bounded_rest_and_recovery()
 	await _test_course_recovery_lifecycle_and_scoring()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("CRASH_RECOVERY_PASS: guarded entry, momentum, scoring, telemetry, rest, recovery, and respawn cleanup passed")
+		print("CRASH_RECOVERY_PASS: locomotion state, momentum, scoring, telemetry, rest, recovery, and respawn cleanup passed")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
@@ -117,6 +122,75 @@ func _test_repeated_crash_respawn_cycles() -> void:
 		failures.append("Repeated crash/respawn cycles lost or duplicated crash accounting")
 	if int(skier.telemetry().respawn_count) != 20:
 		failures.append("Repeated crash/respawn cycles did not retain authoritative respawn telemetry")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_reseat_landing_outcomes_and_trick_cleanup() -> void:
+	var failed_landed_signals := [0]
+	var failed_skier := SkierController.new()
+	add_child(failed_skier)
+	failed_skier.set_physics_process(false)
+	failed_skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(0.0, -5.0, -6.0))
+	failed_skier.contact.grounded = true
+	failed_skier.contact.average_normal = Vector3.UP
+	failed_skier.global_basis = Basis(Vector3.RIGHT, PI)
+	failed_skier.air_time = 0.25
+	failed_skier.air_deliberate = false
+	failed_skier.landing_feedback_armed = true
+	failed_skier.trick.begin_air(false, TrickCommand.Kind.BACKFLIP, true, Vector3.RIGHT)
+	failed_skier.active_trick_kind = TrickCommand.Kind.BACKFLIP
+	failed_skier.landed.connect(func(_result: Dictionary) -> void: failed_landed_signals[0] += 1)
+	failed_skier._reseat_on_snow()
+	if failed_skier.state != SkierController.State.BAIL:
+		failures.append("Reseat BAIL outcome incorrectly wrote GROUND")
+	if not bool((failed_skier.telemetry().crash as Dictionary).active):
+		failures.append("Reseat BAIL outcome did not create active crash context")
+	if failed_landed_signals[0] != 0:
+		failures.append("Reseat BAIL outcome emitted successful landing feedback")
+	if failed_skier.trick.active or failed_skier.trick.had_trick_intent:
+		failures.append("Reseat BAIL outcome retained active trick state")
+	remove_child(failed_skier)
+	failed_skier.queue_free()
+
+	var clean_skier := SkierController.new()
+	add_child(clean_skier)
+	clean_skier.set_physics_process(false)
+	clean_skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(0.0, -0.5, -6.0))
+	clean_skier.contact.grounded = true
+	clean_skier.contact.average_normal = Vector3.UP
+	clean_skier.air_time = 0.25
+	clean_skier.air_deliberate = false
+	clean_skier.trick.begin_air(false, TrickCommand.Kind.BACKFLIP, true, Vector3.RIGHT)
+	clean_skier.active_trick_kind = TrickCommand.Kind.BACKFLIP
+	clean_skier._reseat_on_snow()
+	if clean_skier.state != SkierController.State.GROUND:
+		failures.append("Recoverable reseat did not reach GROUND")
+	if clean_skier.trick.active or clean_skier.trick.had_trick_intent:
+		failures.append("Successful reseat leaked airborne trick state")
+	if int(clean_skier.scoring.snapshot().total_score) != 0:
+		failures.append("Successful reseat incorrectly awarded trick score")
+	remove_child(clean_skier)
+	clean_skier.queue_free()
+
+func _test_finished_respawn_starts_new_run() -> void:
+	SessionManager.clear_marker()
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3.ZERO)
+	skier.scoring.begin_feature("jump")
+	skier.scoring.accept_trick("Finished Run Test", 300, 1.0, LandingSolver.Outcome.CLEAN)
+	skier.scoring.finish_run()
+	if not skier.scoring.finished:
+		failures.append("Finished-run setup did not enter finished state")
+	skier.respawn_at(Transform3D(Basis.IDENTITY, Vector3(0.0, 3.0, 0.0)))
+	var reset_snapshot := skier.scoring.snapshot()
+	if bool(reset_snapshot.finished) or int(reset_snapshot.total_score) != 0:
+		failures.append("Respawn after finish did not reset the scoring run")
+	skier.scoring.begin_feature("jump")
+	skier.scoring.accept_trick("New Run Test", 100, 1.0, LandingSolver.Outcome.CLEAN)
+	if bool(skier.scoring.finished) or int(skier.scoring.snapshot().total_score) <= 0:
+		failures.append("Respawn after finish left the new run unscorable")
 	remove_child(skier)
 	skier.queue_free()
 
@@ -247,6 +321,105 @@ func _test_feature_collision_thresholds() -> void:
 	slow_skier.queue_free()
 	remove_child(wall)
 	wall.queue_free()
+
+func _test_airborne_bail_timeout_respawns() -> void:
+	SessionManager.clear_marker()
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 20.0, 0.0)), Vector3.ZERO)
+	var context := CrashContext.new()
+	context.begin(
+		CrashContext.Reason.LANDING_IMPACT,
+		CrashContext.Source.LANDING,
+		SkierController.State.AIR,
+		Vector3.ZERO,
+		Vector3.ZERO,
+		Vector3.UP,
+		0.0,
+		0.0
+	)
+	var initial_respawn_count := int(skier.telemetry().respawn_count)
+	if not skier.enter_crash(context):
+		failures.append("Airborne timeout setup could not enter crash")
+	var frames := 0
+	while skier.state == SkierController.State.BAIL and frames < 420:
+		await get_tree().physics_frame
+		frames += 1
+	if skier.state != SkierController.State.AIR:
+		failures.append("Airborne bail did not terminate through the respawn path")
+	if int(skier.telemetry().respawn_count) != initial_respawn_count + 1:
+		failures.append("Airborne bail timeout did not request exactly one respawn")
+	if bool((skier.telemetry().crash as Dictionary).active):
+		failures.append("Airborne bail timeout retained crash state after respawn")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_airborne_contact_normal_refresh() -> void:
+	var floor_body := _make_box_body("ContactNormalFloor", 1, Vector3(30.0, 0.5, 30.0), Vector3(0.0, -0.25, 0.0))
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	await get_tree().physics_frame
+	skier.global_position = Vector3(0.0, 1.2, 0.0)
+	skier.contact.average_normal = Vector3.RIGHT
+	skier.contact.last_normal = Vector3.UP
+	skier.contact.sample(skier, 1.45, 0.5, [], 0.35)
+	if skier.contact.grounded:
+		failures.append("Above-band contact test unexpectedly became grounded")
+	if skier.contact.average_normal.distance_to(Vector3.UP) > 0.001:
+		failures.append("Airborne contact retained a stale average normal after a valid hit")
+	skier.global_position = Vector3(0.0, 10.0, 0.0)
+	skier.contact.average_normal = Vector3.RIGHT
+	skier.contact.last_normal = Vector3.UP
+	skier.contact.sample(skier, 1.45, 0.5, [], 0.35)
+	if skier.contact.average_normal.distance_to(Vector3.UP) > 0.001:
+		failures.append("Airborne contact retained a stale average normal after no hit")
+	if skier.contact.last_normal.distance_to(Vector3.UP) > 0.001:
+		failures.append("No-hit contact sampling corrupted the probe fallback normal")
+	remove_child(skier)
+	skier.queue_free()
+	remove_child(floor_body)
+	floor_body.queue_free()
+
+func _test_grind_feature_collision_enters_bail() -> void:
+	var path := Curve3D.new()
+	path.add_point(Vector3(-2.0, 2.0, 0.0))
+	path.add_point(Vector3(4.0, 2.0, 0.0))
+	var rail := GrindRail3D.new()
+	rail.name = "RegressionRail"
+	rail.path = path
+	rail.rail_type = GrindRail3D.RailType.BOX
+	add_child(rail)
+	var obstacle := _make_box_body("GrindObstacle", 4, Vector3(0.4, 4.0, 2.0), Vector3(0.0, 2.2, 0.0))
+	var skier := SkierController.new()
+	add_child(skier)
+	await get_tree().physics_frame
+	skier.global_position = rail.sample_world(0.05)
+	skier.global_basis = Basis.looking_at(Vector3.RIGHT, Vector3.UP)
+	skier.motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
+	skier.state = SkierController.State.GRIND
+	skier.active_rail = rail
+	skier.rail_offset = 0.05
+	skier.rail_direction = 1.0
+	skier.rail_speed = 12.0
+	var frames := 0
+	while skier.state == SkierController.State.GRIND and frames < 180:
+		await get_tree().physics_frame
+		frames += 1
+	if skier.state != SkierController.State.BAIL:
+		failures.append("GRIND feature impact did not enter crash state")
+	else:
+		var crash := skier.telemetry().crash as Dictionary
+		if str(crash.get("source", "")) != "OBSTACLE" or int(crash.get("source_state", -1)) != SkierController.State.GRIND:
+			failures.append("GRIND feature impact lost obstacle/source-state context")
+		if int(crash.get("collision_layer", 0)) & 4 == 0:
+			failures.append("GRIND feature impact did not retain Features-layer diagnostics")
+	remove_child(skier)
+	skier.queue_free()
+	remove_child(obstacle)
+	obstacle.queue_free()
+	remove_child(rail)
+	rail.queue_free()
 
 func _test_course_recovery_lifecycle_and_scoring() -> void:
 	var skier := SkierController.new()

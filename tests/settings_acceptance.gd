@@ -85,12 +85,18 @@ func _test_validation_schema() -> void:
 	_check(bool(GameSettings.pending["gi_enabled"]), "High preset did not allow GI")
 	GameSettings.apply_preset(99)
 	_check(int(GameSettings.pending["graphics_preset"]) == 4, "Invalid graphics preset did not clamp safely")
-	_check(GameSettings.save_settings() == OK, "Normal settings save did not return OK")
+	var save_events := [0]
+	var on_settings_saved := func() -> void: save_events[0] += 1
+	GameSettings.settings_saved.connect(on_settings_saved)
+	var normal_save_error := GameSettings.save_settings()
+	GameSettings.settings_saved.disconnect(on_settings_saved)
+	_check(normal_save_error == OK, "Normal settings save did not return OK")
+	_check(save_events[0] == 1, "Normal settings save did not emit its success signal")
 	var active_before_failure := GameSettings.active.duplicate(true)
 	var save_failures: Array[Error] = []
 	var on_save_failed := func(error: Error) -> void: save_failures.append(error)
 	GameSettings.settings_save_failed.connect(on_save_failed)
-	var save_error := GameSettings.save_settings("res://tests")
+	var save_error := GameSettings.save_settings("res://tests", false)
 	GameSettings.settings_save_failed.disconnect(on_save_failed)
 	_check(save_error != OK, "Invalid settings path unexpectedly reported success")
 	_check(save_failures.size() == 1 and save_failures[0] == save_error, "Settings save failure was not reported through its signal")

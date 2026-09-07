@@ -8,6 +8,7 @@ const ParkLayout := preload("res://world/park_features/park_layout.gd")
 const GroundMotionSolverModule := preload("res://player/motion/ground_motion_solver.gd")
 const AirMotionSolverModule := preload("res://player/motion/air_motion_solver.gd")
 const RailMotionSolverModule := preload("res://player/motion/rail_motion_solver.gd")
+const GrindCollisionSolverModule := preload("res://player/motion/grind_collision_solver.gd")
 const LandingTransitionModule := preload("res://player/motion/landing_transition.gd")
 const CollisionCrashEvaluatorModule := preload("res://player/motion/collision_crash_evaluator.gd")
 const BailMotionSolverModule := preload("res://player/motion/bail_motion_solver.gd")
@@ -113,6 +114,7 @@ var contact_shadow_material: ShaderMaterial
 var _ground_motion_solver := GroundMotionSolverModule.new()
 var _air_motion_solver := AirMotionSolverModule.new()
 var _rail_motion_solver := RailMotionSolverModule.new()
+var _grind_collision_solver := GrindCollisionSolverModule.new()
 var _landing_transition := LandingTransitionModule.new()
 var _collision_crash_evaluator := CollisionCrashEvaluatorModule.new()
 var _bail_motion_solver := BailMotionSolverModule.new()
@@ -165,6 +167,7 @@ func _physics_process(delta: float) -> void:
 		telemetry_updated.emit(telemetry())
 		return
 	var velocity_before_motion := velocity
+	var state_before_motion := state
 	last_collision_diagnostics.clear()
 	last_collision_colliders.clear()
 	last_speed_discontinuity = {}
@@ -182,7 +185,10 @@ func _physics_process(delta: float) -> void:
 		State.AIR: _update_air(delta)
 		State.GRIND: _update_grind(delta)
 		State.BAIL: _update_bail(delta)
-	if state != State.GRIND:
+	# GRIND owns its rail translation. Do not run a second CharacterBody motion
+	# pass on a tick that started in GRIND, even if the rail update transitions
+	# to AIR or BAIL while processing that tick.
+	if state != State.GRIND and state_before_motion != State.GRIND:
 		move_and_slide()
 		_record_motion_diagnostics(velocity_before_motion)
 		_evaluate_feature_crash_after_motion()
@@ -561,14 +567,26 @@ func _update_grind(delta: float) -> void:
 		_slip_off_rail()
 		return
 	var rail_target := active_rail.sample_world(rail_offset)
+	var requested_position := rail_target
 	if rail_capture_blend_remaining > 0.0:
 		rail_capture_blend_remaining = maxf(0.0, rail_capture_blend_remaining - delta)
 		var blend_progress := 1.0 - rail_capture_blend_remaining / maxf(profile.rail_capture_blend_time, 0.01)
 		blend_progress = blend_progress * blend_progress * (3.0 - 2.0 * blend_progress)
-		global_position = rail_capture_from_position.lerp(rail_target, blend_progress)
+		requested_position = rail_capture_from_position.lerp(rail_target, blend_progress)
+	var rail_velocity := tangent * rail_speed
+	var applied_velocity := rail_velocity
+	var requested_motion := requested_position - global_position
+	var grind_collision: Variant = _grind_collision_solver.sweep(self, requested_motion)
+	if grind_collision.hit:
+		var crash := _evaluate_grind_collision(grind_collision, rail_velocity)
+		global_position += grind_collision.travel
+		if crash != null:
+			enter_crash(crash)
+			return
+		applied_velocity = rail_velocity.slide(grind_collision.normal)
 	else:
-		global_position = rail_target
-	velocity = tangent * rail_speed
+		global_position = requested_position
+	velocity = applied_velocity
 	var look_tangent := tangent if rail_speed >= 0.0 else -tangent
 	if look_tangent.length_squared() < 0.0001:
 		look_tangent = tangent
@@ -838,8 +856,13 @@ func _update_wall_pin(delta: float) -> void:
 	velocity += hop
 
 func _reseat_on_snow() -> void:
-	var result: Dictionary = _landing_transition.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile).data
+	var transition := _landing_transition.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
+	var result: Dictionary = transition.data
 	_capture_landing_context(result, false)
+	landing_feedback_armed = false
+	if int(result.get("outcome", LandingSolver.Outcome.BAIL)) == LandingSolver.Outcome.BAIL:
+		enter_crash(_landing_crash_context(result))
+		return
 	animation_controller.trigger(
 		SkierAnimationController.AnimationEvent.LAND_CLEAN,
 		float(landing_context.get("impact_severity", 0.12)),
@@ -857,6 +880,12 @@ func _reseat_on_snow() -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
 	trick_rotation_state.reset()
+	trick.reset()
+	flick.reset()
+	active_trick_kind = TrickCommand.Kind.NONE
+	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
+	grab_amount = 0.0
+	grab_tweak = Vector2.ZERO
 	state_changed.emit("Ground")
 
 func _try_capture_rail() -> void:
@@ -1045,7 +1074,10 @@ func _landing_crash_context(result: Dictionary) -> CrashContext:
 func _update_crash_stage_and_rest(delta: float) -> void:
 	if crash_context.stage == CrashContext.Stage.RECOVERY:
 		if crash_context.stage_elapsed >= animation_controller.profile.crash_recovery_duration:
-			_recover_from_bail()
+			if contact.grounded:
+				_recover_from_bail()
+			else:
+				_request_bail_respawn()
 		return
 	var rest := _bail_motion_solver.resolve_rest(
 		contact.grounded,
@@ -1059,6 +1091,9 @@ func _update_crash_stage_and_rest(delta: float) -> void:
 		animation_controller.profile.crash_impact_duration,
 		profile
 	)
+	if rest.should_respawn:
+		_request_bail_respawn()
+		return
 	crash_context.set_stage(rest.stage)
 	crash_context.rest_detected = rest.rest_detected
 	crash_context.rest_elapsed = rest.rest_elapsed
@@ -1084,6 +1119,54 @@ func _evaluate_feature_crash_after_motion() -> void:
 	if context != null:
 		enter_crash(context)
 
+func _evaluate_grind_collision(collision, velocity_before: Vector3) -> CrashContext:
+	var collider = collision.collider
+	if collider == null:
+		return null
+	var collision_normal: Vector3 = collision.normal as Vector3
+	var normal := collision_normal.normalized() if collision_normal.length_squared() > 0.0001 else Vector3.UP
+	var resolved_velocity := velocity_before.slide(normal)
+	var speed_before := velocity_before.length()
+	var resolved_speed := resolved_velocity.length()
+	var incoming_normal_speed := maxf(0.0, -velocity_before.dot(normal))
+	var collider_name: String = collider.name if collider is Node else "<unnamed>"
+	var collider_asset_id := str(collider.get_meta("asset_id", "")) if collider is Node else ""
+	var collider_asset_class := str(collider.get_meta("asset_class", "")) if collider is Node else ""
+	var collider_policy := str(collider.get_meta("collision_policy", "")) if collider is Node else ""
+	var diagnostic := {
+		"collider": collider_name,
+		"asset_id": collider_asset_id,
+		"asset_class": collider_asset_class,
+		"collision_policy": collider_policy,
+		"normal": normal,
+		"position": collision.position,
+		"collider_layer": collision.collider_layer,
+		"velocity_before": velocity_before,
+		"velocity_after": resolved_velocity,
+		"speed_before": speed_before,
+		"speed_after": resolved_speed,
+		"speed_loss": maxf(0.0, speed_before - resolved_speed),
+		"speed_retention": resolved_speed / maxf(speed_before, 0.01),
+		"incoming_normal_speed": incoming_normal_speed,
+		"grounded": contact.grounded,
+	}
+	last_collision_colliders.append(collider_name)
+	last_collision_diagnostics.append(diagnostic)
+	return _collision_crash_evaluator.evaluate(
+		[diagnostic],
+		State.GRIND,
+		profile.feature_collision_min_speed,
+		profile.feature_collision_min_normal_speed,
+		profile.feature_collision_max_speed_retention,
+		angular_velocity.length(),
+		global_basis,
+		velocity_before
+	)
+
+func _request_bail_respawn() -> void:
+	if state == State.BAIL:
+		SessionManager.request_respawn()
+
 func _recover_from_bail() -> void:
 	bail_recovering = false
 	_clear_landing_orientation_settle()
@@ -1102,6 +1185,7 @@ func _recover_from_bail() -> void:
 	state_changed.emit("Ground")
 
 func respawn_at(value: Transform3D) -> void:
+	var was_finished := scoring != null and scoring.finished
 	respawn_count += 1
 	active_rail = null
 	velocity = Vector3.ZERO
@@ -1143,7 +1227,9 @@ func respawn_at(value: Transform3D) -> void:
 	last_speed_discontinuity = {}
 	animation_frame.reset()
 	_clear_crash_state()
-	if SessionManager.has_marker:
+	if was_finished:
+		scoring.reset_run()
+	elif SessionManager.has_marker:
 		scoring.apply_retry_cost()
 	else:
 		scoring.reset_link()

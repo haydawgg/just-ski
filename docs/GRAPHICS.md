@@ -13,9 +13,9 @@ Summit Sessions targets Godot 4.7 Forward+.
 `GameSettings` keeps two dictionaries:
 
 - `active` — values currently applied to the game.
-- `pending` — values being edited in the Options menu.
+- `pending` — values being edited in the in-game Settings menu.
 
-Opening Options copies active values into pending. Apply promotes pending values, applies display/audio changes, and saves `user://settings.cfg`. Cancel restores pending from active. Reset Defaults replaces pending values with defaults but does not apply them until the user chooses Apply.
+Open Pause → Settings during a run to edit these values. Apply promotes pending values, changes the display/renderer/audio state immediately, and saves `user://settings.cfg`; a successful apply shows `SETTINGS SAVED`. Cancel restores pending from active. Reset Defaults replaces pending values with defaults but does not apply them until the user chooses Apply.
 
 The settings loader validates maintained numeric ranges and falls back to defaults for invalid values.
 
@@ -36,7 +36,7 @@ The maintained graphics settings include:
 
 Low / Medium use the Fast snow tier by default. High / Ultra use Premium snow. Editing an individual graphics option changes the preset state to Custom.
 
-The current options menu intentionally exposes a practical subset of Godot's renderer controls rather than every Forward+ feature. It includes a staged GI toggle. GI is effective only when the selected environment profile exposes GI, the user setting `gi_enabled` is true, and the graphics preset permits GI (High, Ultra, or Custom; Low and Medium forbid it). The profile is the upper-level capability gate, the user setting is the preference, and the preset is the hardware-capability policy. Apply updates the live environment before persistence; a save failure is reported without rolling back the applied runtime state.
+The current Settings menu intentionally exposes a practical subset of Godot's renderer controls rather than every Forward+ feature. It includes a staged GI toggle. GI is effective only when the selected environment profile exposes GI, the user setting `gi_enabled` is true, and the graphics preset permits GI (High, Ultra, or Custom; Low and Medium forbid it). The profile is the upper-level capability gate, the user setting is the preference, and the preset is the hardware-capability policy. Apply updates the live environment before persistence; a save failure is reported without rolling back the applied runtime state.
 
 Time of day follows the same staged settings model. `environment_preset` selects one of three authored `ResortEnvironmentProfile` resources: Day, Golden Hour, or Sunset. `resort.gd` owns the small preset-to-resource seam and applies the selected profile to the existing sky, sun, fill, fog, post-processing, and GI configuration without another autoload. Dedicated QA scenes such as `sunset_resort.tscn` opt out of the user preference so their authored lighting remains deterministic.
 

@@ -67,6 +67,11 @@ func sample(
 	probe_origin_height: float = 0.35
 ) -> void:
 	grounded_band = maxf(band, 0.05)
+	# These values describe this sample only. last_normal remains the probe
+	# direction fallback when no terrain ray returns a hit.
+	average_normal = Vector3.UP
+	average_distance = distance
+	average_hit_position = Vector3.ZERO
 	var active_probe_offsets := PROBE_OFFSETS if probe_offsets.is_empty() else probe_offsets
 	var safe_probe_origin_height := maxf(probe_origin_height, 0.0)
 	var previous_left_distance := left_distance
@@ -202,6 +207,9 @@ func sample(
 		right_grounded = right_distance <= grounded_band
 	confidence = float(hit_points.size()) / maxf(float(active_probe_offsets.size()), 1.0)
 	grounded = confidence >= 0.5 and average_distance <= grounded_band
+	if normal_sum.length_squared() > 0.0001:
+		average_normal = normal_sum.normalized()
+		last_normal = average_normal
 	left_contact_confidence = _side_contact_confidence(
 		left_front_valid, left_rear_valid,
 		left_front_distance, left_rear_distance,
@@ -219,8 +227,6 @@ func sample(
 	_left_had_contact = left_front_valid or left_rear_valid
 	_right_had_contact = right_front_valid or right_rear_valid
 	if grounded:
-		average_normal = normal_sum.normalized()
-		last_normal = average_normal
 		var most_hits := 0
 		for kind: int in range(surface_counts.size()):
 			if surface_counts[kind] > most_hits:

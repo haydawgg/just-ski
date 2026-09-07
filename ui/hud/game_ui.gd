@@ -271,7 +271,7 @@ func _build_pause_menu() -> void:
 	box.add_child(_named_button("SetMarkerButton", "Set Marker Here", _set_marker_from_menu))
 	box.add_child(_named_button("TrickGuideButton", "Trick Guide", _open_trick_guide))
 	box.add_child(_named_button("ChallengesButton", "Spot Challenges", _open_challenges))
-	box.add_child(_named_button("OptionsButton", "Options", _open_options))
+	box.add_child(_named_button("OptionsButton", "Settings", _open_options))
 	box.add_child(_named_button("RestartButton", "Restart from Summit", _restart_summit))
 	box.add_child(_named_button("QuitButton", "Quit to Desktop", _quit_game))
 	_wire_vertical_focus(box)
@@ -393,7 +393,7 @@ func _build_options_menu() -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	options_panel.add_child(box)
-	var title := _label("OPTIONS — CHANGES ARE STAGED", 26)
+	var title := _label("SETTINGS — CHANGES ARE STAGED", 26)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var tabs := TabContainer.new()
@@ -825,8 +825,10 @@ func _sync_options() -> void:
 	(options_panel.find_child("Response", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_response"]))
 
 func _apply_options() -> void:
-	GameSettings.apply_pending()
+	var save_error := GameSettings.apply_pending()
 	_close_options(true)
+	if save_error == OK:
+		_show_notice("SETTINGS SAVED")
 
 func _cancel_options() -> void:
 	_close_options(false)
