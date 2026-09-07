@@ -43,6 +43,7 @@ func commit() -> void:
 	_add_component("FarTrunks", _cylinder(0.24, 0.30, 3.0, 5, bark), Vector3(0.0, 1.5, 0.0), lod.x, lod.z, false)
 	_add_component("FarCanopies", _cylinder(0.06, 1.34, 4.4, 6, needle_mid), Vector3(0.0, 3.65, 0.0), lod.x, lod.z, false)
 	_add_component("FarSnow", _cylinder(0.03, 0.84, 0.36, 6, snow), Vector3(0.0, 5.52, 0.0), lod.x, lod.z, false)
+	_placements.clear()
 
 func _add_component(label: String, mesh: Mesh, local_position: Vector3, range_begin: float, range_end: float, casts_shadow: bool) -> void:
 	var multimesh := MultiMesh.new()

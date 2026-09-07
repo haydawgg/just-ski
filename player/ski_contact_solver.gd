@@ -10,6 +10,7 @@ const NORMAL_DISAGREEMENT_SOFT := 0.08
 const NORMAL_DISAGREEMENT_HARD := 0.5
 const DISTANCE_DISCONTINUITY_SOFT := 0.12
 const DISTANCE_DISCONTINUITY_HARD := 0.5
+const DEFAULT_MAX_GROUND_ANGLE_DEGREES := 62.0
 ## Fallback for direct solver callers that do not have a physics profile. The
 ## production controller supplies the same geometry from SkiPhysicsProfile.
 const PROBE_OFFSETS := [
@@ -288,12 +289,18 @@ func _side_contact_confidence(
 	var grounded_quality := 1.0 if authoritative_grounded and side_is_grounded else (0.3 if side_is_grounded else 0.0)
 	return clampf(coverage * distance_quality * height_quality * normal_quality * continuity_quality * grounded_quality, 0.0, 1.0)
 
-func merge_capsule_floor(on_floor: bool, floor_normal: Vector3) -> void:
+func merge_capsule_floor(
+	on_floor: bool,
+	floor_normal: Vector3,
+	maximum_ground_angle_degrees: float = DEFAULT_MAX_GROUND_ANGLE_DEGREES
+) -> void:
 	if grounded:
 		return
 	if not on_floor or floor_normal.length_squared() < 0.01:
 		return
-	if floor_normal.dot(Vector3.UP) < 0.35:
+	var bounded_angle := clampf(maximum_ground_angle_degrees, 0.0, 89.0)
+	var minimum_up_dot := cos(deg_to_rad(bounded_angle))
+	if floor_normal.normalized().dot(Vector3.UP) < minimum_up_dot:
 		return
 	grounded = true
 	average_normal = floor_normal.normalized()

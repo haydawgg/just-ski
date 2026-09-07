@@ -4,6 +4,7 @@ var failures: Array[String] = []
 
 func _ready() -> void:
 	_test_all_joypad_bindings_are_device_independent()
+	_test_keyboard_bindings()
 	await _test_nonzero_joypad_event_and_snapshot()
 	if failures.is_empty():
 		print("SKIER_INPUT_FRAME_PASS: all-device bindings and one complete sampled input frame passed")
@@ -21,6 +22,17 @@ func _test_all_joypad_bindings_are_device_independent() -> void:
 			if event is InputEventJoypadButton or event is InputEventJoypadMotion:
 				if event.device != -1:
 					failures.append("%s still targets joypad device %d" % [action, event.device])
+
+func _test_keyboard_bindings() -> void:
+	_check_keyboard_binding(&"trick_left", KEY_LEFT)
+	_check_keyboard_binding(&"trick_right", KEY_RIGHT)
+	_check_keyboard_binding(&"debug_toggle", KEY_F3)
+
+func _check_keyboard_binding(action: StringName, expected_physical_keycode: Key) -> void:
+	for event: InputEvent in InputMap.action_get_events(action):
+		if event is InputEventKey and (event as InputEventKey).physical_keycode == expected_physical_keycode:
+			return
+	failures.append("%s is missing physical keyboard binding %s" % [action, expected_physical_keycode])
 
 func _test_nonzero_joypad_event_and_snapshot() -> void:
 	var event := InputEventJoypadMotion.new()

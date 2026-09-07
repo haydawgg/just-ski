@@ -62,6 +62,8 @@ func _ready() -> void:
 		course_profile = SESSION_YARD_PROFILE
 	if follow_environment_setting:
 		environment_profile = profile_for_preset(int(GameSettings.active.get("environment_preset", 0)))
+	if environment_asset_catalog != null:
+		environment_asset_catalog = environment_asset_catalog.duplicate(true) as EnvironmentAssetCatalog
 	if environment_asset_catalog != null and (force_production_assets or OS.get_cmdline_user_args().has("--production-assets")):
 		environment_asset_catalog.mode = EnvironmentAssetCatalog.AssetMode.PRODUCTION
 	_validate_environment_asset_catalog()

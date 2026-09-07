@@ -21,15 +21,8 @@ func step_motion(
 		if stage == CrashContext.Stage.FALL:
 			ground_damping *= 0.55
 			angular_damping *= 0.6
-		elif stage == CrashContext.Stage.REST or stage == CrashContext.Stage.RECOVERY:
-			ground_damping *= 0.38
-			angular_damping *= 0.45
 		result.velocity *= exp(-ground_damping * delta)
 		result.angular_velocity *= exp(-angular_damping * delta)
-		if (stage == CrashContext.Stage.REST or stage == CrashContext.Stage.RECOVERY) and result.velocity.length() > 0.15:
-			var wobble_axis := normal.cross(result.velocity.normalized())
-			if wobble_axis.length_squared() > 0.001:
-				result.angular_velocity += wobble_axis.normalized() * 0.08 * clampf(result.velocity.length() / 5.0, 0.0, 1.0) * delta
 	else:
 		result.angular_velocity *= exp(-profile.crash_air_angular_damping * delta)
 	return result

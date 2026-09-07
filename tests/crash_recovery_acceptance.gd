@@ -7,6 +7,10 @@ func _ready() -> void:
 	_test_repeated_crash_respawn_cycles()
 	_test_reseat_landing_outcomes_and_trick_cleanup()
 	_test_finished_respawn_starts_new_run()
+	_test_ground_fallback_preserves_pop()
+	_test_ground_angle_contract()
+	_test_landing_prediction_cache()
+	_test_bail_rest_damping()
 	await _test_failed_landing_emits_crash_only()
 	await _test_feature_collision_thresholds()
 	await _test_airborne_bail_timeout_respawns()
@@ -193,6 +197,70 @@ func _test_finished_respawn_starts_new_run() -> void:
 		failures.append("Respawn after finish left the new run unscorable")
 	remove_child(skier)
 	skier.queue_free()
+
+func _test_ground_fallback_preserves_pop() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_basis = Basis(Vector3.RIGHT, PI * 0.5)
+	skier.trick_command.pop_strength = 1.0
+	skier.trick_command.kind = TrickCommand.Kind.POP
+	skier._update_ground(1.0 / 60.0)
+	if skier.state != SkierController.State.AIR or skier.velocity.y <= 0.0:
+		failures.append("Degenerate grounded heading skipped the pop instead of using a tangent fallback")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_ground_angle_contract() -> void:
+	var contact := SkiContactSolver.new()
+	var accepted_angle := deg_to_rad(61.9)
+	var accepted_normal := Vector3(sin(accepted_angle), cos(accepted_angle), 0.0)
+	contact.merge_capsule_floor(true, accepted_normal, 62.0)
+	if not contact.grounded:
+		failures.append("Contact solver rejected a slope inside the configured floor angle")
+	contact.grounded = false
+	var rejected_angle := deg_to_rad(62.1)
+	var rejected_normal := Vector3(sin(rejected_angle), cos(rejected_angle), 0.0)
+	contact.merge_capsule_floor(true, rejected_normal, 62.0)
+	if contact.grounded:
+		failures.append("Contact solver accepted a slope beyond the configured floor angle")
+
+func _test_landing_prediction_cache() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.state = SkierController.State.AIR
+	var before: int = skier._landing_prediction_evaluations
+	skier._predict_landing()
+	skier._predict_landing()
+	if skier._landing_prediction_evaluations - before != 1:
+		failures.append("Landing prediction evaluated more than once within one physics step")
+	skier._landing_prediction_cache_serial = -1
+	skier._predict_landing()
+	if skier._landing_prediction_evaluations - before != 2:
+		failures.append("Landing prediction cache did not invalidate for a new physics step")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_bail_rest_damping() -> void:
+	var profile := SkiPhysicsProfile.new()
+	var solver := BailMotionSolver.new()
+	var velocity := Vector3(4.0, 0.0, -3.0)
+	var angular_velocity := Vector3(0.4, 0.7, -0.2)
+	var result := solver.step_motion(
+		velocity,
+		angular_velocity,
+		Vector3.UP,
+		true,
+		CrashContext.Stage.REST,
+		1.0 / 60.0,
+		profile
+	)
+	if result.velocity.length() >= velocity.length() or result.angular_velocity.length() >= angular_velocity.length():
+		failures.append("Bail REST motion did not monotonically damp linear and angular velocity")
 
 func _test_bounded_rest_and_recovery() -> void:
 	var floor_body := StaticBody3D.new()

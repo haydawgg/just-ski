@@ -3,6 +3,8 @@ extends Node
 var failures: Array[String] = []
 
 func _ready() -> void:
+	if AudioManager.process_mode != Node.PROCESS_MODE_ALWAYS:
+		failures.append("Audio manager does not process while the tree is paused")
 	var solver := AudioMixSolver.new()
 	var stopped := solver.resolve(0.0, 0.0, 0.0, 0)
 	if float(stopped.surface_amplitude) != 0.0 or float(stopped.wind_amplitude) <= 0.0:

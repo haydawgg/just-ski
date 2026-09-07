@@ -86,6 +86,10 @@ var predicted_landing_time := -1.0
 var predicted_landing_normal := Vector3.UP
 var predicted_landing_point := Vector3.ZERO
 var predicted_landing_valid := false
+var _physics_step_serial := 0
+var _landing_prediction_cache_serial := -1
+var _landing_prediction_cache: Dictionary = {}
+var _landing_prediction_evaluations := 0
 var landing_feedback_armed := false
 var landing_context := {}
 var landing_control_multiplier := 1.0
@@ -122,7 +126,7 @@ var _bail_motion_solver := BailMotionSolverModule.new()
 func _ready() -> void:
 	collision_layer = 2
 	collision_mask = 1 | 4
-	floor_max_angle = deg_to_rad(62.0)
+	floor_max_angle = deg_to_rad(profile.maximum_ground_angle_degrees)
 	floor_snap_length = 0.42
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	_build_body()
@@ -156,6 +160,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 func _physics_process(delta: float) -> void:
+	_physics_step_serial += 1
+	_landing_prediction_cache_serial = -1
+	_landing_prediction_cache.clear()
 	_input_sampler.sample_into(input_frame)
 	if input_frame.respawn_pressed:
 		SessionManager.request_respawn()
@@ -178,7 +185,7 @@ func _physics_process(delta: float) -> void:
 		profile.contact_probe_offsets(),
 		profile.ground_probe_origin_height
 	)
-	contact.merge_capsule_floor(is_on_floor(), get_floor_normal())
+	contact.merge_capsule_floor(is_on_floor(), get_floor_normal(), profile.maximum_ground_angle_degrees)
 	_sample_trick_input(delta)
 	match state:
 		State.GROUND: _update_ground(delta)
@@ -215,7 +222,11 @@ func _update_ground(delta: float) -> void:
 	if forward_on_slope.length_squared() < 0.0001:
 		forward_on_slope = contact.downhill()
 	if forward_on_slope.length_squared() < 0.0001:
-		return
+		forward_on_slope = Vector3.FORWARD.slide(normal)
+	if forward_on_slope.length_squared() < 0.0001:
+		forward_on_slope = Vector3.RIGHT.slide(normal)
+	if forward_on_slope.length_squared() < 0.0001:
+		forward_on_slope = Vector3.FORWARD
 	var ski_forward := forward_on_slope.normalized()
 	steering_input_raw = input_frame.steer_raw
 	steering_input = input_frame.steer
@@ -1860,6 +1871,10 @@ func _predict_landing() -> Dictionary:
 	}
 	if state != State.AIR:
 		return result
+	if _landing_prediction_cache_serial == _physics_step_serial:
+		return _landing_prediction_cache.duplicate(true)
+	_landing_prediction_cache_serial = _physics_step_serial
+	_landing_prediction_evaluations += 1
 	var step := clampf(profile.landing_prediction_step, 0.025, 0.15)
 	var horizon := profile.landing_prediction_seconds
 	if not is_finite(horizon):
@@ -1883,10 +1898,12 @@ func _predict_landing() -> Dictionary:
 			result.valid = true
 			result.normal = (hit.normal as Vector3).normalized() if (hit.normal as Vector3).length_squared() > 0.0001 else Vector3.UP
 			result.point = hit.position as Vector3
+			_landing_prediction_cache = result.duplicate(true)
 			return result
 		position = next_position
 		predicted_velocity = next_velocity
 		elapsed += step
+	_landing_prediction_cache = result.duplicate(true)
 	return result
 
 func _surface_drag_multiplier() -> float:
