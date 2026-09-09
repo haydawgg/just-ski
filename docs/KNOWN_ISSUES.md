@@ -40,4 +40,4 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 ## Recovery presentation
 
-- **Out-of-bounds recovery now has configurable fade-out, respawn, and fade-in timing.** The transition wraps the HUD notice and still needs a human visual pass for readability across display refresh rates; it is intentionally not treated as a physics pause.
+- **Out-of-bounds recovery now has configurable fade-out, respawn, and fade-in timing plus a GPU review capture.** `visual_analysis_bundle.ps1 -IncludeRecovery` records the HUD notice, phase images, overlay alpha, camera/root transforms, and lifecycle signals; a human visual pass is still required for readability across display refresh rates. It is intentionally not treated as a physics pause.

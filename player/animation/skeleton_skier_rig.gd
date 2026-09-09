@@ -765,8 +765,9 @@ func _build_attachments() -> void:
 	var ski_base := SkierEquipment.material(outfit_profile.ski_base_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var jacket := SkierEquipment.material(outfit_profile.jacket_color, outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
-	var jacket_trim := SkierEquipment.material(outfit_profile.jacket_color.darkened(0.28), outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
-	var jacket_accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.cloth_roughness, 0.02, outfit_profile.cloth_specular)
+	var jacket_trim := SkierEquipment.material(outfit_profile.jacket_trim_color, outfit_profile.cloth_roughness, 0.02, outfit_profile.cloth_specular)
+	var jacket_accent := SkierEquipment.material(outfit_profile.jacket_panel_color, outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
+	var jacket_detail := SkierEquipment.material(outfit_profile.jacket_detail_color, outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
 	var pole_surface := SkierEquipment.material(outfit_profile.pole_color.darkened(0.16), outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
 	var helmet_surface := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var frame_surface := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18, outfit_profile.hardgoods_specular)
@@ -795,7 +796,7 @@ func _build_attachments() -> void:
 	# (measured, not eyeballed): stripe/zip inner faces ~2-4mm embedded, pocket
 	# on the chest wall. Primitive-calibrated values would float centimeters
 	# off this body, hence per-rig calibration.
-	SkierEquipment.build_jacket_details(spine_mount, chest_mount, jacket_accent, dark, jacket_trim,
+	SkierEquipment.build_jacket_details(spine_mount, chest_mount, jacket_accent, jacket_detail, jacket_trim,
 		0.143, -0.148, Vector3(-0.085, 0.06, -0.132))
 	for side: StringName in [&"left", &"right"]:
 		var shoulder_attachment := _bone_attachment(StringName(side + "_shoulder"), side.capitalize() + "SleeveShoulderAttachment")

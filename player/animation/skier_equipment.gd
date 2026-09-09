@@ -248,7 +248,14 @@ static func build_jacket_details(spine_parent: Node3D, chest_parent: Node3D, acc
 	# Front-facing details follow the chest, not the lower spine, so a carve,
 	# grab, or flip cannot leave the zipper/pocket floating off the jacket shell.
 	add_box(chest_parent, "JacketFrontZip", Vector3(0.012, 0.30, 0.008), Vector3(0.0, -0.08, front_z), dark_surface)
+	# A small asymmetric chest panel and raised pocket flap give the jacket a
+	# stable authored identity in close review frames without introducing a
+	# texture dependency or a second torso volume.
+	var chest_panel_position := Vector3(0.105, 0.055, front_z + 0.002)
+	add_box(chest_parent, "JacketChestPanel", Vector3(0.075, 0.14, 0.006), chest_panel_position, accent_surface)
+	add_box(chest_parent, "JacketChestPanelTrim", Vector3(0.082, 0.012, 0.008), chest_panel_position + Vector3(0.0, 0.064, 0.001), trim_surface)
 	add_box(chest_parent, "JacketChestPocket", Vector3(0.095, 0.052, 0.008), pocket_offset, trim_surface)
+	add_box(chest_parent, "JacketChestPocketFlap", Vector3(0.108, 0.012, 0.009), pocket_offset + Vector3(0.0, 0.031, 0.001), accent_surface)
 
 static func build_sleeves(shoulder_parent: Node3D, elbow_parent: Node3D, side: String, jacket_surface: Material, cuff_surface: Material) -> void:
 	# The source arm silhouette is intentionally light on geometry. These two

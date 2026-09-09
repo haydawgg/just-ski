@@ -7,6 +7,14 @@ render_mode shadows_disabled, blend_mix, depth_draw_opaque, cull_back, diffuse_b
 // sunset shadow map that can swallow a large render-only surface.
 #include "res://shaders/snow_common.gdshaderinc"
 
+// These values are deliberately profile-driven so summit form can be tuned
+// independently from the playable snow materials without changing collision.
+uniform float summit_form_contrast : hint_range(0.0, 0.2) = 0.06;
+uniform float summit_macro_contrast : hint_range(0.0, 0.2) = 0.03;
+uniform float summit_drift_strength : hint_range(0.0, 1.5) = 0.9;
+uniform float summit_broad_variation : hint_range(0.0, 0.3) = 0.12;
+uniform float summit_luminance_floor : hint_range(0.2, 0.9) = 0.58;
+
 void vertex() {
 	snow_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	snow_world_normal = normalize(MODEL_NORMAL_MATRIX * NORMAL);
@@ -29,15 +37,15 @@ void fragment() {
 	vec3 form_direction = normalize(vec3(form_light_direction_world_xz.x, 0.82, form_light_direction_world_xz.y));
 	float form_light = clamp(dot(normalize(snow_world_normal), form_direction), 0.0, 1.0);
 	float broad_variation = snow_value_noise(snow_world_position.xz * max(far_macro_scale, 0.001));
-	float form_value = mix(0.94, 1.06, form_light);
-	float macro_value = mix(0.97, 1.03, broad_variation);
+	float form_value = mix(1.0 - summit_form_contrast, 1.0 + summit_form_contrast, form_light);
+	float macro_value = mix(1.0 - summit_macro_contrast, 1.0 + summit_macro_contrast, broad_variation);
 	surface_albedo *= form_value * macro_value;
-	float drift_value = (snow_value_noise(snow_world_position.xz * 0.18) - 0.5) * 0.9;
-	float broad_value = (broad_variation - 0.5) * 0.12;
+	float drift_value = (snow_value_noise(snow_world_position.xz * 0.18) - 0.5) * summit_drift_strength;
+	float broad_value = (broad_variation - 0.5) * summit_broad_variation;
 	surface_albedo += vec3(drift_value + broad_value);
 	float varied_luminance = dot(surface_albedo, vec3(0.2126, 0.7152, 0.0722));
-	if (varied_luminance < 0.58) {
-		surface_albedo += vec3(0.58 - varied_luminance);
+	if (varied_luminance < summit_luminance_floor) {
+		surface_albedo += vec3(summit_luminance_floor - varied_luminance);
 	}
 	ALBEDO = clamp(surface_albedo, vec3(0.0), vec3(1.0));
 	NORMAL = surface_normal_view;

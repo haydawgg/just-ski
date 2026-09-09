@@ -117,6 +117,8 @@ func _build_lift_tower(lod0: Node3D, lod1: Node3D) -> void:
 	var accent := _material(Color("#d6a14e"), 0.7, 0.06)
 	for side: float in [-1.0, 1.0]:
 		_add_cylinder(lod0, "TowerLeg", 0.09, 0.13, 6.3, Vector3(side * 0.82, 3.15, 0.0), metal, 7, 0.0, 150.0)
+		_add_cylinder(lod0, "TowerBrace", 0.045, 0.06, 5.2, Vector3(side * 0.38, 2.75, 0.0), metal, 6, 0.0, 150.0, Vector3(0.0, 0.0, -side * 8.0))
+	_add_box(lod0, "TowerBaseBeam", Vector3(2.0, 0.16, 0.34), Vector3(0.0, 0.38, 0.0), metal, 0.0, 150.0)
 	_add_box(lod0, "TowerCrossbar", Vector3(3.2, 0.22, 0.5), Vector3(0.0, 6.05, 0.0), metal, 0.0, 150.0)
 	for side: float in [-1.15, 1.15]:
 		_add_cylinder(lod0, "Pulley", 0.22, 0.22, 0.18, Vector3(side, 5.83, 0.0), accent, 10, 0.0, 150.0, Vector3(90.0, 0.0, 0.0))
@@ -131,6 +133,7 @@ func _build_snowmaker(lod0: Node3D, lod1: Node3D) -> void:
 	_add_box(lod0, "SnowmakerMast", Vector3(0.16, 1.35, 0.16), Vector3(0.0, 0.78, 0.0), frame, 0.0, 105.0)
 	var barrel_mesh := _add_cylinder(lod0, "SnowmakerBarrel", 0.28, 0.36, 1.0, Vector3(0.0, 1.63, -0.14), barrel, 10, 0.0, 105.0, Vector3(66.0, 0.0, 0.0))
 	barrel_mesh.set_meta("readability_accent", true)
+	_add_cylinder(lod0, "SnowmakerNozzle", 0.09, 0.12, 0.12, Vector3(0.0, 1.72, -0.53), barrel, 8, 0.0, 105.0, Vector3(66.0, 0.0, 0.0))
 	_add_box(lod1, "SnowmakerLow", Vector3(0.8, 2.0, 1.0), Vector3(0.0, 1.0, -0.08), frame, 84.0, 210.0)
 
 func _build_trail_board(lod0: Node3D, lod1: Node3D) -> void:
@@ -142,12 +145,14 @@ func _build_trail_board(lod0: Node3D, lod1: Node3D) -> void:
 		_add_box(lod0, "BoardPost", Vector3(0.12, 1.55, 0.14), Vector3(side * 0.56, 0.775, 0.0), post, 0.0, 120.0)
 	_add_box(lod0, "TrailBoardFace", Vector3(1.6, 0.65, 0.2), Vector3(0.0, 1.65, 0.0), board, 0.0, 120.0)
 	_add_box(lod0, "TrailBoardStripe", Vector3(1.08, 0.11, 0.205), Vector3(0.0, 1.65, -0.002), _material(Color("#edf4ed"), 0.9), 0.0, 120.0)
+	_add_box(lod0, "TrailBoardTopCap", Vector3(1.72, 0.08, 0.22), Vector3(0.0, 1.99, 0.0), _material(Color("#edf4ed"), 0.88), 0.0, 120.0)
 	_add_box(lod1, "TrailBoardLow", Vector3(1.6, 1.98, 0.2), Vector3(0.0, 0.99, 0.0), board, 98.0, 230.0)
 
 func _build_snow_boulder(lod0: Node3D, lod1: Node3D) -> void:
 	set_meta("readability_category", "environment_rock")
 	var variant := int(get_meta("style_variant", 0))
 	var rock := _material(Color("#667985").lightened(float(variant % 3) * 0.035), 0.94, 0.0)
+	var facet := _material(Color("#7d8e96").lightened(float(variant % 2) * 0.04), 0.96, 0.0)
 	var snow := _material(Color("#dcebf0"), 0.98)
 	# Keep the authored bounds stable across style variants so the catalog's
 	# nominal dimensions remain meaningful after each placement is validated.
@@ -155,7 +160,9 @@ func _build_snow_boulder(lod0: Node3D, lod1: Node3D) -> void:
 	var height := 1.25
 	var depth := 2.15
 	_add_rock(lod0, "BoulderBody", Vector3(width, height, depth), Vector3(0.0, height * 0.5, 0.0), rock, 0.0, 110.0, 8 + variant % 3)
+	_add_rock(lod0, "BoulderFacet", Vector3(width * 0.42, height * 0.30, depth * 0.38), Vector3(width * 0.21, height * 0.42, depth * 0.16), facet, 0.0, 110.0, 7)
 	_add_rock(lod0, "BoulderSnow", Vector3(width * 0.64, height * 0.24, depth * 0.58), Vector3(-width * 0.08, height * 0.91, -depth * 0.06), snow, 0.0, 110.0, 7)
+	_add_rock(lod0, "BoulderSnowLobe", Vector3(width * 0.32, height * 0.16, depth * 0.30), Vector3(width * 0.22, height * 0.90, depth * 0.14), snow, 0.0, 110.0, 7)
 	_add_rock(lod1, "BoulderLow", Vector3(width * 1.04, height * 0.94, depth * 0.98), Vector3(0.0, height * 0.47, 0.0), rock, 82.0, 230.0, 7)
 
 func _add_rock(parent: Node3D, node_name: String, size: Vector3, position: Vector3, material: Material, begin: float, end: float, segments: int) -> MeshInstance3D:
