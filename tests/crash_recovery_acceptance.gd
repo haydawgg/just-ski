@@ -15,6 +15,16 @@ func _ready() -> void:
 	_test_bail_rest_damping()
 	_test_crash_entry_clears_locomotion()
 	_test_grounded_crash_tumbles_gradually()
+	_test_surface_roll_axis_on_flat_and_slope()
+	_test_surface_roll_reverses_with_travel()
+	_test_surface_roll_grows_with_speed_and_respects_cap()
+	_test_zero_speed_does_not_generate_roll()
+	_test_travel_direction_sprawl()
+	_test_degenerate_roll_inputs_remain_finite()
+	_test_grounded_tumble_respects_rotation_bounds()
+	_test_airborne_bail_continuity_unchanged()
+	_test_ground_alignment_weakens_with_speed()
+	_test_rest_detection_and_recovery_timing()
 	_test_crash_settling_shows_low_speed_motion()
 	_test_recovery_is_rate_limited_and_coordinated()
 	await _test_world_origin_seating()
@@ -26,6 +36,7 @@ func _ready() -> void:
 	await _test_airborne_contact_normal_refresh()
 	await _test_grind_feature_collision_enters_bail()
 	await _test_bounded_rest_and_recovery()
+	await _test_recovery_freeze_ignores_session_input()
 	await _test_course_recovery_lifecycle_and_scoring()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
@@ -465,19 +476,240 @@ func _test_grounded_crash_tumbles_gradually() -> void:
 	skier.angular_velocity = Vector3(0.5, 0.3, 0.4)
 	skier.crash_context.set_stage(CrashContext.Stage.FALL)
 	var before := skier.global_basis.orthonormalized().get_rotation_quaternion()
-	var up_before := skier.global_basis.y.normalized().dot(Vector3.UP)
 	skier._update_bail(1.0 / 60.0)
 	var after := skier.global_basis.orthonormalized().get_rotation_quaternion()
 	var turn := before.angle_to(after)
 	if turn < 0.0005:
 		failures.append("Grounded crash did not tumble; bail froze with angular momentum available")
-	if turn > 0.1:
-		failures.append("Grounded crash snapped %.1f degrees in one tick instead of settling gradually" % rad_to_deg(turn))
-	var up_after := skier.global_basis.y.normalized().dot(Vector3.UP)
-	if up_after < up_before - 0.05:
-		failures.append("Grounded crash tilted further from the snow instead of owning upright alignment through contact")
+	var max_step := BailMotionSolver.new().grounded_rotation_step_limit(1.0 / 60.0, skier.profile)
+	if turn > max_step + 0.0001:
+		failures.append("Grounded crash snapped %.1f degrees in one tick instead of staying inside the rotation bound" % rad_to_deg(turn))
 	remove_child(skier)
 	skier.queue_free()
+
+func _test_surface_roll_axis_on_flat_and_slope() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var flat_travel := Vector3(4.0, 0.0, 0.0)
+	var flat_axis := solver.surface_roll_axis(Vector3.UP, flat_travel)
+	var expected_flat := Vector3.UP.cross(flat_travel.normalized())
+	if flat_axis.distance_to(expected_flat) > 0.001:
+		failures.append("Flat-ground roll axis was %s instead of normal × travel %s" % [flat_axis, expected_flat])
+	var slope := Vector3(0.4, 1.0, 0.0).normalized()
+	var slope_travel := Vector3.FORWARD.slide(slope).normalized() * 6.0
+	var slope_axis := solver.surface_roll_axis(slope, slope_travel)
+	var expected_slope := slope.cross(slope_travel.normalized())
+	if slope_axis.distance_to(expected_slope) > 0.001:
+		failures.append("Slope roll axis was %s instead of normal × travel %s" % [slope_axis, expected_slope])
+	var stepped := solver.step_motion(slope_travel, Vector3.ZERO, slope, true, CrashContext.Stage.FALL, 1.0 / 60.0, profile)
+	if not stepped.roll_valid or stepped.roll_axis.dot(expected_slope) < 0.98:
+		failures.append("Grounded FALL step did not publish the slope roll axis")
+
+func _test_surface_roll_reverses_with_travel() -> void:
+	var solver := BailMotionSolver.new()
+	var forward := solver.surface_roll_axis(Vector3.UP, Vector3(5.0, 0.0, 0.0))
+	var backward := solver.surface_roll_axis(Vector3.UP, Vector3(-5.0, 0.0, 0.0))
+	if forward.dot(backward) > -0.98:
+		failures.append("Reversing planar travel did not reverse the generated roll axis")
+	var profile := SkiPhysicsProfile.new()
+	var coupled_forward := solver.couple_surface_roll(Vector3.ZERO, Vector3.UP, Vector3(5.0, 0.0, 0.0), Basis.IDENTITY, profile)
+	var coupled_backward := solver.couple_surface_roll(Vector3.ZERO, Vector3.UP, Vector3(-5.0, 0.0, 0.0), Basis.IDENTITY, profile)
+	if coupled_forward.dot(coupled_backward) >= 0.0:
+		failures.append("Reversing planar travel did not reverse generated roll angular velocity")
+
+func _test_surface_roll_grows_with_speed_and_respects_cap() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var slow := solver.surface_roll_speed(2.0, profile)
+	var fast := solver.surface_roll_speed(4.0, profile)
+	var capped := solver.surface_roll_speed(100.0, profile)
+	if slow <= 0.0 or fast <= slow:
+		failures.append("Generated roll speed did not grow with planar speed (slow=%.3f fast=%.3f)" % [slow, fast])
+	if capped > profile.crash_roll_max_angular_speed + 0.0001:
+		failures.append("Generated roll speed %.3f exceeded the configured cap %.3f" % [capped, profile.crash_roll_max_angular_speed])
+	var incoming := Vector3(1.2, -0.4, 0.8)
+	var coupled := solver.couple_surface_roll(incoming, Vector3.UP, Vector3(8.0, 0.0, 0.0), Basis.IDENTITY, profile)
+	var pure_roll := solver.surface_roll_axis(Vector3.UP, Vector3(8.0, 0.0, 0.0)) * profile.crash_roll_max_angular_speed
+	if coupled.distance_to(incoming) < 0.001:
+		failures.append("Ground-coupled roll did not blend toward the surface-roll component")
+	if coupled.distance_to(pure_roll) < 0.001:
+		failures.append("Ground-coupled roll replaced incoming crash angular momentum outright")
+
+func _test_zero_speed_does_not_generate_roll() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	if solver.surface_roll_speed(0.0, profile) != 0.0 or solver.surface_roll_speed(0.05, profile) != 0.0:
+		failures.append("Near-zero planar speed manufactured a surface-roll rate")
+	if solver.surface_roll_axis(Vector3.UP, Vector3(0.01, 0.0, 0.0)) != Vector3.ZERO:
+		failures.append("Near-zero travel manufactured a roll axis")
+	var incoming := Vector3(0.6, -0.2, 0.4)
+	var result := solver.step_motion(Vector3.ZERO, incoming, Vector3.UP, true, CrashContext.Stage.FALL, 1.0 / 60.0, profile)
+	if result.roll_valid or result.generated_roll_speed != 0.0:
+		failures.append("Zero-speed FALL generated a surface-roll component")
+	var expected := incoming * exp(-profile.crash_ground_angular_damping * 0.6 * (1.0 / 60.0))
+	if result.angular_velocity.distance_to(expected) > 0.0001:
+		failures.append("Zero-speed FALL did not keep the existing damped crash angular velocity")
+
+func _test_travel_direction_sprawl() -> void:
+	var layer := CrashReactionLayer.new()
+	var profile := SkierAnimationProfile.new()
+	var forward := layer.fall_travel_sprawl(_make_sprawl_frame(Vector3(0.0, 0.0, -6.0)), profile)
+	var backward := layer.fall_travel_sprawl(_make_sprawl_frame(Vector3(0.0, 0.0, 6.0)), profile)
+	var left := layer.fall_travel_sprawl(_make_sprawl_frame(Vector3(-6.0, 0.0, 0.0)), profile)
+	var right := layer.fall_travel_sprawl(_make_sprawl_frame(Vector3(6.0, 0.0, 0.0)), profile)
+	if not bool(forward.get("valid", false)) or float(forward.get("forward", 0.0)) <= 0.7:
+		failures.append("Forward crash travel did not drive a forward FALL sprawl")
+	if not bool(backward.get("valid", false)) or float(backward.get("forward", 0.0)) >= -0.7:
+		failures.append("Backward crash travel did not drive a backward FALL sprawl")
+	if not bool(left.get("valid", false)) or float(left.get("lateral", 0.0)) >= -0.7:
+		failures.append("Left crash travel did not drive a left FALL sprawl")
+	if not bool(right.get("valid", false)) or float(right.get("lateral", 0.0)) <= 0.7:
+		failures.append("Right crash travel did not drive a right FALL sprawl")
+	var forward_pelvis := forward.get("pelvis", Vector3.ZERO) as Vector3
+	var backward_pelvis := backward.get("pelvis", Vector3.ZERO) as Vector3
+	if forward_pelvis.x >= backward_pelvis.x:
+		failures.append("Forward travel did not fold the pelvis more than backward travel")
+	var left_pelvis := left.get("pelvis", Vector3.ZERO) as Vector3
+	var right_pelvis := right.get("pelvis", Vector3.ZERO) as Vector3
+	if left_pelvis.z * right_pelvis.z >= 0.0:
+		failures.append("Lateral travel did not roll the pelvis with skier-local travel direction")
+
+func _test_degenerate_roll_inputs_remain_finite() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var layer := CrashReactionLayer.new()
+	var zero_axis := solver.surface_roll_axis(Vector3.ZERO, Vector3(4.0, 0.0, 0.0))
+	var parallel_axis := solver.surface_roll_axis(Vector3.UP, Vector3(0.0, 5.0, 0.0))
+	var nan_velocity := Vector3(NAN, 0.0, 0.0)
+	var nan_step := solver.step_motion(nan_velocity, Vector3.ONE, Vector3.UP, true, CrashContext.Stage.FALL, 1.0 / 60.0, profile)
+	var inf_normal := solver.integrate_grounded_crash_basis(Basis.IDENTITY, Vector3.ONE, Vector3(INF, 0.0, 0.0), Vector3.RIGHT, 6.0, 1.0 / 60.0, profile)
+	var degenerate_sprawl := layer.fall_travel_sprawl(_make_sprawl_frame(Vector3.ZERO), SkierAnimationProfile.new())
+	if zero_axis != Vector3.ZERO or parallel_axis != Vector3.ZERO:
+		failures.append("Degenerate normals or travel manufactured a roll axis")
+	if not nan_step.angular_velocity.is_finite() or not nan_step.velocity.is_finite() or nan_step.roll_valid:
+		failures.append("Non-finite travel produced a non-finite or invented grounded roll")
+	if not inf_normal.x.is_finite() or not inf_normal.y.is_finite() or not inf_normal.z.is_finite():
+		failures.append("Invalid ground normal produced a non-finite crash basis")
+	if bool(degenerate_sprawl.get("valid", true)) or not (degenerate_sprawl.get("pelvis", Vector3.ONE) as Vector3).is_finite():
+		failures.append("Zero-speed sprawl left the FALL pose owner or went non-finite")
+
+func _test_grounded_tumble_respects_rotation_bounds() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	for hz: int in [30, 60, 120]:
+		var delta := 1.0 / float(hz)
+		var max_step := solver.grounded_rotation_step_limit(delta, profile)
+		var proposed := solver.integrate_grounded_crash_basis(
+			Basis.IDENTITY,
+			Vector3.RIGHT * 40.0,
+			Vector3.UP,
+			Vector3(12.0, 0.0, 0.0),
+			0.0,
+			delta,
+			profile
+		)
+		var angle := Basis.IDENTITY.get_rotation_quaternion().angle_to(proposed.get_rotation_quaternion())
+		if angle > max_step + 0.0001:
+			failures.append("Grounded tumble at %d Hz rotated %.3f rad beyond the %.3f bound" % [hz, angle, max_step])
+		skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3(12.0, 0.0, 0.0))
+		skier.enter_crash(_make_crash_context(skier.velocity))
+		skier.contact.grounded = true
+		skier.contact.average_normal = Vector3.UP
+		skier.angular_velocity = Vector3.RIGHT * 40.0
+		skier.crash_context.set_stage(CrashContext.Stage.FALL)
+		var before := skier.global_basis.orthonormalized().get_rotation_quaternion()
+		skier._update_bail(delta)
+		var turn := before.angle_to(skier.global_basis.orthonormalized().get_rotation_quaternion())
+		if turn > max_step + 0.0001:
+			failures.append("Controller grounded tumble at %d Hz rotated %.3f rad beyond the bound" % [hz, turn])
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_airborne_bail_continuity_unchanged() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	for hz: int in [30, 60, 120]:
+		var delta := 1.0 / float(hz)
+		for axis: Vector3 in [Vector3.RIGHT, Vector3.BACK]:
+			var incoming := axis * 1.0
+			var motion := solver.step_motion(Vector3.DOWN, incoming, Vector3.UP, false, CrashContext.Stage.FALL, delta, profile, Basis(axis, deg_to_rad(150.0)))
+			var expected_angular := incoming * exp(-profile.crash_air_angular_damping * delta)
+			if motion.angular_velocity.distance_to(expected_angular) > 0.000001:
+				failures.append("Airborne BAIL angular damping at %d Hz changed (got %s expected %s)" % [hz, motion.angular_velocity, expected_angular])
+			if motion.roll_valid or motion.generated_roll_speed != 0.0:
+				failures.append("Airborne BAIL manufactured a ground-coupled roll component")
+			var initial_basis := Basis(axis, deg_to_rad(150.0))
+			skier.reset_for_benchmark(Transform3D(initial_basis, Vector3(0.0, 10.0, 0.0)), Vector3.DOWN)
+			skier.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+			skier.angular_velocity = incoming
+			skier._bail()
+			skier.contact.grounded = false
+			var before_basis := skier.transform.basis
+			skier._update_bail(delta)
+			if skier.angular_velocity.distance_to(expected_angular) > 0.000001:
+				failures.append("Airborne BAIL controller damping at %d Hz changed" % hz)
+			var expected_basis := (
+				before_basis
+				* Basis(Vector3.RIGHT, expected_angular.x * delta)
+				* Basis(Vector3.UP, expected_angular.y * delta)
+				* Basis(Vector3.BACK, expected_angular.z * delta)
+			).orthonormalized()
+			var actual_basis := skier.transform.basis.orthonormalized()
+			var turn := expected_basis.get_rotation_quaternion().angle_to(actual_basis.get_rotation_quaternion())
+			if turn > 0.002:
+				failures.append("Airborne BAIL rotation path at %d Hz diverged from the existing local-axis integration (%.5f rad)" % [hz, turn])
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_ground_alignment_weakens_with_speed() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var slow := solver.ground_align_rate(CrashContext.Stage.FALL, 0.2, profile)
+	var mid := solver.ground_align_rate(CrashContext.Stage.FALL, 3.5, profile)
+	var fast := solver.ground_align_rate(CrashContext.Stage.FALL, 20.0, profile)
+	var rest := solver.ground_align_rate(CrashContext.Stage.REST, 20.0, profile)
+	var recovery := solver.ground_align_rate(CrashContext.Stage.RECOVERY, 20.0, profile)
+	if mid > slow + 0.0001 or fast > mid + 0.0001:
+		failures.append("Snow alignment strengthened as FALL travel speed increased")
+	if rest < slow or recovery < slow:
+		failures.append("REST/recovery alignment was weaker than slow FALL alignment")
+	if rest < profile.bail_ground_align_rate - 0.0001:
+		failures.append("REST alignment did not use the full snow-align rate")
+
+func _test_rest_detection_and_recovery_timing() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var quiet := solver.resolve_rest(true, profile.crash_min_duration, 0.0, 0.0, false, 0.0, profile.crash_rest_confirm_time, 0.18, 0.22, profile)
+	if not quiet.rest_detected or quiet.stage != CrashContext.Stage.REST:
+		failures.append("Quiet grounded crash no longer confirmed REST")
+	var hold := solver.resolve_rest(true, profile.crash_min_duration, 0.0, 0.0, true, 0.0, profile.crash_rest_hold_time, 0.18, 0.22, profile)
+	if not hold.should_recover:
+		failures.append("REST hold time no longer released recovery")
+	var moving := solver.resolve_rest(true, profile.crash_min_duration, profile.crash_rest_speed + 0.5, 0.0, false, 0.05, 1.0 / 60.0, 0.18, 0.22, profile)
+	if moving.rest_detected or moving.rest_elapsed != 0.0:
+		failures.append("Rest detection confirmed while planar speed was still above the rest threshold")
+
+func _make_sprawl_frame(velocity: Vector3) -> SkierAnimationFrame:
+	var frame := SkierAnimationFrame.new()
+	frame.locomotion_state = 3
+	frame.crash_stage = CrashContext.Stage.FALL
+	frame.crash_current_velocity = velocity
+	frame.crash_incoming_velocity = velocity
+	frame.ground_normal = Vector3.UP
+	frame.crash_impact_normal = Vector3.UP
+	frame.body_up = Vector3.UP
+	frame.body_up_valid = true
+	frame.ski_forward = Vector3.FORWARD
+	frame.ski_forward_valid = true
+	frame.grounded = false
+	return frame
 
 func _test_crash_settling_shows_low_speed_motion() -> void:
 	var skier := SkierController.new()
@@ -772,7 +1004,39 @@ func _test_grind_feature_collision_enters_bail() -> void:
 	remove_child(rail)
 	rail.queue_free()
 
+func _test_recovery_freeze_ignores_session_input() -> void:
+	var skier := SkierController.new()
+	skier.set_physics_process(false)
+	add_child(skier)
+	await get_tree().physics_frame
+	SessionManager.clear_marker()
+	var spawn := Transform3D(Basis.IDENTITY, Vector3(0.0, 6.0, 0.0))
+	SessionManager.set_default_spawn(spawn)
+	var stay_put := Vector3(5.0, 4.0, 5.0)
+	skier.global_position = stay_put
+	var count_before := int(skier.telemetry().respawn_count)
+	skier.set_recovery_frozen(true)
+	Input.action_press("respawn")
+	skier._physics_process(1.0 / 60.0)
+	Input.action_release("respawn")
+	if int(skier.telemetry().respawn_count) != count_before:
+		failures.append("Recovery freeze still honored a respawn input")
+	if skier.global_position.distance_to(stay_put) > 0.05:
+		failures.append("Recovery freeze respawn input moved the skier")
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	Input.action_press("set_marker")
+	skier._physics_process(1.0 / 60.0)
+	Input.action_release("set_marker")
+	if SessionManager.has_marker:
+		failures.append("Recovery freeze still saved a marker")
+		SessionManager.clear_marker()
+	skier.set_recovery_frozen(false)
+	remove_child(skier)
+	skier.queue_free()
+
 func _test_course_recovery_lifecycle_and_scoring() -> void:
+	await get_tree().process_frame
 	var skier := SkierController.new()
 	skier.set_physics_process(false)
 	add_child(skier)
@@ -792,7 +1056,10 @@ func _test_course_recovery_lifecycle_and_scoring() -> void:
 	for _frame: int in 8:
 		await get_tree().physics_frame
 	if started[0] != 1 or completed[0] != 1 or recovery.recovery_count != 1:
-		failures.append("Course recovery did not emit exactly one start/completion lifecycle")
+		failures.append(
+			"Course recovery did not emit exactly one start/completion lifecycle (started=%s completed=%s count=%s)"
+			% [started[0], completed[0], recovery.recovery_count]
+		)
 	if recovery.recovery_in_progress or skier.recovery_frozen:
 		failures.append("Course recovery remained frozen after completion")
 	if skier.global_position.distance_to(SessionManager.default_spawn.origin) > 0.05:

@@ -2,8 +2,11 @@
 
 F9 arms the next summit run for a 960×540, 30 fps MJPEG-in-MP4 capture. Press
 F9 again while the recorder is idle to cancel that pending arm. The pending
-arm survives a run ending before summit capture starts and is consumed when a
-summit run begins. While recording, F9 stops the current capture. The JPEG
+arm survives a run ending before summit capture starts and is consumed only by
+an explicit Restart from Summit, not by session or course-recovery respawns
+that happen to use the default spawn. While recording, F9 stops the current
+capture. Out-of-bounds recovery interrupts an in-progress clip instead of
+continuing it across the teleport. The JPEG
 worker is bounded so capture cannot grow an unbounded queue or block the
 gameplay thread.
 

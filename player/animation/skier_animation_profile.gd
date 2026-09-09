@@ -230,6 +230,11 @@ extends Resource
 @export var landing_wobble_amplitude: float = 0.22
 @export var landing_wobble_frequency: float = 7.5
 @export var landing_wobble_decay: float = 3.2
+@export var landing_wobble_age_decay: float = 1.6
+@export var landing_stabilization_hold_soft: float = 0.07
+@export var landing_stabilization_hold_hard: float = 0.14
+@export var landing_failsafe_time: float = 1.8
+@export var landing_failsafe_response_scale: float = 2.0
 @export var landing_rotation_correct_yaw: float = 0.18
 @export var landing_asymmetry_gain: float = 0.28
 @export var landing_hop_air_time_reference: float = 0.35
@@ -331,6 +336,8 @@ extends Resource
 @export_range(0.0, 1.0) var ground_leg_ik_weight: float = 1.0
 @export_range(0.0, 1.0) var rail_leg_ik_weight: float = 0.94
 @export_range(0.0, 1.0) var air_leg_ik_weight: float = 0.0
+@export_range(0.0, 1.0) var air_preview_leg_ik_weight: float = 0.82
+@export var air_preview_stance_half_width: float = 0.22
 @export_range(0.0, 1.0) var bail_leg_ik_weight: float = 0.0
 @export var leg_ik_weight_response: float = 12.0
 @export var leg_ik_max_angular_rate: float = 8.0
@@ -359,6 +366,13 @@ extends Resource
 @export var crash_tumble_speed: float = 5.2
 @export var crash_tumble_limit: float = 0.58
 @export var crash_directional_response: float = 0.7
+@export var crash_sprawl_pelvis_pitch: float = 0.32
+@export var crash_sprawl_pelvis_yaw: float = 0.16
+@export var crash_sprawl_pelvis_roll: float = 0.42
+@export var crash_sprawl_torso_fold: float = 0.24
+@export var crash_sprawl_arm_spread: float = 0.38
+@export var crash_sprawl_leg_drag: float = 0.22
+@export var crash_sprawl_ski_yaw: float = 0.18
 @export var crash_rest_pelvis_drop: float = 0.28
 @export var crash_rest_arm_spread: float = 0.82
 @export var crash_recovery_duration: float = 0.72

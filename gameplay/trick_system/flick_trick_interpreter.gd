@@ -165,6 +165,20 @@ func _step_grind(sample: TrickInputSample, delta: float) -> void:
 	var stick := sample.right_stick
 	if _setup_active or stick.y >= profile.setup_threshold:
 		_step_ground(sample, delta, true)
+		if _command.kind != TrickCommand.Kind.NONE and _command.kind != TrickCommand.Kind.RAIL_POP:
+			# Rails only pop on an unmodified down-to-up release. An off-axis
+			# setup release must not keep a takeoff impulse that would fire
+			# after a later rail exit.
+			_clear_takeoff_commitment()
+			_command.takeoff_rotation_committed = false
+			_command.takeoff_rotation_impulse = Vector3.ZERO
+			_command.takeoff_release_impulse = Vector3.ZERO
+			_command.rotation_impulse = Vector3.ZERO
+			_command.pop_strength = 0.0
+			if absf(stick.x) >= profile.flick_threshold:
+				_commit_simple(TrickCommand.Kind.RAIL_SLIDE_LEFT if stick.x < 0.0 else TrickCommand.Kind.RAIL_SLIDE_RIGHT, stick, false)
+			else:
+				_command.reset()
 		return
 	if stick.length() <= profile.center_reset_threshold:
 		if _cooldown_remaining <= 0.0:

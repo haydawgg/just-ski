@@ -30,9 +30,12 @@ $inputManager = Read-RequiredFile "autoload/input_manager.gd"
 $inputFrame = Read-RequiredFile "player/input/skier_input_frame.gd"
 $inputSampler = Read-RequiredFile "player/input/skier_input_sampler.gd"
 $profile = Read-RequiredFile "resources/physics/ski_physics_profile.gd"
+$flickInterpreter = Read-RequiredFile "gameplay/trick_system/flick_trick_interpreter.gd"
+$contentTracker = Read-RequiredFile "world/course/park_content_tracker.gd"
 $controller = Read-RequiredFile "player/skier_controller.gd"
 $crashContext = Read-RequiredFile "player/crash_context.gd"
 $animationController = Read-RequiredFile "player/animation/skier_animation_controller.gd"
+$animationProfile = Read-RequiredFile "player/animation/skier_animation_profile.gd"
 $animationFrame = Read-RequiredFile "player/animation/skier_animation_frame.gd"
 $trick = Read-RequiredFile "gameplay/trick_system/trick_controller.gd"
 $contact = Read-RequiredFile "player/ski_contact_solver.gd"
@@ -44,6 +47,8 @@ $builder = Read-RequiredFile "world/course/park_course_builder.gd"
 $course = Read-RequiredFile "world/course/park_course_profile.gd"
 $courseResource = Read-RequiredFile "resources/course/default_course_profile.tres"
 $ui = Read-RequiredFile "ui/hud/game_ui.gd"
+$sessionManager = Read-RequiredFile "autoload/session_manager.gd"
+$clipRecorder = Read-RequiredFile "autoload/clip_recorder.gd"
 $mountainShader = Read-RequiredFile "shaders/distant_mountain.gdshader"
 $groundMotion = Read-RequiredFile "player/motion/ground_motion_solver.gd"
 $airMotion = Read-RequiredFile "player/motion/air_motion_solver.gd"
@@ -62,6 +67,7 @@ $landingPose = Read-RequiredFile "player/animation/landing_pose_layer.gd"
 $railPose = Read-RequiredFile "player/animation/rail_pose_layer.gd"
 $crashReaction = Read-RequiredFile "player/animation/crash_reaction_layer.gd"
 $secondaryMotion = Read-RequiredFile "player/animation/secondary_motion_layer.gd"
+$skiIk = Read-RequiredFile "player/animation/ski_constrained_leg_ik.gd"
 $cameraFraming = Read-RequiredFile "player/camera/camera_framing_solver.gd"
 $cameraCollision = Read-RequiredFile "player/camera/camera_collision_solver.gd"
 $composition = Read-RequiredFile "player/camera/composition_evaluator.gd"
@@ -95,9 +101,28 @@ Require-Match $collisionCrashEvaluator 'class_name CollisionCrashEvaluator' "Fea
 Require-Match $collisionCrashEvaluator 'func evaluate\(' "Feature crash diagnostics must be module-owned."
 Require-Match $bailMotion 'class_name BailMotionSolver' "Bail motion and recovery policy must be exposed through a typed solver module."
 Require-Match $bailMotion 'func resolve_rest\(' "Bail solver must own rest and recovery readiness policy."
+Require-Match $bailMotion 'func surface_roll_axis\(' "Bail solver must own grounded surface-roll axis policy."
+Require-Match $bailMotion 'func couple_surface_roll\(' "Bail solver must blend crash angular velocity into surface roll."
+Require-Match $bailMotion 'func ground_align_rate\(' "Bail solver must own speed-aware snow alignment."
+Require-Match $bailMotion 'func integrate_grounded_crash_basis\(' "Grounded crash rotation must stay inside the bail solver."
 Require-Match $bailMotion 'should_respawn' "Bail solver must expose an unsupported-airborne terminal outcome."
 Require-Match $bailMotion 'not grounded and elapsed >= profile\.crash_max_duration' "Airborne bail timeout must be explicit and profile-bounded."
 Require-Match $bailMotionResult 'should_respawn' "Bail motion results must carry the respawn decision."
+Require-Match $bailMotionResult 'roll_axis' "Bail motion results must expose the generated surface-roll axis."
+Require-Match $profile 'crash_roll_body_radius' "Surface-roll radius must be profile-owned."
+Require-Match $profile 'crash_roll_coupling' "Surface-roll coupling must be profile-owned."
+Require-Match $profile 'crash_roll_max_angular_speed' "Surface-roll cap must be profile-owned."
+Require-Match $profile 'crash_roll_fade_speed' "Generated rolling must fade out below a profile speed."
+Require-Match $profile 'crash_align_speed_reference' "Grounded crash alignment must weaken from a profile speed reference."
+Require-Match $profile 'crash_ground_max_rotation_rate_degrees' "Grounded crash rotation must have a per-frame rate cap."
+$bailUpdate = [regex]::Match($controller, 'func _update_bail\(delta: float\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($bailUpdate.Success) {
+	Require-Match $bailUpdate.Groups["body"].Value 'integrate_grounded_crash_basis' "Grounded bail must apply solver-owned crash integration."
+	Require-Match $bailUpdate.Groups["body"].Value 'rotate_object_local' "Unsupported bail rotation must keep the existing local-axis path."
+	Reject-Match $bailUpdate.Groups["body"].Value 'global_basis\s*=\s*Basis\.looking_at' "Grounded bail cannot rebuild an upright looking_at basis each tick."
+} else {
+	$failures.Add("Could not locate _update_bail.")
+}
 Require-Match $grindCollisionSolver 'class_name GrindCollisionSolver' "GRIND solid-feature queries must be exposed through a typed solver module."
 Require-Match $grindCollisionSolver 'func sweep\(body:\s*CharacterBody3D,\s*motion:\s*Vector3\)' "GRIND collision sweeps must use the skier body and requested rail motion."
 Require-Match $grindCollisionSolver 'PhysicsServer3D\.body_test_motion' "GRIND collision sweeps must use a body motion query."
@@ -106,6 +131,7 @@ Require-Match $grindCollisionResult 'var safe_fraction' "GRIND collision results
 Require-Match $controller 'state_before_motion\s*!=\s*State\.GRIND' "GRIND must not receive a second CharacterBody motion pass."
 Require-Match $controller '_evaluate_grind_collision' "GRIND feature impacts must reuse the crash evaluator seam."
 Require-Match $controller 'State\.GRIND,\s*\r?\n\s*profile\.feature_collision_min_speed' "GRIND feature impacts must be evaluated as GRIND-origin collisions."
+Require-Match $controller 'func respawn_at\(value:\s*Transform3D,\s*_reason:\s*StringName' "Skier respawn must accept the session respawn reason from the signal."
 Require-Match $controller 'var was_finished\s*:=\s*scoring != null and scoring\.finished' "Respawn must snapshot finished-run state before clearing locomotion."
 Require-Match $controller 'if was_finished:\s*\r?\n\s*scoring\.reset_run\(\)' "Respawn after finish must start a new scoring run."
 Require-Match $contact 'average_normal\s*=\s*Vector3\.UP' "Contact sampling must reset the current average normal before each sample."
@@ -125,6 +151,8 @@ Require-Match $railPose 'class_name RailPoseLayer' "Rail presentation policy mus
 Require-Match $railPose 'func slide_target\(' "Rail pose layer must own slide targeting."
 Require-Match $crashReaction 'class_name CrashReactionLayer' "Crash presentation policy must be exposed through a typed layer."
 Require-Match $crashReaction 'func step_pre_bail\(' "Crash reaction layer must own pre-bail response policy."
+Require-Match $crashReaction 'func fall_travel_sprawl\(' "Crash reaction layer must own travel-direction FALL sprawl."
+Require-Match $animationController '_crash_reaction_layer\.fall_travel_sprawl' "FALL presentation must consume the existing crash reaction sprawl."
 Require-Match $secondaryMotion 'class_name SecondaryMotionLayer' "Secondary motion policy must be exposed through a typed layer."
 Require-Match $secondaryMotion 'func target\(' "Secondary motion layer must own activity targeting."
 
@@ -163,6 +191,34 @@ Require-Match $controller 'global_basis\s*=\s*_apply_ground_orientation\(' "Grou
 $landingHandler = [regex]::Match($controller, 'func _handle_landing\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
 if ($landingHandler.Success) {
 	Reject-Match $landingHandler.Groups["body"].Value 'global_basis\s*=\s*Basis\.looking_at' "Successful landing handler cannot replace the physical orientation in one frame."
+}
+
+Require-Match $profile 'seat_approach_speed:\s*float\s*=\s*2\.0' "Seat approach speed must remain the spawn-settle hard ceiling."
+Require-Match $profile 'spawn_settle_response:\s*float\s*=\s*8\.0' "Spawn settle may add only a response/easing parameter beside the approach-speed ceiling."
+Require-Match $airMotion 'func limit_normal_approach\(' "Air motion solver must own spawn-settle approach-speed policy."
+Require-Match $controller 'var _spawn_settle_active\s*:=\s*false' "Spawn settle must be an explicit controller window."
+Require-Match $controller 'func _begin_spawn_settle\(' "Initial spawn and respawn_at must enable spawn settle through one seam."
+Require-Match $controller 'func _end_spawn_settle\(' "Quiet reseat and GROUND-to-AIR entries must clear spawn settle explicitly."
+Require-Match $controller 'func _sample_reset_contact\(' "Presentation reset must sample fresh terrain contact."
+Require-Match $controller '_sample_reset_contact\(\)' "Reset presentation must publish from a synchronous contact sample."
+Require-Match $controller '_begin_spawn_settle\(\)' "Spawn settle must be enabled on the reset/respawn path."
+Require-Match $controller '_apply_spawn_settle_approach\(' "Spawn descent must ease toward the support surface while still in AIR."
+Reject-Match $controller '_spawn_settle_active\s*=\s*not\s+air_deliberate|_spawn_settle_active\s*=\s*air_deliberate\s*==\s*false' "Spawn settle cannot be inferred from air_deliberate."
+$resetPresentation = [regex]::Match($controller, 'func _reset_presentation\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($resetPresentation.Success) {
+	Require-Match $resetPresentation.Groups["body"].Value '_sample_reset_contact\(\)' "Reset presentation must sample contact before publishing the pose."
+	Require-Match $resetPresentation.Groups["body"].Value '_update_animation\(0\.0,\s*true\)' "Reset presentation must publish the sampled pose before respawn observers."
+	Reject-Match $resetPresentation.Groups["body"].Value 'state\s*=\s*State\.GROUND' "Reset presentation cannot force gameplay into GROUND."
+}
+$reseatHandler = [regex]::Match($controller, 'func _reseat_on_snow\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($reseatHandler.Success) {
+	Require-Match $reseatHandler.Groups["body"].Value 'spawn_settle' "Quiet reseat must distinguish spawn settle from armed terrain hops."
+	Require-Match $reseatHandler.Groups["body"].Value '_end_spawn_settle\(\)' "Successful spawn reseat must clear the spawn-settle window immediately."
+	Reject-Match $reseatHandler.Groups["body"].Value 'landed\.emit' "Spawn reseat cannot emit the deliberate landing signal."
+}
+$groundUpdate = [regex]::Match($controller, 'func _update_ground\(delta: float\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($groundUpdate.Success) {
+	Reject-Match $groundUpdate.Groups["body"].Value '_apply_spawn_settle_approach|_spawn_settle_active' "Ground suspension and spawn descent cannot apply competing normal pulls in GROUND."
 }
 
 Require-Match $resort '@export var physics_profile:\s*SkiPhysicsProfile' "Resort must own the active physics profile."
@@ -222,6 +278,53 @@ Require-Match $camera 'distance_rate_limit' "Camera distance changes must be bou
 Require-Match $trick 'func set_grab_contact' "Trick scoring must consume visual grab contact."
 Require-Match $trick 'grab_qualified' "Grab scoring must require a qualified visual contact latch."
 Require-Match $trick 'air_presentation_eligible' "Straight Air presentation must distinguish meaningful takeoffs from reseats."
+Require-Match $controller '"grab_qualified"' "Telemetry must expose grab qualification for challenge observation."
+Require-Match $contentTracker 'grab_qualified' "Challenge grab observation must require a qualified visual contact latch."
+Require-Match $controller '(?s)func _physics_process.*if recovery_frozen:.*if input_frame\.respawn_pressed:' "Frozen recovery must ignore session input."
+Reject-Match $controller '(?s)func _physics_process.*if input_frame\.respawn_pressed:.*if recovery_frozen:' "Frozen recovery cannot handle respawn before the freeze guard."
+Require-Match $flickInterpreter '(?s)func _step_grind.*_command\.kind != TrickCommand\.Kind\.RAIL_POP' "Off-axis grind setup releases must not keep a deferred takeoff."
+Require-Match $controller 'func _close_inbound_air_trick' "Rail capture must close inbound air as its own interrupted trick."
+$railCapture = [regex]::Match($controller, 'func _try_capture_rail\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($railCapture.Success) {
+	Require-Match $railCapture.Groups["body"].Value '_close_inbound_air_trick\(\)' "Rail capture must close inbound air before entering grind."
+	Reject-Match $railCapture.Groups["body"].Value 'scoring\.bail\(' "Rail capture cannot bail inbound air as a failed landing."
+	Reject-Match $railCapture.Groups["body"].Value 'trick\.land\(' "Rail capture cannot score inbound air as a landing."
+} else {
+	$failures.Add("Could not locate _try_capture_rail.")
+}
+$closeInbound = [regex]::Match($controller, 'func _close_inbound_air_trick\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($closeInbound.Success) {
+	Require-Match $closeInbound.Groups["body"].Value 'trick\.reset\(\)' "Closing inbound air must reset trick scoring state."
+	Reject-Match $closeInbound.Groups["body"].Value 'scoring\.bail\(' "Closing inbound air cannot count as a bail."
+	Reject-Match $closeInbound.Groups["body"].Value 'trick\.land\(' "Closing inbound air cannot count as a landing."
+} else {
+	$failures.Add("Could not locate _close_inbound_air_trick.")
+}
+$enterAir = [regex]::Match($controller, 'func _enter_air\([\s\S]*?\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($enterAir.Success) {
+	Require-Match $enterAir.Groups["body"].Value 'trick\.begin_air\(' "Air entry must start a fresh outbound trick."
+	Require-Match $enterAir.Groups["body"].Value 'trick_rotation_state\.reset\(\)' "Air entry must reset trick rotation history."
+	Require-Match $enterAir.Groups["body"].Value 'inherited_angular_velocity' "Rail exits may still inherit body angular velocity."
+	Reject-Match $enterAir.Groups["body"].Value 'retain_trick_history' "Air entry cannot restore pre-rail trick history."
+	Reject-Match $enterAir.Groups["body"].Value 'accumulated_rotation\s*=' "Air entry cannot restore accumulated rotation."
+} else {
+	$failures.Add("Could not locate _enter_air.")
+}
+Reject-Match $controller 'retain_trick_history' "Inbound air history cannot be retained through a grind."
+Require-Match $sessionManager 'func request_summit_restart\(\) -> void' "Summit restart must be an explicit session intent."
+Require-Match $sessionManager 'RESPAWN_SUMMIT_RESTART' "Summit restart must have a dedicated respawn reason."
+Require-Match $sessionManager 'RESPAWN_COURSE_RECOVERY' "Course recovery must have a dedicated respawn reason."
+Require-Match $clipRecorder 'func handle_session_respawn\(' "Clip recorder must gate start/stop on session respawn reason."
+Require-Match $clipRecorder 'RESPAWN_SUMMIT_RESTART' "Clip capture start must require an explicit summit restart."
+Require-Match $ui 'SessionManager\.request_summit_restart\(\)' "Restart from Summit must use the explicit summit-restart intent."
+$restartSummit = [regex]::Match($ui, 'func _restart_summit\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($restartSummit.Success) {
+	Reject-Match $restartSummit.Groups["body"].Value 'request_respawn\(\)' "Restart from Summit cannot use an unqualified session respawn."
+} else {
+	$failures.Add("Could not locate _restart_summit.")
+}
+Require-Match $resort 'ClipRecorder\.handle_session_respawn\(reason\)' "Resort clip wiring must pass the respawn reason."
+Reject-Match $resort 'func _on_respawn_requested_recorder[\s\S]*?SessionManager\.default_spawn' "Clip start/stop cannot match the default spawn transform."
 
 Require-Match $inputSampler 'frame\.brake\s*=\s*Input\.get_action_strength' "The sampled frame must preserve analog brake strength."
 Require-Match $groundMotion 'profile\.brake_steer_multiplier' "Ground handling policy must use profile-owned analog brake steering."
@@ -280,7 +383,38 @@ Require-Match $animationController 'CrashContext\.Stage\.IMPACT' "Animation must
 Require-Match $animationController 'CrashContext\.Stage\.FALL' "Animation must present the crash fall stage."
 Require-Match $animationController 'CrashContext\.Stage\.REST' "Animation must present the crash rest stage."
 Require-Match $animationController 'MIN_LANDING_PRESENTATION_TIME' "Landing impact presentation must have a minimum visible hold."
+Require-Match $animationController '_landing_extending' "Landing crouch release must own an explicit extension stage."
+Require-Match $animationController 'Stabilization' "Landing crouch release must expose a stabilization phase."
+Require-Match $animationController '_landing_awaiting_event_clear' "Completed landing presentation cannot restart from the same event."
+Require-Match $animationProfile 'landing_wobble_age_decay' "Landing wobble age-decay must remain profile-owned."
+Require-Match $animationProfile 'landing_stabilization_hold_soft' "Landing stabilization hold must remain profile-owned for soft landings."
+Require-Match $animationProfile 'landing_stabilization_hold_hard' "Landing stabilization hold must remain profile-owned for hard landings."
+Require-Match $animationProfile 'landing_failsafe_time' "Landing crouch failsafe time must remain profile-owned."
+Require-Match $animationProfile 'landing_failsafe_response_scale' "Landing crouch failsafe rate scale must remain profile-owned."
+Require-Match $animationProfile 'landing_recovery_response_soft' "Landing compression recovery must remain profile-owned for soft landings."
+Require-Match $animationProfile 'landing_recovery_response_hard' "Landing compression recovery must remain profile-owned for hard landings."
+Reject-Match $animationController 'exp\(-_landing_presentation_time \* 1\.5\)' "Landing wobble age-decay cannot stay hardcoded."
+Reject-Match $animationController '_landing_presentation_time >= 1\.5' "Landing crouch failsafe cannot stay hardcoded at 1.5 s."
+Reject-Match $animationController 'landing_recovery_response_hard \* 2\.0' "Landing failsafe recovery rate cannot stay a hardcoded multiplier."
+Reject-Match $animationController 'landing_wobble_decay \* 2\.0' "Landing failsafe wobble rate cannot stay a hardcoded multiplier."
 Require-Match $animationController '_capture_crash_handoff' "Crash presentation must seed from the current procedural pose."
+Require-Match $animationProfile 'air_preview_leg_ik_weight' "AIR predicted-surface IK must use a dedicated preview weight."
+Require-Match $animationProfile 'air_preview_stance_half_width' "AIR predicted-surface stance must remain profile-owned."
+Require-Match $animationProfile 'air_leg_ik_weight:\s*float\s*=\s*0\.0' "Ordinary AIR IK must stay disabled; preview weight is a separate knob."
+Require-Match $landingPose 'func preview_window_active\(' "AIR preview targets must reuse the existing landing anticipation window."
+Require-Match $landingPose 'func preview_ik_weight\(' "AIR preview weight must be preview × anticipation × extension clearance."
+Require-Match $landingPose 'func air_preview_targets\(' "Predicted-surface ski targets must be synthesized by the landing pose layer."
+Require-Match $landingPose 'air_extension_scale' "AIR preview clearance must reuse air_extension_scale."
+Require-Match $skiIk 'func contact_transform\(' "Ground, rail, spawn, and AIR preview must share one ski-contact frame helper."
+Require-Match $skiIk 'func stance_ski_targets\(' "AIR preview must synthesize stance from the shared ski-target helper."
+Require-Match $skiIk 'func feature_obstruction_scale\(' "AIR preview must cheaply veto reach into solid park features."
+Require-Match $skiIk 'FEATURE_MASK' "Feature obstruction must query the solid park-feature collision layer."
+Require-Match $animationController 'air_preview_leg_ik_weight' "Animation must apply the dedicated AIR preview IK weight."
+Require-Match $animationController 'preview_ik_weight\(' "AIR preview IK cannot globally enable ordinary air_leg_ik_weight."
+Reject-Match $animationController 'profile\.air_leg_ik_weight if frame\.locomotion_state == STATE_AIR' "AIR preview cannot fall back to globally enabling ordinary AIR IK."
+Reject-Match $animationController '_predict_landing\(' "AIR preview must reuse the cached landing prediction instead of querying again."
+Require-Match $controller 'SkiConstrainedLegIK\.contact_transform' "Gameplay contact frames must reuse the shared ski-contact helper."
+Require-Match $controller 'SkiConstrainedLegIK\.stance_ski_targets' "Rail stance must reuse the shared ski-target helper."
 Reject-Match "$controller`n$animationController" 'PhysicalBone|RigidBody3D|Skeleton3D|PhysicalBoneSimulator3D' "The primitive rig must use controlled fall rather than a new ragdoll framework."
 Require-Match $ui 'crash_reason' "Development HUD must expose crash telemetry."
 Require-Match $ui 'clean_capture_mode' "HUD must provide a clean capture mode without disabling recording."

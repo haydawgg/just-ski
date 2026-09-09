@@ -82,6 +82,7 @@ var landing_air_time: float = 0.0
 var landing_surface_normal: Vector3 = Vector3.UP
 var landing_outcome: int = 0
 var landing_event_active: bool = false
+var spawn_settle_active: bool = false
 var grab_pose: int = 0
 var style_pose: int = 0
 var style_amount: float = 0.0
@@ -223,6 +224,7 @@ func reset() -> void:
 	landing_surface_normal = Vector3.UP
 	landing_outcome = 0
 	landing_event_active = false
+	spawn_settle_active = false
 	grab_pose = 0
 	style_pose = 0
 	style_amount = 0.0

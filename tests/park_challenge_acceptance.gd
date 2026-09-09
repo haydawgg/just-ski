@@ -9,6 +9,7 @@ func _ready() -> void:
 	tracker.configure(profile.challenge_specs())
 	_validate_observation_only(tracker)
 	_validate_grab_and_land(tracker)
+	_validate_unqualified_grab_is_not_observed()
 	_validate_named_rail(tracker)
 	_validate_sequence_and_route(tracker)
 	_validate_bail_blocks_clean_attempt(tracker)
@@ -34,6 +35,36 @@ func _validate_grab_and_land(tracker: ParkChallengeTracker) -> void:
 	tracker.record_event(&"landing", {"outcome": LandingSolver.Outcome.CLEAN})
 	if not _completed(tracker, &"summit_grab_and_land"):
 		failures.append("grab-and-land challenge did not complete")
+
+func _validate_unqualified_grab_is_not_observed() -> void:
+	var content := ParkContentTracker.new()
+	content.telemetry_enabled = true
+	add_child(content)
+	content.configure(ParkCourseProfile.new())
+	content._on_player_telemetry({
+		"state": "Air",
+		"flick": {
+			"grab": "Safety Grab Left",
+			"grab_qualified": false,
+			"live_grab": "",
+		},
+	})
+	content.record_event(&"landing", {"outcome": LandingSolver.Outcome.CLEAN})
+	if _completed(content.challenge_tracker, &"summit_grab_and_land"):
+		failures.append("unqualified grab pose completed grab-and-land")
+	content.configure(ParkCourseProfile.new())
+	content._on_player_telemetry({
+		"state": "Air",
+		"flick": {
+			"grab": "Safety Grab Left",
+			"grab_qualified": true,
+			"live_grab": "Safety Grab Left",
+		},
+	})
+	content.record_event(&"landing", {"outcome": LandingSolver.Outcome.CLEAN})
+	if not _completed(content.challenge_tracker, &"summit_grab_and_land"):
+		failures.append("qualified grab contact did not complete grab-and-land")
+	content.queue_free()
 
 func _validate_named_rail(tracker: ParkChallengeTracker) -> void:
 	tracker.begin_attempt(&"technical_yard")

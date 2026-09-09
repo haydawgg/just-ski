@@ -10,6 +10,9 @@ func _ready() -> void:
 	_test_animation_interfaces()
 	_test_camera_interfaces()
 	_test_contact_and_extension_contracts()
+	# Immediate quit from _ready can ACCESS_VIOLATE Godot 4.7 headless on
+	# Windows after constructing looking_at frames. Drain one idle frame first.
+	await get_tree().process_frame
 	if failures.is_empty():
 		print("SOLVER_LAYER_PASS: typed ground, air, rail, landing, crash, animation, framing, collision, and composition interfaces passed")
 		get_tree().quit(0)
@@ -59,6 +62,15 @@ func _test_motion_interfaces() -> void:
 	var landing_damping := air.angular_damping(0.0, PHYSICS_PROFILE.air_landing_window * 0.1, 1.0, true, PHYSICS_PROFILE)
 	if landing_damping <= open_damping:
 		failures.append("Air solver did not increase angular damping near landing")
+	var capped := air.limit_normal_approach(Vector3(0.0, -6.0, 0.0), Vector3.UP, PHYSICS_PROFILE.seat_approach_speed, PHYSICS_PROFILE.seat_approach_speed, 0.0, 1.0 / 60.0)
+	if capped.y < -PHYSICS_PROFILE.seat_approach_speed - 0.0001:
+		failures.append("Air solver did not enforce the seat approach-speed ceiling")
+	var slower := air.limit_normal_approach(Vector3(0.0, -0.4, 0.0), Vector3.UP, PHYSICS_PROFILE.seat_approach_speed, PHYSICS_PROFILE.seat_approach_speed, PHYSICS_PROFILE.spawn_settle_response, 1.0 / 60.0)
+	if slower.y < -0.4001:
+		failures.append("Air solver added extra into-surface pull below the desired approach speed")
+	var eased := air.limit_normal_approach(Vector3(0.0, -2.0, 0.0), Vector3.UP, PHYSICS_PROFILE.seat_approach_speed, 0.4, PHYSICS_PROFILE.spawn_settle_response, 1.0 / 60.0)
+	if eased.y <= -2.0 or eased.y > -0.4:
+		failures.append("Air solver did not ease an over-fast approach toward the desired seat speed")
 
 	var rail := RailMotionSolver.new()
 	var rail_step := rail.advance(4.0, 1.0, 1.0, 20.0, -2.0, 0.5, 0.1)
@@ -74,8 +86,13 @@ func _test_motion_interfaces() -> void:
 
 	var bail := BailMotionSolver.new()
 	var bail_motion := bail.step_motion(Vector3(8.0, -2.0, 0.0), Vector3.ONE, Vector3.UP, true, CrashContext.Stage.FALL, 0.1, PHYSICS_PROFILE)
-	if bail_motion.velocity.length() >= Vector3(8.0, 0.0, 0.0).length() or bail_motion.angular_velocity.length() >= Vector3.ONE.length():
-		failures.append("Bail solver did not damp grounded linear and angular motion")
+	if bail_motion.velocity.length() >= Vector3(8.0, 0.0, 0.0).length():
+		failures.append("Bail solver did not damp grounded linear motion")
+	if not bail_motion.roll_valid or bail_motion.generated_roll_speed <= 0.0:
+		failures.append("Bail solver did not couple grounded FALL motion to a surface-roll axis")
+	var rest_motion := bail.step_motion(Vector3(8.0, -2.0, 0.0), Vector3.ONE, Vector3.UP, true, CrashContext.Stage.REST, 0.1, PHYSICS_PROFILE)
+	if rest_motion.angular_velocity.length() >= Vector3.ONE.length() or rest_motion.roll_valid:
+		failures.append("Bail solver did not damp REST angular motion without manufacturing roll")
 	var rest := bail.resolve_rest(true, PHYSICS_PROFILE.crash_min_duration, 0.0, 0.0, false, 0.0, PHYSICS_PROFILE.crash_rest_confirm_time, 0.05, 0.05, PHYSICS_PROFILE)
 	if not rest.rest_detected or rest.stage != CrashContext.Stage.REST:
 		failures.append("Bail solver did not confirm a bounded rest state")
@@ -141,6 +158,16 @@ func _test_animation_interfaces() -> void:
 	var pre_bail := crash.step_pre_bail(0.0, 0.0, frame, 1.0 / 60.0, ANIMATION_PROFILE)
 	if not pre_bail.has("weight") or not pre_bail.has("side"):
 		failures.append("Crash reaction layer did not return a typed pre-bail step")
+	frame.crash_stage = CrashContext.Stage.FALL
+	frame.crash_current_velocity = Vector3(0.0, 0.0, -6.0)
+	frame.ground_normal = Vector3.UP
+	frame.body_up = Vector3.UP
+	frame.body_up_valid = true
+	frame.ski_forward = Vector3.FORWARD
+	frame.ski_forward_valid = true
+	var sprawl := crash.fall_travel_sprawl(frame, ANIMATION_PROFILE)
+	if not bool(sprawl.get("valid", false)) or not sprawl.has("pelvis") or not sprawl.has("left_ski"):
+		failures.append("Crash reaction layer did not resolve travel-direction FALL sprawl")
 	var secondary := SecondaryMotionLayer.new()
 	if secondary.target(0.5, 0.5, 0.5, false) <= 0.0:
 		failures.append("Secondary motion layer did not resolve activity")
@@ -254,6 +281,36 @@ func _test_contact_and_extension_contracts() -> void:
 	var ordered: Array = SkiConstrainedLegIK.separate_boot_targets(Vector3(-0.3, 0.0, 0.0), Vector3(0.3, 0.0, 0.0), Basis.IDENTITY, 0.16)
 	if (ordered[0] as Vector3).distance_to(Vector3(-0.3, 0.0, 0.0)) > 0.001 or (ordered[1] as Vector3).distance_to(Vector3(0.3, 0.0, 0.0)) > 0.001:
 		failures.append("Boot stance separation moved an already valid stance")
+	var degenerate := SkiConstrainedLegIK.contact_transform(Vector3.ZERO, Vector3.UP, Vector3.UP)
+	if not SkiConstrainedLegIK.is_finite_transform(degenerate):
+		failures.append("Shared ski-contact helper produced a non-finite degenerate heading frame")
+	var slope_normal := Vector3(0.0, 0.8, 0.6).normalized()
+	var stance: Dictionary = SkiConstrainedLegIK.stance_ski_targets(Vector3.ZERO, Vector3.FORWARD, slope_normal, 0.22)
+	if not bool(stance.valid):
+		failures.append("Shared stance helper rejected a sloped landing frame")
+	elif absf((stance.forward as Vector3).dot(slope_normal)) > 0.02:
+		failures.append("Shared stance helper did not keep ski forward tangent to the support plane")
+	var profile := ANIMATION_PROFILE
+	var preview_frame := SkierAnimationFrame.new()
+	preview_frame.locomotion_state = 1
+	preview_frame.predicted_landing_valid = true
+	preview_frame.predicted_landing_time = 0.12
+	preview_frame.predicted_landing_point = Vector3.ZERO
+	preview_frame.predicted_landing_normal = Vector3.UP
+	preview_frame.ski_forward = Vector3.FORWARD
+	preview_frame.ski_forward_valid = true
+	preview_frame.velocity_heading = Vector3.FORWARD
+	if not LandingPoseLayer.preview_window_active(preview_frame, profile):
+		failures.append("Landing preview window rejected a valid near-contact prediction")
+	preview_frame.predicted_landing_time = profile.landing_anticipation_time + 0.2
+	if LandingPoseLayer.preview_window_active(preview_frame, profile):
+		failures.append("Landing preview window accepted a prediction outside anticipation")
+	if absf(LandingPoseLayer.preview_ik_weight(0.8, 0.5, 0.5, 1.0) - 0.2) > 0.0001:
+		failures.append("AIR preview weight is not preview × anticipation × extension clearance")
+	if LandingPoseLayer.preview_ik_weight(1.0, 1.0, 1.0, 0.0) != 0.0:
+		failures.append("AIR preview weight ignored a feature-obstruction veto")
+	if SkiConstrainedLegIK.feature_obstruction_scale(null, Vector3.UP, Vector3.DOWN) != 1.0:
+		failures.append("Feature obstruction veto did not no-op without a physics space")
 	# Contact spray must ramp toward demand instead of switching on/off in one
 	# frame, while still responding within a few physics ticks.
 	var first_step := SkiSnowVFX.smooth_emitter_ratio(0.0, 0.68, 1.0 / 60.0)

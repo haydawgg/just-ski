@@ -222,7 +222,10 @@ var _landing_wobble_amount := 0.0
 var _landing_phase_name := "Idle"
 var _landing_active := false
 var _landing_compressing := false
+var _landing_extending := false
+var _landing_awaiting_event_clear := false
 var _landing_presentation_time := 0.0
+var _landing_stabilization_time := 0.0
 var _landing_outcome := 0
 var _landing_left_asymmetry := 0.0
 var _landing_right_asymmetry := 0.0
@@ -279,6 +282,9 @@ var _right_leg_ik_debug: Dictionary = {}
 var _has_evaluated_frame := false
 var _left_boot_target_world := Transform3D.IDENTITY
 var _right_boot_target_world := Transform3D.IDENTITY
+var _air_preview_targets_valid := false
+var _air_preview_ik_weight := 0.0
+var _air_preview_obstruction := 1.0
 
 func _ready() -> void:
 	if profile != null:
@@ -506,6 +512,8 @@ func debug_snapshot() -> Dictionary:
 		"landing_rotation_error": _landing_rotation_error,
 		"landing_recovery": _landing_recovery_amount,
 		"landing_phase": _landing_phase_name,
+		"landing_extending": _landing_extending,
+		"landing_stabilization_age": _landing_stabilization_time,
 		"stomp_weight": _stomp_weight,
 		"stomp_active": _stomp_active,
 		"landing_wobble": _landing_wobble_amount,
@@ -551,6 +559,9 @@ func debug_snapshot() -> Dictionary:
 		"rail_balance": _rail_balance_last,
 		"rail_phase": _rail_phase_name,
 		"leg_ik_weight": _leg_ik_weight,
+		"air_preview_targets_valid": _air_preview_targets_valid,
+		"air_preview_ik_weight": _air_preview_ik_weight,
+		"air_preview_obstruction": _air_preview_obstruction,
 		"pelvis_ik_correction": _pelvis_ik_correction,
 		"left_leg_reach_ratio": float(_left_leg_ik_debug.get("reach_ratio", 0.0)),
 		"right_leg_reach_ratio": float(_right_leg_ik_debug.get("reach_ratio", 0.0)),
@@ -744,7 +755,13 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 	if _grab_definition == null or _grab_pose_weight <= 0.01:
 		left_ski.rotation = Vector3.ZERO
 		right_ski.rotation = Vector3.ZERO
+	var left_ski_target := frame.left_ski_target_world
+	var right_ski_target := frame.right_ski_target_world
+	var targets_valid := frame.left_ski_target_valid and frame.right_ski_target_valid
 	var target_weight := 0.0
+	_air_preview_targets_valid = false
+	_air_preview_ik_weight = 0.0
+	_air_preview_obstruction = 1.0
 	if frame.locomotion_state == STATE_GROUND:
 		target_weight = profile.ground_leg_ik_weight
 	elif frame.locomotion_state == STATE_GRIND:
@@ -753,9 +770,21 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 		var start := clampf(profile.crash_recovery_ik_start, 0.0, 0.95)
 		var progress := _crash_stage_progress_for_frame(frame, _crash_stage_time(frame))
 		target_weight = profile.ground_leg_ik_weight * smoothstep(start, 1.0, progress)
+	elif frame.locomotion_state == STATE_AIR:
+		var preview := _resolve_air_preview_targets(frame)
+		_air_preview_targets_valid = bool(preview.valid)
+		if _air_preview_targets_valid:
+			left_ski_target = preview.left
+			right_ski_target = preview.right
+			targets_valid = true
+			target_weight = float(preview.weight)
+			_air_preview_ik_weight = target_weight
+			_air_preview_obstruction = float(preview.obstruction)
+		else:
+			targets_valid = false
+			target_weight = 0.0
 	else:
-		target_weight = profile.air_leg_ik_weight if frame.locomotion_state == STATE_AIR else profile.bail_leg_ik_weight
-	var targets_valid := frame.left_ski_target_valid and frame.right_ski_target_valid
+		target_weight = profile.bail_leg_ik_weight
 	if not targets_valid:
 		target_weight = 0.0
 	_leg_ik_weight = _damp(_leg_ik_weight, target_weight, profile.leg_ik_weight_response, delta)
@@ -768,17 +797,17 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 		return
 	var target_blend := 1.0 - exp(-profile.leg_ik_weight_response * delta)
 	if not _ski_targets_initialized:
-		_left_ski_target_smoothed = frame.left_ski_target_world
-		_right_ski_target_smoothed = frame.right_ski_target_world
+		_left_ski_target_smoothed = left_ski_target
+		_right_ski_target_smoothed = right_ski_target
 		_ski_targets_initialized = true
 	else:
 		# Contacts travel with the physics root. Filter changes in the support
 		# relative to that root, otherwise speed turns the filter into ski drag.
 		var root_motion := global_transform * _ski_target_reference.affine_inverse()
-		_left_ski_target_smoothed = _advect_ski_contact(_left_ski_target_smoothed, root_motion, frame.left_ski_target_world.basis.y)
-		_right_ski_target_smoothed = _advect_ski_contact(_right_ski_target_smoothed, root_motion, frame.right_ski_target_world.basis.y)
-		_left_ski_target_smoothed = _left_ski_target_smoothed.interpolate_with(frame.left_ski_target_world, target_blend)
-		_right_ski_target_smoothed = _right_ski_target_smoothed.interpolate_with(frame.right_ski_target_world, target_blend)
+		_left_ski_target_smoothed = _advect_ski_contact(_left_ski_target_smoothed, root_motion, left_ski_target.basis.y)
+		_right_ski_target_smoothed = _advect_ski_contact(_right_ski_target_smoothed, root_motion, right_ski_target.basis.y)
+		_left_ski_target_smoothed = _left_ski_target_smoothed.interpolate_with(left_ski_target, target_blend)
+		_right_ski_target_smoothed = _right_ski_target_smoothed.interpolate_with(right_ski_target, target_blend)
 	_ski_target_reference = global_transform
 	var left_contact_pose := _left_ski_target_smoothed
 	var right_contact_pose := _right_ski_target_smoothed
@@ -835,6 +864,77 @@ func _advect_ski_contact(previous: Transform3D, root_motion: Transform3D, normal
 	var support_up := normal.normalized()
 	moved.origin -= support_up * (moved.origin - previous.origin).dot(support_up)
 	return moved
+
+func _resolve_air_preview_targets(frame: SkierAnimationFrame) -> Dictionary:
+	var empty := {
+		"valid": false,
+		"left": Transform3D.IDENTITY,
+		"right": Transform3D.IDENTITY,
+		"weight": 0.0,
+		"obstruction": 1.0,
+	}
+	var preview: Dictionary = LandingPoseLayer.air_preview_targets(
+		frame,
+		profile,
+		profile.leg_ik_min_stance_width,
+		global_position,
+		global_basis
+	)
+	if not bool(preview.valid):
+		return empty
+	var left: Transform3D = preview.left
+	var right: Transform3D = preview.right
+	if not _preview_reach_feasible(left, right):
+		return empty
+	var obstruction := _preview_obstruction_scale(left.origin, right.origin)
+	var extension := LandingPoseLayer.air_extension_scale(
+		frame.left_ground_distance,
+		frame.right_ground_distance,
+		frame.seat_distance
+	)
+	var weight := LandingPoseLayer.preview_ik_weight(
+		profile.air_preview_leg_ik_weight,
+		_landing_anticipation,
+		extension,
+		obstruction
+	)
+	return {
+		"valid": true,
+		"left": left,
+		"right": right,
+		"weight": weight,
+		"obstruction": obstruction,
+	}
+
+func _preview_obstruction_scale(left_target: Vector3, right_target: Vector3) -> float:
+	if not is_inside_tree():
+		return 1.0
+	var space := get_world_3d().direct_space_state
+	var exclude: Array = []
+	var body := get_parent()
+	if body is CollisionObject3D:
+		exclude.append((body as CollisionObject3D).get_rid())
+	var left_scale := SkiConstrainedLegIK.feature_obstruction_scale(space, left_hip.global_position, left_target, exclude)
+	var right_scale := SkiConstrainedLegIK.feature_obstruction_scale(space, right_hip.global_position, right_target, exclude)
+	return minf(left_scale, right_scale)
+
+func _preview_reach_feasible(left_ski_target: Transform3D, right_ski_target: Transform3D) -> bool:
+	var left_boot := left_ski_target * _left_binding_rest
+	var right_boot := right_ski_target * _right_binding_rest
+	return _leg_reach_feasible(left_hip, left_knee, left_boot.origin) and _leg_reach_feasible(right_hip, right_knee, right_boot.origin)
+
+func _leg_reach_feasible(hip: Node3D, knee: Node3D, boot_target: Vector3) -> bool:
+	if hip == null or knee == null or not boot_target.is_finite():
+		return false
+	var thigh_length := maxf(knee.position.length(), 0.001)
+	var shin_length := 0.49
+	if hip == left_hip and left_boot != null:
+		shin_length = maxf(left_boot.position.length(), 0.001)
+	elif hip == right_hip and right_boot != null:
+		shin_length = maxf(right_boot.position.length(), 0.001)
+	var maximum := maxf(thigh_length + shin_length - 0.012, 0.02) * profile.leg_ik_max_reach_ratio
+	var reach := hip.global_position.distance_to(boot_target)
+	return reach <= maximum + profile.leg_ik_pelvis_translation_limit
 
 func _apply_bounded_pelvis_compensation(left_target: Vector3, right_target: Vector3, delta: float, weight: float) -> void:
 	var correction := Vector3.ZERO
@@ -1293,7 +1393,7 @@ func _landing_ready_for_values(valid: bool, anticipation: float, readiness: floa
 func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var alignment_target := 0.0
 	var readiness_target := 0.0
-	if frame.locomotion_state == STATE_AIR and frame.predicted_landing_time >= 0.0:
+	if frame.locomotion_state == STATE_AIR and frame.predicted_landing_time >= 0.0 and not frame.spawn_settle_active:
 		var alignment_start := maxf(profile.landing_alignment_start, 0.05)
 		var readiness_start := maxf(profile.landing_readiness_start, 0.05)
 		if frame.predicted_landing_time <= alignment_start:
@@ -1325,41 +1425,68 @@ func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void
 		_landing_ski_pitch = _damp(_landing_ski_pitch, 0.0, profile.landing_anticipation_response, delta)
 		_landing_torso_prepare = _damp(_landing_torso_prepare, 0.0, profile.landing_anticipation_response, delta)
 
+	if not frame.landing_event_active:
+		_landing_awaiting_event_clear = false
 	if frame.landing_event_active and frame.locomotion_state == STATE_GROUND:
 		_seed_landing_from_frame(frame)
 
 	if _landing_active or _landing_compression > 0.001:
 		_landing_presentation_time += delta
+		var failsafe_time := maxf(profile.landing_failsafe_time, MIN_LANDING_PRESENTATION_TIME)
+		var failsafe_reached := _landing_presentation_time >= failsafe_time
+		var failsafe_scale := maxf(profile.landing_failsafe_response_scale, 1.0) if failsafe_reached else 1.0
 		if _landing_compressing:
 			_landing_compression = _damp(_landing_compression, _landing_compression_target, profile.landing_compression_response, delta)
 			if absf(_landing_compression_target - _landing_compression) <= 0.03:
 				_landing_compressing = false
-				_landing_phase_name = "Recovery"
+				_landing_extending = false
+				_landing_stabilization_time = 0.0
+				_landing_phase_name = "Stabilization"
 			else:
 				_landing_phase_name = "Compression"
-		else:
-			var recovery_response := lerpf(profile.landing_recovery_response_soft, profile.landing_recovery_response_hard, _landing_severity)
+		elif not _landing_extending:
+			# Stage A: hold meaningful compression while wobble/secondaries decay.
+			# Stage B is gated by hold age or failsafe time, never a wobble epsilon.
+			_landing_stabilization_time += delta
+			_landing_compression = _damp(_landing_compression, _landing_compression_target, profile.landing_compression_response, delta)
+			_landing_recovery_amount = 0.0
+			_landing_phase_name = "Stabilization"
+			var hold := lerpf(
+				profile.landing_stabilization_hold_soft,
+				profile.landing_stabilization_hold_hard,
+				_landing_severity
+			)
+			if _landing_stabilization_time >= hold or failsafe_reached:
+				_landing_extending = true
+				_landing_phase_name = "Recovery"
+		if _landing_extending:
+			var recovery_response := lerpf(profile.landing_recovery_response_soft, profile.landing_recovery_response_hard, _landing_severity) * failsafe_scale
 			_landing_compression = _damp(_landing_compression, 0.0, recovery_response, delta)
 			_landing_recovery_amount = 1.0 - clampf(_landing_compression / maxf(_landing_compression_target, 0.001), 0.0, 1.0)
 			_landing_phase_name = "Recovery" if _landing_compression > 0.04 else "Idle"
 		_landing_wobble_phase += profile.landing_wobble_frequency * delta
-		# Balance-driven wobble must decay with presentation age; otherwise
-		# rotational landings (e.g. a 360 with residual balance error) hold a
-		# static wobble target and the crouch never releases.
-		var age_decay := exp(-_landing_presentation_time * 1.5)
-		var wobble_target := _landing_balance_error * (0.35 + _landing_compression * 0.65) * age_decay
-		_landing_wobble_amount = _damp(_landing_wobble_amount, wobble_target, profile.landing_wobble_decay, delta)
-		_landing_arm_open = _damp(_landing_arm_open, _landing_severity * (0.45 + _landing_balance_error * 0.55) * age_decay, profile.landing_compression_response, delta)
-		_landing_pole_lag = _damp(_landing_pole_lag, _landing_severity * profile.landing_pole_lag * age_decay, profile.secondary_response, delta)
-		_landing_head_nod = _damp(_landing_head_nod, _landing_compression * profile.landing_head_nod, profile.landing_compression_response, delta)
-		if _landing_presentation_time >= MIN_LANDING_PRESENTATION_TIME and _landing_compression < 0.02 and _landing_wobble_amount < 0.03 and not _landing_compressing:
+		var age_decay := exp(-_landing_presentation_time * maxf(profile.landing_wobble_age_decay, 0.01))
+		var wobble_target := _landing_balance_error * 0.35 * age_decay
+		var secondary_decay := age_decay
+		var head_target := _landing_compression * profile.landing_head_nod * age_decay
+		if _landing_compressing:
+			wobble_target = _landing_balance_error * (0.35 + _landing_compression * 0.65) * age_decay
+			head_target = _landing_compression * profile.landing_head_nod
+		elif _landing_extending:
+			# Residual wobble damps independently of remaining crouch depth.
+			if failsafe_reached:
+				wobble_target = 0.0
+				secondary_decay = 0.0
+			head_target = _landing_compression * profile.landing_head_nod
+		var wobble_response := profile.landing_wobble_decay * failsafe_scale
+		_landing_wobble_amount = _damp(_landing_wobble_amount, wobble_target, wobble_response, delta)
+		_landing_arm_open = _damp(_landing_arm_open, _landing_severity * (0.45 + _landing_balance_error * 0.55) * secondary_decay, profile.landing_compression_response, delta)
+		_landing_pole_lag = _damp(_landing_pole_lag, _landing_severity * profile.landing_pole_lag * secondary_decay, profile.secondary_response, delta)
+		_landing_head_nod = _damp(_landing_head_nod, head_target, profile.landing_compression_response, delta)
+		if _landing_presentation_time >= MIN_LANDING_PRESENTATION_TIME and _landing_extending and _landing_compression < 0.02 and _landing_wobble_amount < 0.03:
 			_clear_landing_state()
-		elif _landing_presentation_time >= 1.5 and not _landing_compressing:
-			# Failsafe: no landing presentation may hold the crouch indefinitely.
-			_landing_compression = _damp(_landing_compression, 0.0, profile.landing_recovery_response_hard * 2.0, delta)
-			_landing_wobble_amount = _damp(_landing_wobble_amount, 0.0, profile.landing_wobble_decay * 2.0, delta)
-			if _landing_compression < 0.02 and _landing_wobble_amount < 0.03:
-				_clear_landing_state()
+		elif failsafe_reached and _landing_extending and _landing_compression < 0.02 and _landing_wobble_amount < 0.03:
+			_clear_landing_state()
 	else:
 		_landing_arm_open = _damp(_landing_arm_open, 0.0, profile.landing_anticipation_response, delta)
 		_landing_pole_lag = _damp(_landing_pole_lag, 0.0, profile.secondary_response, delta)
@@ -1381,7 +1508,10 @@ func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void
 func _begin_landing_impact(event: int, severity: float, side: float) -> void:
 	_landing_active = true
 	_landing_compressing = true
+	_landing_extending = false
+	_landing_awaiting_event_clear = false
 	_landing_presentation_time = 0.0
+	_landing_stabilization_time = 0.0
 	_landing_outcome = event
 	_stomp_candidate = event == AnimationEvent.LAND_CLEAN
 	_stomp_active = false
@@ -1406,6 +1536,8 @@ func _begin_landing_impact(event: int, severity: float, side: float) -> void:
 	_landing_right_asymmetry = clampf(_landing_lateral_bias * profile.landing_asymmetry_gain, -0.35, 0.35)
 
 func _seed_landing_from_frame(frame: SkierAnimationFrame) -> void:
+	if not _landing_active and _landing_awaiting_event_clear:
+		return
 	_landing_severity = maxf(_landing_severity, clampf(frame.landing_impact_severity, 0.0, 1.0))
 	_landing_balance_error = clampf(frame.landing_balance_error, 0.0, 1.0)
 	_landing_ski_alignment_error = clampf(frame.landing_ski_alignment_error, 0.0, 1.0)
@@ -1432,7 +1564,11 @@ func _clear_landing_state() -> void:
 	_landing_ready = false
 	_landing_active = false
 	_landing_compressing = false
+	_landing_extending = false
+	_landing_awaiting_event_clear = true
 	_landing_presentation_time = 0.0
+	_landing_stabilization_time = 0.0
+	_landing_compression = 0.0
 	_landing_compression_target = 0.0
 	_landing_severity = 0.0
 	_landing_balance_error = 0.0
@@ -1585,7 +1721,7 @@ func _apply_landing_layers(frame: SkierAnimationFrame) -> void:
 		var rotation_correct := clampf(_landing_rotation_error * 2.0, -1.0, 1.0) * profile.landing_rotation_correct_yaw * (0.4 + depth)
 		if _landing_phase_name == "Compression" or _landing_phase_name == "Contact":
 			_current_pose_name = "Landing Compression"
-		elif _landing_balance_error > 0.28:
+		elif _landing_phase_name == "Stabilization" or _landing_balance_error > 0.28:
 			_current_pose_name = "Landing Recovery Wobble"
 		else:
 			_current_pose_name = "Landing Recovery"
@@ -2387,16 +2523,31 @@ func _apply_bail_pose(frame: SkierAnimationFrame) -> void:
 			_current_pose_name = "Crash Fall"
 			var phase := stage_time * profile.crash_tumble_speed
 			var tumble := profile.crash_tumble_limit * angular_strength
-			_add_rotation(pelvis, Vector3(-0.42 + sin(phase) * tumble * 0.3, side * 0.18, side * 0.48 + sin(phase * 0.6) * tumble * 0.28))
-			_add_rotation(spine, Vector3(-0.38 + cos(phase * 0.72) * tumble * 0.32, -side * 0.12, side * 0.3))
-			_add_rotation(chest, Vector3(-0.24, -side * 0.2, side * 0.5 + sin(phase * 0.55) * tumble * 0.22))
-			_add_rotation(head, Vector3(0.18, side * 0.2, -side * 0.18))
+			var sprawl := _crash_reaction_layer.fall_travel_sprawl(frame, profile)
+			var fall_side := float(sprawl.get("lateral", 0.0)) if bool(sprawl.get("valid", false)) else side
+			_add_rotation(pelvis, Vector3(-0.42 + sin(phase) * tumble * 0.3, fall_side * 0.18, fall_side * 0.48 + sin(phase * 0.6) * tumble * 0.28))
+			_add_rotation(spine, Vector3(-0.38 + cos(phase * 0.72) * tumble * 0.32, -fall_side * 0.12, fall_side * 0.3))
+			_add_rotation(chest, Vector3(-0.24, -fall_side * 0.2, fall_side * 0.5 + sin(phase * 0.55) * tumble * 0.22))
+			_add_rotation(head, Vector3(0.18, fall_side * 0.2, -fall_side * 0.18))
 			_add_rotation(left_shoulder, Vector3(-1.18 + sin(phase) * 0.16, 0.28, -0.95))
 			_add_rotation(right_shoulder, Vector3(-0.86 + cos(phase * 0.8) * 0.16, -0.28, 0.95))
-			_add_rotation(left_hip, Vector3(-0.72, 0.08, -side * 0.38))
-			_add_rotation(right_hip, Vector3(-0.42, -0.08, side * 0.38))
-			_add_rotation(left_knee, Vector3(1.28, 0.0, -side * 0.16))
-			_add_rotation(right_knee, Vector3(0.82, 0.0, side * 0.16))
+			_add_rotation(left_hip, Vector3(-0.72, 0.08, -fall_side * 0.38))
+			_add_rotation(right_hip, Vector3(-0.42, -0.08, fall_side * 0.38))
+			_add_rotation(left_knee, Vector3(1.28, 0.0, -fall_side * 0.16))
+			_add_rotation(right_knee, Vector3(0.82, 0.0, fall_side * 0.16))
+			if bool(sprawl.get("valid", false)):
+				_add_rotation(pelvis, sprawl.get("pelvis", Vector3.ZERO) as Vector3)
+				_add_rotation(spine, sprawl.get("spine", Vector3.ZERO) as Vector3)
+				_add_rotation(chest, sprawl.get("chest", Vector3.ZERO) as Vector3)
+				_add_rotation(head, sprawl.get("head", Vector3.ZERO) as Vector3)
+				_add_rotation(left_shoulder, sprawl.get("left_shoulder", Vector3.ZERO) as Vector3)
+				_add_rotation(right_shoulder, sprawl.get("right_shoulder", Vector3.ZERO) as Vector3)
+				_add_rotation(left_hip, sprawl.get("left_hip", Vector3.ZERO) as Vector3)
+				_add_rotation(right_hip, sprawl.get("right_hip", Vector3.ZERO) as Vector3)
+				_add_rotation(left_knee, sprawl.get("left_knee", Vector3.ZERO) as Vector3)
+				_add_rotation(right_knee, sprawl.get("right_knee", Vector3.ZERO) as Vector3)
+				_add_rotation(left_ski, sprawl.get("left_ski", Vector3.ZERO) as Vector3)
+				_add_rotation(right_ski, sprawl.get("right_ski", Vector3.ZERO) as Vector3)
 		CrashContext.Stage.REST:
 			_current_pose_name = "Crash Rest"
 			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + Vector3(0.0, -profile.crash_rest_pelvis_drop, 0.0)
@@ -2553,18 +2704,10 @@ func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
 	if frame.crash_stage != CrashContext.Stage.FALL and frame.crash_stage != CrashContext.Stage.REST:
 		return
 	var stage_time := _crash_stage_time(frame)
-	var drag_vel := frame.crash_current_velocity
-	var drag_speed := drag_vel.length()
-	var ground_n := frame.ground_normal if frame.grounded else frame.crash_impact_normal
-	if ground_n.length_squared() < 0.001:
-		ground_n = Vector3.UP
-	var lateral_drag := drag_vel.slide(ground_n)
-	var lateral_speed := lateral_drag.length()
-	var drag_dir := Vector3.ZERO
-	var has_drag := lateral_speed >= 0.1 and drag_speed >= 0.15
-	if has_drag:
-		drag_dir = lateral_drag.normalized()
-	var influence := clampf(lateral_speed / 7.0, 0.0, 1.0)
+	var sprawl := _crash_reaction_layer.fall_travel_sprawl(frame, profile)
+	var influence := float(sprawl.get("influence", 0.0))
+	var has_drag := bool(sprawl.get("valid", false)) and influence > 0.02
+	var local_travel := sprawl.get("local", Vector3.ZERO) as Vector3
 	# In FALL, add subtle translation and tumble from remaining velocity plus a
 	# minimum stage-driven oscillation so slow falls still tumble readably.
 	if frame.crash_stage == CrashContext.Stage.FALL:
@@ -2572,16 +2715,17 @@ func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
 		_add_rotation(pelvis, Vector3(idle_sway * 0.4, idle_sway * 0.6, idle_sway))
 		if has_drag:
 			var fall_drag := influence * 0.07
-			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_dir * fall_drag + Vector3(0, -0.015 * fall_drag, 0)
-			_add_rotation(pelvis, Vector3(0, drag_dir.x * 0.08 * influence, 0))
-			_add_rotation(left_ski, Vector3(0, drag_dir.x * 0.06 * influence, 0))
-			_add_rotation(right_ski, Vector3(0, drag_dir.x * 0.06 * influence, 0))
+			var drag_offset := Vector3(local_travel.x, 0.0, -local_travel.z) * fall_drag
+			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_offset + Vector3(0, -0.015 * fall_drag, 0)
+			_add_rotation(pelvis, Vector3(-local_travel.z * 0.06 * influence, local_travel.x * 0.08 * influence, local_travel.x * 0.05 * influence))
+			_add_rotation(left_ski, Vector3(0.0, local_travel.x * 0.06 * influence, 0.0))
+			_add_rotation(right_ski, Vector3(0.0, local_travel.x * 0.06 * influence, 0.0))
 	# In REST, keep a small residual slide and secondary wobble until rest is confirmed.
 	if frame.crash_stage == CrashContext.Stage.REST:
 		var decay := clampf(1.0 - stage_time / maxf(0.8, 0.01), 0.0, 1.0)
 		if has_drag:
 			var rest_drag := influence * 0.045 * decay
-			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_dir * rest_drag
+			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + Vector3(local_travel.x, 0.0, -local_travel.z) * rest_drag
 		var wobble := sin(stage_time * 6.2) * maxf(influence, 0.3) * 0.035 * decay
 		_add_rotation(spine, Vector3(wobble * 0.5, 0, wobble))
 		_add_rotation(chest, Vector3(0, 0, wobble * 0.7))
@@ -3296,6 +3440,9 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_transition_progress = 1.0
 	_has_evaluated_frame = false
 	_leg_ik_weight = 0.0
+	_air_preview_targets_valid = false
+	_air_preview_ik_weight = 0.0
+	_air_preview_obstruction = 1.0
 	_pelvis_ik_correction = Vector3.ZERO
 	_ski_targets_initialized = false
 	_left_boot_target_world = Transform3D.IDENTITY

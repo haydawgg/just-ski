@@ -2,18 +2,14 @@
 
 This file tracks concrete, actionable bugs and missing functionality. Resolved items, validation plans, tuning notes, art direction, and future production work belong in the relevant project docs instead.
 
-## Startup and reset
-
-- **Spawn-to-snow settling can still look abrupt.** The initial airborne hover transitions into skiing shortly after spawn. Unarmed post-spawn seating no longer plays a landing crouch, and pose/IK/camera state is primed before the first frame, but the root still seats onto the support surface as the hover falls.
-
 ## Animation, physics, and bail recovery
 
-- **Grounded tumble choreography still needs a human visual pass.** Bail entry clears locomotion channels, grounded crashes keep a damped tumble with stage-dependent snow alignment, FALL/REST keep minimum secondary motion, and recovery returns through one rate-limited transition with a seeded ground settle. Automated coverage asserts the lifecycle, momentum, and continuity bounds; whether the fall reads convincingly is a presentation judgment.
-- **Landing crouch release is bounded but still needs a human visual pass.** Balance-driven wobble decays with presentation age with a 1.5 s failsafe, so rotational landings can no longer hold compression indefinitely. Automated coverage asserts release within 3 s; the feel of the release remains a presentation judgment.
+- **Grounded tumble choreography still needs a human visual pass.** Grounded `FALL` now couples residual crash spin to surface roll around `normal × travel`, fades that roll as speed drops, and uses speed-aware snow alignment that is strongest in `REST`/`RECOVERY`. FALL sprawl follows skier-local travel through the existing crash pose/settling layers. Automated coverage asserts axes, caps, degenerate fallbacks, per-frame rotation bounds, airborne continuity, and rest/recovery timing; whether the fall reads as a body sliding and rolling on snow remains a presentation judgment.
+- **Landing crouch release is two-stage but still needs a human visual pass.** Impact compression holds while wobble decays, then a profile-owned delay extends the legs. Automated coverage asserts wobble-first release, ordinary timing bands, 3 s pathological release, 30/60/120 Hz phase timing, idle, and no extra landing/stomp event. Whether the stand-up reads as stabilize-then-extend rather than a single spring remains a presentation judgment.
 
 ## Trick scoring and contact state
 
-- **Airborne skis do not IK-anticipate the predicted surface.** Terrain probes and capsule touchdown end airborne state within 0.05 m of the seat, touchdown freezes the shared trick-rotation snapshot used by display, scoring, and landing validity, and anticipation leg extension is restrained near the seat. The rendered skis are still FK-posed in AIR, so exact pre-touchdown surface agreement still needs a human visual pass.
+- **Airborne ski landing-plane agreement still needs a human visual pass.** AIR preview IK now matches the cached predicted landing plane inside the existing anticipation window, with a dedicated preview weight, extension clearance, stance separation, reach safeguards, and a cheap feature-obstruction veto. Automated coverage asserts window validity, plane tangency, stance, ownership isolation, one prediction evaluation per physics step, AIR-to-GROUND handoff, and 30/60/120 Hz determinism. Whether the preparation reads as a smooth pre-touchdown settle remains a presentation judgment.
 - **Grab recognition is proximity-based by design.** Initial contact now requires a 0.14 m hand-to-ski reach with pose, airtime, hold-time, and scoring gates behind it. Whether 0.14 m reads as convincing contact still needs a human camera pass.
 
 ## Ski and pole IK

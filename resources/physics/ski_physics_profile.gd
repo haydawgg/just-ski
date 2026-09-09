@@ -46,6 +46,10 @@ extends Resource
 @export var ground_attach_stiffness: float = 55.0
 @export var ground_attach_max_accel: float = 24.0
 @export var seat_approach_speed: float = 2.0
+## Spawn-settle easing toward the support surface. The hard ceiling remains
+## `seat_approach_speed`; this only shapes how quickly the approach speed
+## responds as remaining seat clearance shrinks.
+@export var spawn_settle_response: float = 8.0
 @export_range(0.0, 89.0) var maximum_ground_angle_degrees: float = 62.0
 
 func contact_probe_offsets() -> Array[Vector3]:
@@ -143,6 +147,15 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export var crash_max_duration: float = 2.4
 @export var crash_air_angular_damping: float = 1.1
 @export var crash_ground_angular_damping: float = 4.0
+@export var crash_roll_body_radius: float = 0.42
+@export_range(0.0, 1.0) var crash_roll_coupling: float = 0.55
+@export var crash_roll_max_angular_speed: float = 6.0
+@export var crash_roll_fade_speed: float = 1.1
+@export var crash_roll_min_travel: float = 0.12
+@export var crash_align_speed_reference: float = 7.0
+@export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.10
+@export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.45
+@export var crash_ground_max_rotation_rate_degrees: float = 300.0
 
 @export_category("Rails")
 @export var rail_capture_radius: float = 1.1
