@@ -5,7 +5,7 @@ This file tracks concrete, actionable bugs and missing functionality. Resolved i
 ## Animation, physics, and bail recovery
 
 - **Grounded tumble choreography still needs a human visual pass.** Grounded `FALL` now couples residual crash spin to surface roll around `normal × travel`, fades that roll as speed drops, and uses speed-aware snow alignment that is strongest in `REST`/`RECOVERY`. FALL sprawl follows skier-local travel through the existing crash pose/settling layers. Automated coverage asserts axes, caps, degenerate fallbacks, per-frame rotation bounds, airborne continuity, and rest/recovery timing; whether the fall reads as a body sliding and rolling on snow remains a presentation judgment.
-- **Landing crouch release is bounded but still needs a human visual pass.** Balance-driven wobble decays with presentation age with a 1.5 s failsafe, so rotational landings can no longer hold compression indefinitely. Automated coverage asserts release within 3 s; the feel of the release remains a presentation judgment.
+- **Landing crouch release is two-stage but still needs a human visual pass.** Impact compression holds while wobble decays, then a profile-owned delay extends the legs. Automated coverage asserts wobble-first release, ordinary timing bands, 3 s pathological release, 30/60/120 Hz phase timing, idle, and no extra landing/stomp event. Whether the stand-up reads as stabilize-then-extend rather than a single spring remains a presentation judgment.
 
 ## Trick scoring and contact state
 

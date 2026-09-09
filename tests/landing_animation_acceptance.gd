@@ -18,6 +18,10 @@ func _ready() -> void:
 	_test_recovery_timing()
 	_test_timing_bands()
 	_test_rough_landing_wobble()
+	_test_wobble_releases_before_compression()
+	_test_compression_does_not_hold_indefinitely()
+	_test_phase_timing_across_rates()
+	_test_landing_reaches_idle_without_extra_event()
 	_test_spin_landing_correction()
 	_test_uneven_contact_asymmetry()
 	_test_steering_remains_responsive()
@@ -35,7 +39,7 @@ func _ready() -> void:
 			maximum_ski_delta,
 		])
 	if failures.is_empty():
-		print("LANDING_ANIMATION_PASS: anticipation, severity, slope awareness, hops, recovery, wobble, spin correction, and uneven contact passed")
+		print("LANDING_ANIMATION_PASS: anticipation, severity, slope awareness, hops, two-stage recovery, wobble, spin correction, and uneven contact passed")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
@@ -162,6 +166,8 @@ func _test_recovery_timing() -> void:
 func _test_timing_bands() -> void:
 	var soft := _sample_landing_timing(0.25, LandingSolver.Outcome.CLEAN)
 	var hard := _sample_landing_timing(0.9, LandingSolver.Outcome.HARD)
+	if not bool(soft.get("saw_stabilization", false)) or not bool(hard.get("saw_stabilization", false)):
+		failures.append("Ordinary landings skipped the stabilization hold before extension")
 	for sample: Dictionary in [soft, hard]:
 		var label := str(sample.label)
 		var compression_seconds := float(sample.compression_seconds)
@@ -190,6 +196,141 @@ func _test_rough_landing_wobble() -> void:
 		failures.append("Rough landing did not produce visible balance recovery wobble")
 	if str(rough.pose).find("Landing") < 0:
 		failures.append("Rough landing did not remain in a landing recovery pose")
+	_dispose_rig(rig)
+
+func _test_wobble_releases_before_compression() -> void:
+	var rig := _new_rig()
+	var frame := _ground_frame(14.0)
+	frame.landing_event_active = true
+	frame.landing_impact_severity = 0.78
+	frame.landing_balance_error = 0.88
+	frame.landing_body_roll_error = 0.6
+	frame.landing_outcome = LandingSolver.Outcome.HARD
+	rig.trigger(SkierAnimationController.AnimationEvent.LAND_HARD, 0.78, 1.0)
+	var peak_compression := 0.0
+	var peak_wobble := 0.0
+	var peak_wobble_phase := ""
+	var saw_stabilization := false
+	var compression_at_extension := -1.0
+	var compression_after_extension := -1.0
+	var wobble_after_extension := -1.0
+	var extension_elapsed := -1.0
+	var elapsed := 0.0
+	for _index: int in 240:
+		rig.apply_frame(frame, STEP)
+		elapsed += STEP
+		var snapshot := rig.debug_snapshot()
+		var compression := float(snapshot.landing_compression)
+		var wobble := float(snapshot.landing_wobble)
+		var phase := str(snapshot.landing_phase)
+		peak_compression = maxf(peak_compression, compression)
+		if wobble >= peak_wobble:
+			peak_wobble = wobble
+			peak_wobble_phase = phase
+		if phase == "Stabilization":
+			saw_stabilization = true
+		if compression_at_extension < 0.0 and phase == "Recovery":
+			compression_at_extension = compression
+			extension_elapsed = elapsed
+		if extension_elapsed >= 0.0 and elapsed >= extension_elapsed + 0.18:
+			compression_after_extension = compression
+			wobble_after_extension = wobble
+			break
+	if not saw_stabilization:
+		failures.append("High-balance landing skipped the stabilization hold")
+	elif compression_at_extension < 0.0:
+		failures.append("High-balance landing never entered compression-release extension")
+	else:
+		if peak_wobble_phase != "Compression" and peak_wobble_phase != "Stabilization" and peak_wobble_phase != "Contact":
+			failures.append("Wobble peaked during %s instead of decaying before compression release" % peak_wobble_phase)
+		if compression_at_extension < peak_compression * 0.75:
+			failures.append("Stage B started after compression had already dropped (%.2f vs peak %.2f)" % [compression_at_extension, peak_compression])
+		if compression_after_extension < 0.0 or compression_after_extension >= compression_at_extension * 0.78:
+			failures.append("Extension did not release compression after the stabilization hold")
+		if wobble_after_extension >= peak_wobble - 0.01:
+			failures.append("Wobble did not release ahead of the stand-up (peak %.3f later %.3f)" % [peak_wobble, wobble_after_extension])
+	_dispose_rig(rig)
+
+func _test_compression_does_not_hold_indefinitely() -> void:
+	var rig := _new_rig()
+	var frame := _ground_frame(15.0)
+	frame.landing_event_active = true
+	frame.landing_impact_severity = 0.9
+	frame.landing_balance_error = 0.95
+	frame.landing_rotation_error = 0.45
+	frame.landing_outcome = LandingSolver.Outcome.HARD
+	rig.trigger(SkierAnimationController.AnimationEvent.LAND_HARD, 0.9, 1.0)
+	var elapsed := 0.0
+	var still_held := true
+	var last_phase := ""
+	for _index: int in 360:
+		rig.apply_frame(frame, STEP)
+		elapsed += STEP
+		var snapshot := rig.debug_snapshot()
+		last_phase = str(snapshot.landing_phase)
+		if last_phase != "Stabilization" and float(snapshot.landing_compression) < 0.05:
+			still_held = false
+			break
+	if still_held or elapsed > 3.0:
+		failures.append("Pathological wobble landing held compression past 3.0 s (phase %s at %.3f s)" % [last_phase, elapsed])
+	_dispose_rig(rig)
+
+func _test_phase_timing_across_rates() -> void:
+	var samples: Array[Dictionary] = []
+	for hz: int in [30, 60, 120]:
+		samples.append(_sample_phase_times(0.55, LandingSolver.Outcome.SKETCHY, hz))
+	var reference := samples[2]
+	for sample: Dictionary in samples:
+		var hz := int(sample.hz)
+		if float(sample.compression_seconds) < 0.0 or float(sample.extension_seconds) < 0.0:
+			failures.append("%d Hz landing never produced Stabilization then Recovery phases" % hz)
+			continue
+		if absf(float(sample.compression_seconds) - float(reference.compression_seconds)) > 0.06:
+			failures.append("%d Hz compression phase %.3f s diverged from 120 Hz %.3f s" % [hz, float(sample.compression_seconds), float(reference.compression_seconds)])
+		if absf(float(sample.extension_seconds) - float(reference.extension_seconds)) > 0.06:
+			failures.append("%d Hz extension start %.3f s diverged from 120 Hz %.3f s" % [hz, float(sample.extension_seconds), float(reference.extension_seconds)])
+
+func _test_landing_reaches_idle_without_extra_event() -> void:
+	var rig := _new_rig()
+	var frame := _ground_frame(16.0)
+	frame.landing_event_active = true
+	frame.landing_impact_severity = 0.28
+	frame.landing_balance_error = 0.18
+	frame.landing_air_time = 0.8
+	frame.landing_outcome = LandingSolver.Outcome.CLEAN
+	rig.trigger(SkierAnimationController.AnimationEvent.LAND_CLEAN, 0.28, 0.0)
+	var contact_count := 1 if str(rig.debug_snapshot().landing_phase) == "Contact" else 0
+	var stomp_starts := 0
+	var stomp_was_active := false
+	var saw_idle := false
+	for _index: int in 360:
+		rig.apply_frame(frame, STEP)
+		var snapshot := rig.debug_snapshot()
+		if str(snapshot.landing_phase) == "Contact":
+			contact_count += 1
+		var stomp_active := bool(snapshot.get("stomp_active", false))
+		if stomp_active and not stomp_was_active:
+			stomp_starts += 1
+		stomp_was_active = stomp_active
+		if rig.is_landing_idle():
+			saw_idle = true
+			break
+	if not saw_idle:
+		failures.append("Ordinary landing never reached idle presentation")
+	for _index: int in 48:
+		rig.apply_frame(frame, STEP)
+		if str(rig.debug_snapshot().landing_phase) == "Contact":
+			contact_count += 1
+		if bool(rig.debug_snapshot().get("stomp_active", false)) and not stomp_was_active:
+			stomp_starts += 1
+		stomp_was_active = bool(rig.debug_snapshot().get("stomp_active", false))
+		if not rig.is_landing_idle() and str(rig.debug_snapshot().landing_phase) in ["Contact", "Compression"]:
+			failures.append("Idle landing restarted compression from the same event")
+			break
+	if contact_count != 1:
+		failures.append("Landing impact restarted after idle (contact count %d)" % contact_count)
+	if stomp_starts > 1:
+		failures.append("Landing produced an extra stomp event (%d starts)" % stomp_starts)
 	_dispose_rig(rig)
 
 func _test_spin_landing_correction() -> void:
@@ -348,25 +489,67 @@ func _sample_landing_timing(severity: float, outcome: int) -> Dictionary:
 		event = SkierAnimationController.AnimationEvent.LAND_SKETCHY
 	rig.trigger(event, severity, 0.0)
 	var elapsed := 0.0
-	var recovery_started := -1.0
+	var compression_ended := -1.0
+	var extension_started := -1.0
 	var recovered_at := -1.0
 	var peak := 0.0
+	var saw_stabilization := false
 	for _index: int in 240:
 		rig.apply_frame(frame, STEP)
 		elapsed += STEP
 		var snapshot := rig.debug_snapshot()
 		var compression := float(snapshot.landing_compression)
+		var phase := str(snapshot.landing_phase)
 		peak = maxf(peak, compression)
-		if recovery_started < 0.0 and str(snapshot.landing_phase) == "Recovery":
-			recovery_started = elapsed
-		if recovery_started >= 0.0 and compression <= peak * 0.12:
+		if phase == "Stabilization":
+			saw_stabilization = true
+		if compression_ended < 0.0 and phase != "Contact" and phase != "Compression":
+			compression_ended = elapsed
+		if extension_started < 0.0 and phase == "Recovery":
+			extension_started = elapsed
+		if extension_started >= 0.0 and compression <= peak * 0.12:
 			recovered_at = elapsed
 			break
 	_dispose_rig(rig)
 	return {
 		"label": "Hard" if outcome == LandingSolver.Outcome.HARD else "Soft",
-		"compression_seconds": recovery_started,
-		"recovery_seconds": recovered_at - recovery_started if recovered_at >= 0.0 and recovery_started >= 0.0 else INF,
+		"compression_seconds": compression_ended,
+		"recovery_seconds": recovered_at - extension_started if recovered_at >= 0.0 and extension_started >= 0.0 else INF,
+		"saw_stabilization": saw_stabilization,
+	}
+
+func _sample_phase_times(severity: float, outcome: int, hz: int) -> Dictionary:
+	var rig := _new_rig()
+	var frame := _ground_frame(13.0)
+	frame.landing_event_active = true
+	frame.landing_impact_severity = severity
+	frame.landing_balance_error = 0.55
+	frame.landing_outcome = outcome
+	var event := SkierAnimationController.AnimationEvent.LAND_SKETCHY
+	if outcome == LandingSolver.Outcome.HARD:
+		event = SkierAnimationController.AnimationEvent.LAND_HARD
+	elif outcome == LandingSolver.Outcome.CLEAN:
+		event = SkierAnimationController.AnimationEvent.LAND_CLEAN
+	rig.trigger(event, severity, 0.0)
+	var delta := 1.0 / float(hz)
+	var elapsed := 0.0
+	var compression_seconds := -1.0
+	var extension_seconds := -1.0
+	var frame_limit := hz * 3
+	for _index: int in frame_limit:
+		rig.apply_frame(frame, delta)
+		elapsed += delta
+		var phase := str(rig.debug_snapshot().landing_phase)
+		if compression_seconds < 0.0 and phase == "Stabilization":
+			compression_seconds = elapsed
+		if extension_seconds < 0.0 and phase == "Recovery":
+			extension_seconds = elapsed
+			break
+	_dispose_rig(rig)
+	return {
+		"hz": hz,
+		"compression_seconds": compression_seconds,
+		"extension_seconds": extension_seconds,
 	}
 
 func _ground_frame(speed: float) -> SkierAnimationFrame:

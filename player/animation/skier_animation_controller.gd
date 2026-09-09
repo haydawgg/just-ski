@@ -222,7 +222,10 @@ var _landing_wobble_amount := 0.0
 var _landing_phase_name := "Idle"
 var _landing_active := false
 var _landing_compressing := false
+var _landing_extending := false
+var _landing_awaiting_event_clear := false
 var _landing_presentation_time := 0.0
+var _landing_stabilization_time := 0.0
 var _landing_outcome := 0
 var _landing_left_asymmetry := 0.0
 var _landing_right_asymmetry := 0.0
@@ -506,6 +509,8 @@ func debug_snapshot() -> Dictionary:
 		"landing_rotation_error": _landing_rotation_error,
 		"landing_recovery": _landing_recovery_amount,
 		"landing_phase": _landing_phase_name,
+		"landing_extending": _landing_extending,
+		"landing_stabilization_age": _landing_stabilization_time,
 		"stomp_weight": _stomp_weight,
 		"stomp_active": _stomp_active,
 		"landing_wobble": _landing_wobble_amount,
@@ -1325,41 +1330,68 @@ func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void
 		_landing_ski_pitch = _damp(_landing_ski_pitch, 0.0, profile.landing_anticipation_response, delta)
 		_landing_torso_prepare = _damp(_landing_torso_prepare, 0.0, profile.landing_anticipation_response, delta)
 
+	if not frame.landing_event_active:
+		_landing_awaiting_event_clear = false
 	if frame.landing_event_active and frame.locomotion_state == STATE_GROUND:
 		_seed_landing_from_frame(frame)
 
 	if _landing_active or _landing_compression > 0.001:
 		_landing_presentation_time += delta
+		var failsafe_time := maxf(profile.landing_failsafe_time, MIN_LANDING_PRESENTATION_TIME)
+		var failsafe_reached := _landing_presentation_time >= failsafe_time
+		var failsafe_scale := maxf(profile.landing_failsafe_response_scale, 1.0) if failsafe_reached else 1.0
 		if _landing_compressing:
 			_landing_compression = _damp(_landing_compression, _landing_compression_target, profile.landing_compression_response, delta)
 			if absf(_landing_compression_target - _landing_compression) <= 0.03:
 				_landing_compressing = false
-				_landing_phase_name = "Recovery"
+				_landing_extending = false
+				_landing_stabilization_time = 0.0
+				_landing_phase_name = "Stabilization"
 			else:
 				_landing_phase_name = "Compression"
-		else:
-			var recovery_response := lerpf(profile.landing_recovery_response_soft, profile.landing_recovery_response_hard, _landing_severity)
+		elif not _landing_extending:
+			# Stage A: hold meaningful compression while wobble/secondaries decay.
+			# Stage B is gated by hold age or failsafe time, never a wobble epsilon.
+			_landing_stabilization_time += delta
+			_landing_compression = _damp(_landing_compression, _landing_compression_target, profile.landing_compression_response, delta)
+			_landing_recovery_amount = 0.0
+			_landing_phase_name = "Stabilization"
+			var hold := lerpf(
+				profile.landing_stabilization_hold_soft,
+				profile.landing_stabilization_hold_hard,
+				_landing_severity
+			)
+			if _landing_stabilization_time >= hold or failsafe_reached:
+				_landing_extending = true
+				_landing_phase_name = "Recovery"
+		if _landing_extending:
+			var recovery_response := lerpf(profile.landing_recovery_response_soft, profile.landing_recovery_response_hard, _landing_severity) * failsafe_scale
 			_landing_compression = _damp(_landing_compression, 0.0, recovery_response, delta)
 			_landing_recovery_amount = 1.0 - clampf(_landing_compression / maxf(_landing_compression_target, 0.001), 0.0, 1.0)
 			_landing_phase_name = "Recovery" if _landing_compression > 0.04 else "Idle"
 		_landing_wobble_phase += profile.landing_wobble_frequency * delta
-		# Balance-driven wobble must decay with presentation age; otherwise
-		# rotational landings (e.g. a 360 with residual balance error) hold a
-		# static wobble target and the crouch never releases.
-		var age_decay := exp(-_landing_presentation_time * 1.5)
-		var wobble_target := _landing_balance_error * (0.35 + _landing_compression * 0.65) * age_decay
-		_landing_wobble_amount = _damp(_landing_wobble_amount, wobble_target, profile.landing_wobble_decay, delta)
-		_landing_arm_open = _damp(_landing_arm_open, _landing_severity * (0.45 + _landing_balance_error * 0.55) * age_decay, profile.landing_compression_response, delta)
-		_landing_pole_lag = _damp(_landing_pole_lag, _landing_severity * profile.landing_pole_lag * age_decay, profile.secondary_response, delta)
-		_landing_head_nod = _damp(_landing_head_nod, _landing_compression * profile.landing_head_nod, profile.landing_compression_response, delta)
-		if _landing_presentation_time >= MIN_LANDING_PRESENTATION_TIME and _landing_compression < 0.02 and _landing_wobble_amount < 0.03 and not _landing_compressing:
+		var age_decay := exp(-_landing_presentation_time * maxf(profile.landing_wobble_age_decay, 0.01))
+		var wobble_target := _landing_balance_error * 0.35 * age_decay
+		var secondary_decay := age_decay
+		var head_target := _landing_compression * profile.landing_head_nod * age_decay
+		if _landing_compressing:
+			wobble_target = _landing_balance_error * (0.35 + _landing_compression * 0.65) * age_decay
+			head_target = _landing_compression * profile.landing_head_nod
+		elif _landing_extending:
+			# Residual wobble damps independently of remaining crouch depth.
+			if failsafe_reached:
+				wobble_target = 0.0
+				secondary_decay = 0.0
+			head_target = _landing_compression * profile.landing_head_nod
+		var wobble_response := profile.landing_wobble_decay * failsafe_scale
+		_landing_wobble_amount = _damp(_landing_wobble_amount, wobble_target, wobble_response, delta)
+		_landing_arm_open = _damp(_landing_arm_open, _landing_severity * (0.45 + _landing_balance_error * 0.55) * secondary_decay, profile.landing_compression_response, delta)
+		_landing_pole_lag = _damp(_landing_pole_lag, _landing_severity * profile.landing_pole_lag * secondary_decay, profile.secondary_response, delta)
+		_landing_head_nod = _damp(_landing_head_nod, head_target, profile.landing_compression_response, delta)
+		if _landing_presentation_time >= MIN_LANDING_PRESENTATION_TIME and _landing_extending and _landing_compression < 0.02 and _landing_wobble_amount < 0.03:
 			_clear_landing_state()
-		elif _landing_presentation_time >= 1.5 and not _landing_compressing:
-			# Failsafe: no landing presentation may hold the crouch indefinitely.
-			_landing_compression = _damp(_landing_compression, 0.0, profile.landing_recovery_response_hard * 2.0, delta)
-			_landing_wobble_amount = _damp(_landing_wobble_amount, 0.0, profile.landing_wobble_decay * 2.0, delta)
-			if _landing_compression < 0.02 and _landing_wobble_amount < 0.03:
-				_clear_landing_state()
+		elif failsafe_reached and _landing_extending and _landing_compression < 0.02 and _landing_wobble_amount < 0.03:
+			_clear_landing_state()
 	else:
 		_landing_arm_open = _damp(_landing_arm_open, 0.0, profile.landing_anticipation_response, delta)
 		_landing_pole_lag = _damp(_landing_pole_lag, 0.0, profile.secondary_response, delta)
@@ -1381,7 +1413,10 @@ func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void
 func _begin_landing_impact(event: int, severity: float, side: float) -> void:
 	_landing_active = true
 	_landing_compressing = true
+	_landing_extending = false
+	_landing_awaiting_event_clear = false
 	_landing_presentation_time = 0.0
+	_landing_stabilization_time = 0.0
 	_landing_outcome = event
 	_stomp_candidate = event == AnimationEvent.LAND_CLEAN
 	_stomp_active = false
@@ -1406,6 +1441,8 @@ func _begin_landing_impact(event: int, severity: float, side: float) -> void:
 	_landing_right_asymmetry = clampf(_landing_lateral_bias * profile.landing_asymmetry_gain, -0.35, 0.35)
 
 func _seed_landing_from_frame(frame: SkierAnimationFrame) -> void:
+	if not _landing_active and _landing_awaiting_event_clear:
+		return
 	_landing_severity = maxf(_landing_severity, clampf(frame.landing_impact_severity, 0.0, 1.0))
 	_landing_balance_error = clampf(frame.landing_balance_error, 0.0, 1.0)
 	_landing_ski_alignment_error = clampf(frame.landing_ski_alignment_error, 0.0, 1.0)
@@ -1432,7 +1469,11 @@ func _clear_landing_state() -> void:
 	_landing_ready = false
 	_landing_active = false
 	_landing_compressing = false
+	_landing_extending = false
+	_landing_awaiting_event_clear = true
 	_landing_presentation_time = 0.0
+	_landing_stabilization_time = 0.0
+	_landing_compression = 0.0
 	_landing_compression_target = 0.0
 	_landing_severity = 0.0
 	_landing_balance_error = 0.0
@@ -1585,7 +1626,7 @@ func _apply_landing_layers(frame: SkierAnimationFrame) -> void:
 		var rotation_correct := clampf(_landing_rotation_error * 2.0, -1.0, 1.0) * profile.landing_rotation_correct_yaw * (0.4 + depth)
 		if _landing_phase_name == "Compression" or _landing_phase_name == "Contact":
 			_current_pose_name = "Landing Compression"
-		elif _landing_balance_error > 0.28:
+		elif _landing_phase_name == "Stabilization" or _landing_balance_error > 0.28:
 			_current_pose_name = "Landing Recovery Wobble"
 		else:
 			_current_pose_name = "Landing Recovery"

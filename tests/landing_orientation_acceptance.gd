@@ -38,6 +38,7 @@ func _ready() -> void:
 		reseat_results.append(_run_case("tilted_sketchy", hz, false))
 	_validate_cross_rate_results("terrain_hop", reseat_results)
 	_test_rotational_landing_releases_crouch()
+	_test_landing_idle_does_not_retrigger()
 	_test_spawn_reseat_seats_quietly()
 	_test_touchdown_freezes_trick_snapshot()
 	_test_spawn_settle_does_not_alter_pop_or_hops()
@@ -254,6 +255,52 @@ func _test_rotational_landing_releases_crouch() -> void:
 		failures.append("Rotational landing held compression/wobble past 3 seconds instead of releasing the crouch")
 	if float(skier.animation_controller.debug_snapshot().get("landing_compression", 1.0)) > 0.05:
 		failures.append("Rotational landing remained compressed after the recovery window")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_landing_idle_does_not_retrigger() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3(0.0, -1.0, -9.0))
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.landing_context = {
+		"impact_speed": 2.4,
+		"impact_severity": 0.35,
+		"balance_error": 0.2,
+		"ski_alignment_error": 0.1,
+		"body_roll_error": 0.08,
+		"body_pitch_error": 0.08,
+		"rotation_error": 0.05,
+		"rotation_accumulated": Vector3.ZERO,
+		"rotation_residual": Vector3.ZERO,
+		"lateral_velocity": 0.4,
+		"forward_velocity": 9.0,
+		"air_time": 0.7,
+		"surface_normal": Vector3.UP,
+		"outcome": LandingSolver.Outcome.CLEAN,
+		"active": true,
+		"deliberate": true,
+	}
+	var landed_count := [0]
+	skier.landed.connect(func(_result: Dictionary) -> void: landed_count[0] += 1)
+	skier.animation_controller.trigger(SkierAnimationController.AnimationEvent.LAND_CLEAN, 0.35, 0.0)
+	for _frame: int in 180:
+		skier._update_animation(1.0 / 60.0)
+	if not skier.animation_controller.is_landing_idle():
+		failures.append("Ordinary landing did not reach idle presentation")
+	if bool(skier.landing_context.get("active", false)):
+		failures.append("Landing context stayed active after idle")
+	for _frame: int in 30:
+		skier._update_animation(1.0 / 60.0)
+	if not skier.animation_controller.is_landing_idle():
+		failures.append("Idle landing presentation restarted after recovery")
+	if landed_count[0] != 0:
+		failures.append("Animation recovery emitted an extra landed event")
+	if str(skier.animation_controller.debug_snapshot().get("landing_phase", "Idle")) in ["Contact", "Compression"]:
+		failures.append("Idle landing restarted a second impact event")
 	remove_child(skier)
 	skier.queue_free()
 
