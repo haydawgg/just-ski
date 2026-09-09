@@ -241,12 +241,21 @@ func _build_hud() -> void:
 	combo_timer_bar.visible = false
 	combo_timer_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_overlay.add_child(combo_timer_bar)
-	hint_label = _label("", 15)
+	hint_label = _label("", 25)
 	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hint_label.position = Vector2(0, 780)
-	hint_label.size = Vector2(900, 40)
+	hint_label.size = Vector2(1080, 64)
+	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var hint_background := StyleBoxFlat.new()
+	hint_background.bg_color = Color(0.025, 0.055, 0.075, 0.78)
+	hint_background.content_margin_left = 16.0
+	hint_background.content_margin_right = 16.0
+	hint_background.content_margin_top = 10.0
+	hint_background.content_margin_bottom = 10.0
+	hint_background.set_corner_radius_all(8)
+	hint_label.add_theme_stylebox_override("normal", hint_background)
 	hint_label.modulate.a = 0.82
 	hud_overlay.add_child(hint_label)
+	hint_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_KEEP_SIZE)
 	debug_label = _label("", 14)
 	debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	debug_label.position = Vector2(1120, 0)
@@ -1194,7 +1203,7 @@ func _on_device_changed(_device: String) -> void:
 	_update_hint()
 
 func _update_hint() -> void:
-	hint_label.text = "%s pop/tricks   •   LT/RT grabs in air   •   %s marker   •   %s return   •   F3 debug" % [InputManager.glyph(&"jump"), InputManager.glyph(&"set_marker"), InputManager.glyph(&"respawn")]
+	hint_label.text = "%s pop/tricks   •   %s/%s grabs   •   %s marker   •   %s return" % [InputManager.glyph(&"jump"), InputManager.glyph(&"grab_left"), InputManager.glyph(&"grab_right"), InputManager.glyph(&"set_marker"), InputManager.glyph(&"respawn")]
 	if onboarding_remaining > 0.0:
 		hint_label.visible = true
 

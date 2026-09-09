@@ -221,7 +221,7 @@ def main() -> None:
         out_joints = []
         out_weights = []
         for vertex in shell_vertices:
-            dominant = joint_names[max(range(4), key=lambda i: weights[vertex][i])]
+            dominant = joint_names[joints[vertex][max(range(4), key=lambda i: weights[vertex][i])]]
             amount = offsets.get(dominant, default_offset) * taper(distances[vertex], ramp)
             if region == "Jacket" and positions[vertex][1] > JACKET_COLLAR_Y:
                 # Skirt zone never tapers shut: the lip stands off the skin.

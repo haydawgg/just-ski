@@ -248,7 +248,7 @@ static func add_butter_pad(parent: Node3D, label: String, x: float, z: float, le
 	root.name = label
 	root.add_to_group("park_terrain_features")
 	parent.add_child(root)
-	add_slope_box(root, "ButterDeck", x, z, Vector3(width, maxf(height, 0.08), length), 0.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true, height)
+	add_slope_box(root, "ButterDeck", x, z, Vector3(width, maxf(height, 0.08), length), 0.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true, height, -1, SnowSurface.PresentationRole.PARK_FEATURE)
 	return root
 
 static func add_side_hit(parent: Node3D, label: String, x: float, z: float, length: float, height: float, width: float, yaw_deg: float) -> Node3D:
@@ -289,7 +289,7 @@ static func add_wallride(parent: Node3D, label: String, x: float, z: float, leng
 	snow_base.mesh = base_mesh
 	snow_base.position = snow_at(x, z) + snow_normal() * 0.055
 	snow_base.basis = feature_basis
-	snow_base.material_override = SnowSurface.create(SnowSurface.Kind.PACKED, Vector2(feature_basis.z.x, feature_basis.z.z), 0.28)
+	snow_base.material_override = _park_feature_snow_material(SnowSurface.Kind.PACKED, Vector2(feature_basis.z.x, feature_basis.z.z), 0.28)
 	snow_base.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(snow_base)
 	_add_feature_snow_collar(root, feature_basis, snow_at(x, z) + snow_normal() * 0.026, Vector3(1.14, 0.1, length + 0.7))
@@ -319,7 +319,7 @@ static func add_wallride(parent: Node3D, label: String, x: float, z: float, leng
 	snow_cap.mesh = cap_mesh
 	snow_cap.position = snow_at(x, z) + feature_basis.y * (height + 0.045)
 	snow_cap.basis = feature_basis
-	snow_cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER, Vector2(feature_basis.z.x, feature_basis.z.z), 0.34)
+	snow_cap.material_override = _park_feature_snow_material(SnowSurface.Kind.POWDER, Vector2(feature_basis.z.x, feature_basis.z.z), 0.34)
 	snow_cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(snow_cap)
 	_add_feature_trim(root, feature_basis, snow_at(x, z) + feature_basis.y * (height + 0.012), Vector3(0.56, 0.06, length + 0.18), color.darkened(0.18))
@@ -340,7 +340,7 @@ static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: 
 	base_mesh.radial_segments = 10
 	snow_base.mesh = base_mesh
 	snow_base.position = snow_at(x, z) + snow_normal() * 0.06
-	snow_base.material_override = SnowSurface.create(SnowSurface.Kind.PACKED, Vector2(0.0, -1.0), 0.22)
+	snow_base.material_override = _park_feature_snow_material(SnowSurface.Kind.PACKED, Vector2(0.0, -1.0), 0.22)
 	snow_base.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(snow_base)
 	var body := StaticBody3D.new()
@@ -368,7 +368,7 @@ static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: 
 	cap_mesh.radial_segments = 10
 	snow_cap.mesh = cap_mesh
 	snow_cap.position = snow_at(x, z) + snow_normal() * (height + 0.045)
-	snow_cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER, Vector2(0.0, -1.0), 0.22)
+	snow_cap.material_override = _park_feature_snow_material(SnowSurface.Kind.POWDER, Vector2(0.0, -1.0), 0.22)
 	snow_cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(snow_cap)
 	_add_feature_snow_collar(root, downhill_basis(), snow_at(x, z) + snow_normal() * 0.026, Vector3(radius * 3.2, 0.1, radius * 3.2))
@@ -388,7 +388,7 @@ static func _add_feature_snow_collar(parent: Node3D, basis: Basis, center: Vecto
 	collar.mesh = mesh
 	collar.position = center
 	collar.basis = basis
-	collar.material_override = SnowSurface.create(SnowSurface.Kind.PACKED, Vector2(basis.z.x, basis.z.z), 0.2)
+	collar.material_override = _park_feature_snow_material(SnowSurface.Kind.PACKED, Vector2(basis.z.x, basis.z.z), 0.2)
 	collar.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(collar)
 
@@ -479,7 +479,7 @@ static func _configure_guide_visibility(instance: GeometryInstance3D) -> void:
 	instance.visibility_range_end_margin = 24.0
 	instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 
-static func add_slope_box(parent: Node3D, label: String, x: float, z: float, size: Vector3, yaw_deg: float, color: Color, surface_kind: int, collision_enabled: bool, extra_height: float = 0.0, visual_surface_kind: int = -1) -> StaticBody3D:
+static func add_slope_box(parent: Node3D, label: String, x: float, z: float, size: Vector3, yaw_deg: float, color: Color, surface_kind: int, collision_enabled: bool, extra_height: float = 0.0, visual_surface_kind: int = -1, presentation_role: int = SnowSurface.PresentationRole.GROUND) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.name = label
 	var n := snow_normal()
@@ -494,7 +494,9 @@ static func add_slope_box(parent: Node3D, label: String, x: float, z: float, siz
 	mesh_instance.mesh = mesh
 	var groom_direction_3d := -downhill_basis(yaw_deg).z
 	var material_kind := visual_surface_kind if visual_surface_kind >= 0 else surface_kind
-	mesh_instance.material_override = material_for_surface(color, material_kind, Vector2(groom_direction_3d.x, groom_direction_3d.z))
+	mesh_instance.material_override = material_for_surface(color, material_kind, Vector2(groom_direction_3d.x, groom_direction_3d.z), presentation_role)
+	if material_kind >= 0:
+		mesh_instance.set_meta("snow_presentation_role", presentation_role)
 	body.add_child(mesh_instance)
 	if collision_enabled:
 		var shape_node := CollisionShape3D.new()
@@ -574,14 +576,17 @@ static func _add_rail_apron(parent: Node3D, label: String, anchor: Vector3, tang
 		shoulders.append(crest)
 	_add_profiled_snow_body(parent, label, centers, widths, shoulders, normal, 0.34, SnowSurface.Kind.GROOMED, 0.12, true)
 
-static func material_for_surface(color: Color, surface_kind: int, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0)) -> Material:
+static func material_for_surface(color: Color, surface_kind: int, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), presentation_role: int = SnowSurface.PresentationRole.GROUND, feature_emphasis: float = 0.0) -> Material:
 	if surface_kind >= 0:
-		return SnowSurface.create(surface_kind, groom_direction_world_xz)
+		return SnowSurface.create(surface_kind, groom_direction_world_xz, feature_emphasis, false, presentation_role)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color.lerp(Color("#75858a"), 0.16)
 	material.roughness = 0.68
 	material.metallic = 0.03
 	return material
+
+static func _park_feature_snow_material(kind: int, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), feature_emphasis: float = 0.0, shadow_safe: bool = false) -> Material:
+	return SnowSurface.create(kind, groom_direction_world_xz, feature_emphasis, shadow_safe, SnowSurface.PresentationRole.PARK_FEATURE)
 
 static func _add_jump_readability_markers(
 	parent: Node3D,
@@ -821,7 +826,7 @@ static func _add_grid_snow_body(
 	mesh_instance.set_meta("render_surface_only", true)
 	var groom_direction := world_rows[-1][world_rows[-1].size() / 2] - world_rows[0][world_rows[0].size() / 2]
 	var material_kind := visual_kind if visual_kind >= 0 else kind
-	mesh_instance.material_override = SnowSurface.create(material_kind, Vector2(groom_direction.x, groom_direction.z), feature_emphasis)
+	mesh_instance.material_override = _park_feature_snow_material(material_kind, Vector2(groom_direction.x, groom_direction.z), feature_emphasis)
 	body.add_child(mesh_instance)
 	if collision_enabled:
 		var shape_node := CollisionShape3D.new()
@@ -937,7 +942,7 @@ static func _add_deck_prism(parent: Node3D, label: String, deck: PackedVector3Ar
 		"Lip": feature_emphasis = 0.18
 		"Table": feature_emphasis = 0.42
 		"Landing": feature_emphasis = 0.28
-	mesh_instance.material_override = SnowSurface.create(kind, Vector2(deck_direction.x, deck_direction.z), feature_emphasis)
+	mesh_instance.material_override = _park_feature_snow_material(kind, Vector2(deck_direction.x, deck_direction.z), feature_emphasis)
 	body.add_child(mesh_instance)
 	parent.add_child(body)
 	return body

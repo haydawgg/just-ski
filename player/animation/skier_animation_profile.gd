@@ -267,7 +267,7 @@ extends Resource
 @export var grab_silhouette_scale: float = 1.32
 @export_range(0.0, 1.0) var grab_spin_leg_priority_floor: float = 0.74
 @export_range(0.0, 1.0) var grab_landing_leg_retention: float = 0.75
-@export var grab_pose_response: float = 9.0
+@export var grab_pose_response: float = 12.0
 @export var grab_contact_response: float = 15.0
 @export var grab_release_response: float = 11.0
 @export var grab_recover_response: float = 6.5
@@ -276,8 +276,8 @@ extends Resource
 @export_range(0.0, 1.0) var grab_late_hold_floor: float = 0.28
 @export var grab_chest_drop: float = 0.34
 @export var grab_leg_tuck: float = 0.58
-@export var grab_ski_lift_knee: float = 0.9
-@export var grab_ski_lift_hip: float = -0.1
+@export var grab_ski_lift_knee: float = 0.35
+@export var grab_ski_lift_hip: float = 0.05
 @export var grab_knee_flex_limit: float = 2.65
 @export var grab_upper_arm_length: float = 0.42
 @export var grab_forearm_length: float = 0.37

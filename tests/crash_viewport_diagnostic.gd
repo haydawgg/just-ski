@@ -3,12 +3,15 @@ extends Node
 # Viewport diagnostic for crash equipment: verifies that bail does not produce
 # vertical skis, intersecting skis, or a frozen settle.
 
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
+
 var resort: Node3D
 var skier: SkierController
 var viewport: SubViewport
 var samples: Array[Dictionary] = []
 var frame_count := 0
 var crash_triggered := false
+var _finish_started := false
 
 func _ready() -> void:
 	resort = load("res://world/resort.tscn").instantiate() as Node3D
@@ -20,7 +23,7 @@ func _ready() -> void:
 		skier = resort.find_children("*", "SkierController", true, false).front() as SkierController
 	if skier == null:
 		push_error("CRASH_DIAG_FAIL: skier not found")
-		get_tree().quit(1)
+		_finish(1)
 		return
 	viewport = SubViewport.new()
 	viewport.size = Vector2i(960, 540)
@@ -113,7 +116,7 @@ func _evaluate() -> void:
 	print("CRASH_VIEWPORT_DIAG_START")
 	if samples.is_empty():
 		push_error("CRASH_DIAG_FAIL: no samples")
-		get_tree().quit(1)
+		_finish(1)
 		return
 	var max_vertical := 0.0
 	var grounded_vertical_frames := 0
@@ -145,18 +148,44 @@ func _evaluate() -> void:
 		reasons.append("settling frozen mid->late %.4f <0.015" % mid_to_late)
 	if early_to_mid < 0.04:
 		reasons.append("no initial drag early->mid %.4f <0.04" % early_to_mid)
-	# Image capture for manual review
-	var tex := viewport.get_texture() if viewport != null else null
-	if tex != null:
-		var img := tex.get_image()
-		if img != null and not img.is_empty():
+	# Image capture is supplemental on GPU and intentionally skipped in headless
+	# mode so a dummy texture cannot mask the geometry-only crash checks.
+	if RuntimeEnvironment.is_headless():
+		print("CRASH_IMAGE_SKIP: geometry-only headless renderer")
+	else:
+		var tex := viewport.get_texture() if viewport != null else null
+		var img := tex.get_image() if tex != null else null
+		if img == null or img.is_empty():
+			push_error("CRASH_VIEWPORT_FAIL: GPU viewport image was empty")
+			reasons.append("GPU viewport image was empty")
+		else:
 			img.convert(Image.FORMAT_RGBA8)
-			img.save_png("user://crash_viewport_capture.png")
-			print("CRASH_IMAGE_SAVED: user://crash_viewport_capture.png")
+			var save_error := img.save_png("user://crash_viewport_capture.png")
+			if save_error != OK:
+				reasons.append("could not save GPU viewport image")
+			else:
+				print("CRASH_IMAGE_SAVED: user://crash_viewport_capture.png")
 	if reasons.is_empty():
 		print("CRASH_VIEWPORT_PASS: vertical %.3f dist %.3f drag %.4f/%.4f" % [max_vertical, min_dist, early_to_mid, mid_to_late])
-		get_tree().quit(0)
+		_finish(0)
 	else:
 		for r in reasons:
 			push_error("CRASH_VIEWPORT_FAIL: " + r)
-		get_tree().quit(1)
+		_finish(1)
+
+func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)

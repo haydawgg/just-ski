@@ -15,6 +15,12 @@ Use this checklist when changing or replacing scenes in the environment asset ca
 - [x] `sunset_environment_acceptance.tscn` validates the warm sky/low sun profile, Forward+ SDFGI settings, static GI geometry, and quality gating.
 - [x] `summit_environment_acceptance.tscn` validates deterministic heightfield samples, preserved `MainSnowFace` collision, authored ridge meshes, and collider-free summit decorations.
 - [x] `sunset_visual_quality_gate.ps1` runs the Vulkan sunset trajectory capture and focused near-black-region metric; it remains separate from the headless runtime checks.
+- [x] `environment_visual_quality_gate.ps1` clears and refreshes `res://.godot_user/captures/snow_depth_after`, requires all nine PNG/JSON pairs, checks the GPU process exit/logs, and runs the snow-depth metric against the fresh capture set.
+- [x] `ramp_surface_visual_quality_gate.ps1` captures the tabletop approach/lip/deck/landing plus roller, berm, and side-hit surfaces at the gameplay camera in Day and Sunset, with `PARK_FEATURE` material telemetry and no automatic baseline update.
+- [x] `visual_evidence_acceptance.tscn` and `visual_evidence_static_acceptance.ps1` validate the Codex evidence schema, deterministic ordering, structured telemetry, artifact hashes, dimensions, path containment, and malformed-fixture cases without a GPU.
+- [x] `visual_analysis_bundle.ps1` is the canonical local GPU workflow for maintained environment, animation, and sunset evidence.
+- [x] `visual_analysis_bundle.ps1 -IncludeMotion` can sweep Day/Golden/Sunset at the requested render scales with fixed-rate motion telemetry and contact sheets.
+- [x] `visual_analysis_bundle.ps1 -IncludeRecovery` captures the out-of-bounds fade, respawn, camera reset, and completed lifecycle as reviewable phase artifacts.
 
 ## Human visual pass
 
@@ -26,7 +32,14 @@ Use this checklist when changing or replacing scenes in the environment asset ca
 - [ ] Confirm fade-out → respawn → camera reset → fade-in occurs once, combo/link clears, and total score remains unchanged.
 - [ ] Install Godot 4.7.2 export templates, create the platform release export used for the target build, and smoke-test that exported build with the same route.
 - [ ] Compare the daytime and sunset scenes at near, mid, and horizon distances; tune glare, shadow density, and snow readability on the target display.
-- [ ] Review `phase_15_after/gameplay_landing.png` and the capture produced by `sunset_visual_quality_gate.ps1` on the target display; confirm the shadow-safe summit surface retains shoulder/form readability while the rest of the scene keeps the intended GI/shadow balance.
+- [ ] Review the seven ramp-surface shots in Day and Sunset; confirm the Snow 02 texture remains readable through the approach, rotated lip/deck/landing, roller, berm, and side hit, with no visible UV-dependent tiling or pop against adjacent piste.
+- [ ] Review the bundle report's environment landing subject crops and sunset capture on the target display; confirm the shadow-safe summit surface retains shoulder/form readability while the rest of the scene keeps the intended GI/shadow balance.
+- [ ] Review the motion-sweep contact sheets at each target environment/render-scale pair; confirm carve, straight, and landing sweeps remain readable for the full ten seconds.
+- [ ] Review the recovery phase captures; confirm the notice, fade, respawn, and completed frame communicate one clean transition at the target display refresh rate.
+
+The environment gate also records landing telemetry for first contact, impact,
+compression, recovery, and final landing. Confirm `vfx_mode="landing"` and an
+active landing emitter in the landing JSON before judging spray separation.
 
 ## GPU-backed sunset visual check
 
@@ -37,3 +50,14 @@ Run this on the Vulkan/NVIDIA reference machine after the headless gates:
 ```
 
 The command captures the same deterministic 1280×720 sunset trajectory, then rejects any contiguous near-black region larger than 2% of the lower gameplay ROI after HUD/skier masks. It is intentionally supplemental and separate from `quality_gate.ps1`, because the headless runtime gate does not validate the rendered pixels on the reference GPU.
+
+For daytime snow and landing review, run:
+
+```powershell
+.\tests\environment_visual_quality_gate.ps1
+```
+
+Both GPU gates wait for the capture process, inspect its exit code and logs,
+require fresh output files, and fail when a renderer shutdown leak is reported.
+
+For the complete Codex-facing review bundle, run `.\tests\visual_analysis_bundle.ps1` after the headless gate. Do not update baselines from this dirty worktree; baseline seeding must use an explicitly reviewed clean reference capture.

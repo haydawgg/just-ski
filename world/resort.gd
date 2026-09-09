@@ -10,6 +10,7 @@ const SummitEnvironmentBuilderModule := preload("res://world/summit_environment_
 const ParkTreeBatchModule := preload("res://world/environment/park_tree_batch.gd")
 const EnvironmentAssetDefinition := preload("res://resources/environment/environment_asset_definition.gd")
 const EnvironmentAssetCatalog := preload("res://resources/environment/environment_asset_catalog.gd")
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 const DISTANT_MOUNTAIN_SHADER: Shader = preload("res://shaders/distant_mountain.gdshader")
 const DAY_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/default_resort_environment_profile.tres")
 const GOLDEN_HOUR_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/golden_hour_resort_environment_profile.tres")
@@ -225,7 +226,7 @@ func _build_resort() -> void:
 	# headless acceptance runs because some software drivers reject the large
 	# transparent plane, while production windows benefit from the extra horizon
 	# breakup and depth cue.
-	if environment_profile != null and environment_profile.high_haze_enabled and not OS.has_feature("headless"):
+	if environment_profile != null and environment_profile.high_haze_enabled and not RuntimeEnvironment.is_headless():
 		_add_high_haze()
 
 func _build_player() -> void:
@@ -567,46 +568,14 @@ func _add_mountain_peak(label: String, position: Vector3, radius: float, height:
 	rock_material.set_shader_parameter("haze_color", Color("#b4c2ca"))
 	rock_material.set_shader_parameter("haze_start_distance", 170.0)
 	rock_material.set_shader_parameter("haze_end_distance", 620.0)
-	rock_material.set_shader_parameter("facet_value_range", 0.055)
+	rock_material.set_shader_parameter("facet_value_range", 0.12)
+	rock_material.set_shader_parameter("mountain_height", height)
 	mountain.material_override = rock_material
 	root.add_child(mountain)
-	var cap := MeshInstance3D.new()
-	cap.mesh = _create_mountain_mesh(radius * 0.46, height * 0.38, seed + 997)
-	cap.position.y = height * 0.33
-	cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER)
-	root.add_child(cap)
 	add_child(root)
 
 func _create_mountain_mesh(radius: float, height: float, seed: int) -> ArrayMesh:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = seed
-	var segments := 7 + seed % 3
-	var ring_heights := [-height * 0.55, 0.0, height * 0.34, height * 0.7, height]
-	var ring_scales := [1.2, 1.04, 0.72, 0.34, 0.035]
-	var ring_points: Array[PackedVector3Array] = []
-	var peak_offset := Vector2(rng.randf_range(-0.14, 0.14), rng.randf_range(-0.12, 0.12)) * radius
-	for ring_index: int in range(ring_heights.size()):
-		var points := PackedVector3Array()
-		var center_offset := peak_offset * (float(ring_index) / float(ring_heights.size() - 1))
-		for segment: int in range(segments):
-			var angle := TAU * float(segment) / float(segments)
-			var irregularity := rng.randf_range(0.78, 1.18)
-			var ring_radius := radius * float(ring_scales[ring_index]) * irregularity
-			points.append(Vector3(cos(angle) * ring_radius + center_offset.x, float(ring_heights[ring_index]), sin(angle) * ring_radius + center_offset.y))
-		ring_points.append(points)
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for ring_index: int in range(ring_points.size() - 1):
-		for segment: int in range(segments):
-			var next := (segment + 1) % segments
-			var a := ring_points[ring_index][segment]
-			var b := ring_points[ring_index][next]
-			var c := ring_points[ring_index + 1][next]
-			var d := ring_points[ring_index + 1][segment]
-			st.add_vertex(a); st.add_vertex(b); st.add_vertex(c)
-			st.add_vertex(a); st.add_vertex(c); st.add_vertex(d)
-	st.generate_normals()
-	return st.commit()
+	return SummitEnvironmentBuilderModule._create_ridge_mesh(radius, height, seed)
 
 func _add_course_dressing() -> void:
 	# Sparse edge landmarks add scale and resort context without narrowing the
@@ -938,7 +907,7 @@ func _player_probe_target() -> Vector3:
 func _build_player_probe() -> void:
 	# Created after _build_player() so the first cubemap is centered on the
 	# player, with the same semantics as every later capture.
-	if OS.has_feature("headless") or player == null:
+	if RuntimeEnvironment.is_headless() or player == null or OS.get_cmdline_user_args().has("--skip-player-probe"):
 		return
 	var probe := ReflectionProbe.new()
 	probe.name = "PlayerProbe"
@@ -959,6 +928,18 @@ func _build_player_probe() -> void:
 	_probe_refresh_pending = false
 	probe.global_position = _probe_capture_position
 	probe.update_mode = ReflectionProbe.UPDATE_ONCE
+
+func release_render_resources() -> void:
+	# Reflection probes own an internal cubemap RID. Capture scenes tear down
+	# asynchronously, so release the probe before their final render flush
+	# instead of relying on the parent node's deferred queue_free.
+	if player_probe != null:
+		var probe := player_probe
+		player_probe = null
+		probe.visible = false
+		if probe.get_parent() != null:
+			probe.get_parent().remove_child(probe)
+		probe.free()
 
 func _move_probe_and_capture(target: Vector3) -> void:
 	# Relocation IS the UPDATE_ONCE recapture trigger: the probe re-renders

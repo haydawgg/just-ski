@@ -1,6 +1,7 @@
 extends Node
 
 const ProfileMetrics := preload("res://tests/performance_profile_metrics.gd")
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 
 var failures: Array[String] = []
 
@@ -52,6 +53,9 @@ func _test_schema_contract() -> void:
 	var identity := profile.get("identity", {}) as Dictionary
 	if identity.get("environment", "") != "daytime" or identity.get("scenario", "") != "baseline":
 		failures.append("Profile identity did not retain environment and scenario")
+	var runtime := profile.get("runtime", {}) as Dictionary
+	if not runtime.has("headless") or bool(runtime.get("headless")) != RuntimeEnvironment.is_headless():
+		failures.append("Profile runtime.headless does not match the active runtime environment")
 	var incomplete := profile.duplicate(true)
 	incomplete.erase("render")
 	if bool(ProfileMetrics.validate_profile(incomplete).get("valid", true)):

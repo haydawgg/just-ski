@@ -73,8 +73,8 @@ foreach ($requiredContentStatus in @('ParkFeatureSpec', 'Session Yard', 'M2 meta
 if ($contentPass -notmatch 'animation-presentation-audit' -or $contentPass -notmatch 'lower-run/hub' -or $contentPass -notmatch 'Human-only gates still open') {
 	$failures.Add("CONTENT_PASS_IMPLEMENTATION.md does not document deterministic animation/art evidence and remaining human gates.")
 }
-if ($knownIssues -notmatch 'Deterministic animation presentation coverage' -or $knownIssues -notmatch 'texture-RID shutdown warning' -or $knownIssues -notmatch 'human') {
-	$failures.Add("KNOWN_ISSUES.md is missing the separate deterministic status or unresolved human/shutdown warnings.")
+if ($knownIssues -notmatch 'Deterministic animation presentation coverage' -or $knownIssues -notmatch 'Visual capture correctness is now a blocking gate' -or $knownIssues -notmatch 'Renderer shutdown warnings are treated as capture failures' -or $knownIssues -notmatch 'human') {
+	$failures.Add("KNOWN_ISSUES.md is missing the deterministic capture gate status or unresolved human gates.")
 }
 if ($animationDoc -notmatch 'capture-animation-presentation-audit' -or $animationDoc -notmatch '30\s*,\s*60\s*,\s*and\s*120' -or $animationDoc -notmatch 'human-only gates') {
 	$failures.Add("ANIMATION.md does not document the multi-rate presentation audit and deferred human gates.")

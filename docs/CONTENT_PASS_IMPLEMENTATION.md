@@ -116,4 +116,4 @@ Human-only gates still open:
 - target-display and target-GPU review, including representative snow/VFX cost;
 - review of generated previews for approach readability, crossovers, landing/runout spacing, and Session Yard retry flow.
 
-Typed `ParkFeatureSpec` migration and default Session Yard exposure remain deferred until the stated clean-player gate passes. The unresolved texture-RID shutdown warning is tracked separately in `docs/ANIMATION.md` and is not part of this pass.
+Typed `ParkFeatureSpec` migration and default Session Yard exposure remain deferred until the stated clean-player gate passes. Visual capture shutdown warnings are now treated as blocking gate failures; the current capture and diagnostic runs complete without renderer leak warnings.

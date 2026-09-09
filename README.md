@@ -142,13 +142,21 @@ $env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
 
 ## Visual review and capture
 
-The deterministic animation silhouette comparison can be generated with:
+The maintained Codex-analyzable visual bundle can be generated on a GPU-backed machine with:
+
+```powershell
+.\tests\visual_analysis_bundle.ps1
+```
+
+It emits one manifest and report under `.godot_user/visual_runs/<run-id>/`. Start with `visual_report.md`; it links labeled contact sheets, subject crops, structured timeline summaries, raw captures, and any compatible-baseline overlays/heatmaps. See [Visual evidence](docs/VISUAL_EVIDENCE.md) for the catalog, status semantics, baseline policy, and validation command.
+
+For a focused legacy-compatible animation capture, use:
 
 ```powershell
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-silhouette-showcase
 ```
 
-The comparison is written under `.godot_user/captures/`.
+The compatibility comparison is written under `.godot_user/captures/`; bundle runs retain those legacy filenames below each suite's `compat/` directory.
 
 During normal play, F9 arms the gameplay recorder. The next run started from the summit is captured at 960×540 / 30 fps until the finish, a manual F9 stop, or the recorder's safety cap. The result is written to the user's Downloads folder when available, with `user://` as a fallback. The file is MJPEG video in an MP4 container and does not include game audio.
 

@@ -1,0 +1,25 @@
+{
+  "baseline_id": "sunset.capture",
+  "compatibility": {
+    "capture_height": 720,
+    "capture_width": 1280,
+    "environment": "sunset",
+    "fixed_fps": 60,
+    "godot_version": "4.7.2-stable (official)",
+    "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU",
+    "preset": 2,
+    "render_scale": 1.0,
+    "renderer": "Forward Plus",
+    "video_adapter": "NVIDIA GeForce RTX 4050 Laptop GPU"
+  },
+  "schema_version": "visual-evidence-v1",
+  "source_run_id": "visual_20260909_143451_064_6074f6e",
+  "source_scenario_id": "sunset.capture",
+  "source_sha256": "2465baa6fb3bddb4329c2a27c7585b2b12c1d3b737e7cfafe977fa34a824c4c7",
+  "suite": "sunset",
+  "thresholds": {
+    "changed_fraction": 0.1,
+    "mean_abs_delta": 0.03,
+    "pixel_tolerance": 8
+  }
+}

@@ -1,0 +1,1581 @@
+{
+  "schema_version": "visual-scenarios-v1",
+  "capture_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "scenarios": [
+    {
+      "id": "environment.trajectory.carve",
+      "suite": "environment",
+      "label": "Gameplay carve",
+      "state": "GROUND",
+      "phase": "carve",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_carve",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "environment.trajectory.carve",
+      "human_review": [
+        "Is the skier readable against the snow and midground?",
+        "Do the skis visibly agree with the contact surface?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_carve"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.trajectory.transition",
+      "suite": "environment",
+      "label": "Gameplay transition",
+      "state": "GROUND",
+      "phase": "linked_turn",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_transition",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "environment.trajectory.transition",
+      "human_review": [
+        "Does the camera keep the skier and route readable through the turn?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_transition"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.trajectory.speed",
+      "suite": "environment",
+      "label": "Gameplay speed",
+      "state": "GROUND",
+      "phase": "high_speed",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_speed",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "environment.trajectory.speed",
+      "human_review": [
+        "Are the route landmarks and feature silhouettes still legible at speed?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_speed"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.trajectory.skid",
+      "suite": "environment",
+      "label": "Gameplay skid",
+      "state": "GROUND",
+      "phase": "brake_skid",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_skid",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "environment.trajectory.skid",
+      "human_review": [
+        "Is the skid/snow response visible without obscuring the skier?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_skid"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.landing.first_contact",
+      "suite": "environment",
+      "label": "Landing first contact",
+      "state": "GROUND",
+      "phase": "first_contact",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.12,
+        "y": 0.08,
+        "width": 0.76,
+        "height": 0.84
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_landing_first_contact",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Do the skis meet the snow on the first grounded frame without visible hover?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_landing_first_contact"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.landing.impact",
+      "suite": "environment",
+      "label": "Landing impact",
+      "state": "GROUND",
+      "phase": "impact",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.12,
+        "y": 0.08,
+        "width": 0.76,
+        "height": 0.84
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_landing_impact",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Is the landing compression readable and physically connected to the snow contact?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_landing_impact"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.landing.compression",
+      "suite": "environment",
+      "label": "Landing compression",
+      "state": "GROUND",
+      "phase": "compression",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.12,
+        "y": 0.08,
+        "width": 0.76,
+        "height": 0.84
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_landing_compression",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the body settle into the landing rather than snapping through it?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_landing_compression"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.landing.recovery",
+      "suite": "environment",
+      "label": "Landing recovery",
+      "state": "GROUND",
+      "phase": "recovery",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.12,
+        "y": 0.08,
+        "width": 0.76,
+        "height": 0.84
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_landing_recovery",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the camera and body return cleanly to the runout pose?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_landing_recovery"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.landing.final",
+      "suite": "environment",
+      "label": "Landing final review frame",
+      "state": "GROUND",
+      "phase": "post_impact",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.12,
+        "y": 0.08,
+        "width": 0.76,
+        "height": 0.84
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_key": "gameplay_landing",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "environment.trajectory.landing",
+      "human_review": [
+        "Is the overall landing presentation free of visible clipping and excessive snow occlusion?"
+      ],
+      "capture_timing": {
+        "trigger": "physics_frame",
+        "key": "gameplay_landing"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.motion.carve",
+      "suite": "environment",
+      "label": "Ten-second carve motion sweep",
+      "state": "MOTION_SWEEP",
+      "phase": "carve",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "motion_carve",
+      "required_artifacts": [
+        "motion",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the skier remain readable throughout the carve sweep?",
+        "Do contact, tracks, spray, and camera motion agree over time?"
+      ],
+      "capture_timing": {
+        "trigger": "fixed_physics_sweep",
+        "duration_s": 10,
+        "key": "motion_carve"
+      },
+      "semantic_checks": [
+        "finite_telemetry",
+        "monotonic_time"
+      ]
+    },
+    {
+      "id": "environment.motion.straight",
+      "suite": "environment",
+      "label": "Ten-second straight motion sweep",
+      "state": "MOTION_SWEEP",
+      "phase": "straight",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "motion_straight",
+      "required_artifacts": [
+        "motion",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the downhill camera preserve a stable route read without visual drift?",
+        "Does the snow surface retain form at gameplay speed?"
+      ],
+      "capture_timing": {
+        "trigger": "fixed_physics_sweep",
+        "duration_s": 10,
+        "key": "motion_straight"
+      },
+      "semantic_checks": [
+        "finite_telemetry",
+        "monotonic_time"
+      ]
+    },
+    {
+      "id": "environment.motion.landing",
+      "suite": "environment",
+      "label": "Ten-second landing motion sweep",
+      "state": "MOTION_SWEEP",
+      "phase": "landing",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "motion_landing",
+      "required_artifacts": [
+        "motion",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does takeoff, airtime, contact, and compression read as one connected motion?",
+        "Does landing spray remain bounded and subordinate to the skier silhouette?"
+      ],
+      "capture_timing": {
+        "trigger": "fixed_physics_sweep",
+        "duration_s": 10,
+        "key": "motion_landing"
+      },
+      "semantic_checks": [
+        "finite_telemetry",
+        "monotonic_time"
+      ]
+    },
+    {
+      "id": "environment.recovery.oob",
+      "suite": "environment",
+      "label": "Out-of-bounds recovery lifecycle",
+      "state": "RECOVERY",
+      "phase": "out_of_bounds",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "recovery_oob",
+      "required_artifacts": [
+        "raw_started",
+        "raw_respawned",
+        "raw_completed",
+        "recovery",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the recovery fade clearly communicate the return without leaving a stale skier or camera frame?",
+        "Does the completed phase return to a stable, readable summit state?"
+      ],
+      "capture_timing": {
+        "trigger": "course_recovery_signals",
+        "phases": [
+          "started",
+          "respawned",
+          "completed"
+        ],
+        "key": "recovery_oob"
+      },
+      "semantic_checks": [
+        "recovery_started",
+        "recovery_respawned",
+        "recovery_completed",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.approach",
+      "suite": "environment",
+      "label": "Ramp texture tabletop approach",
+      "state": "RAMP_TEXTURE",
+      "phase": "approach",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_approach",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Is the tabletop snow texture readable before the skier reaches the lip?",
+        "Does the ramp separate from the adjacent piste without looking like a hard-surface panel?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_approach"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.lip",
+      "suite": "environment",
+      "label": "Ramp texture lip",
+      "state": "RAMP_TEXTURE",
+      "phase": "lip",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_lip",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the triplanar snow detail stay coherent across the upward lip?",
+        "Is the lip relief visible without noisy striping or texture popping?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_lip"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.deck",
+      "suite": "environment",
+      "label": "Ramp texture deck and knuckle",
+      "state": "RAMP_TEXTURE",
+      "phase": "deck_knuckle",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_deck",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the deck texture describe the rounded knuckle and not a flat slab?",
+        "Does the feature material remain believable as packed snow?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_deck"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.landing",
+      "suite": "environment",
+      "label": "Ramp texture landing",
+      "state": "RAMP_TEXTURE",
+      "phase": "landing",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_landing",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the landing texture remain readable through the taper back into the piste?",
+        "Is the surface transition continuous with no visible seam?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_landing"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.roller",
+      "suite": "environment",
+      "label": "Ramp texture roller",
+      "state": "RAMP_TEXTURE",
+      "phase": "roller",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_roller",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the smaller roller still carry the same authored feature material language?",
+        "Is its rounded form readable at the gameplay camera distance?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_roller"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.berm",
+      "suite": "environment",
+      "label": "Ramp texture berm",
+      "state": "RAMP_TEXTURE",
+      "phase": "berm",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_berm",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the angled berm retain coherent triplanar texture across its bank?",
+        "Is the bank distinct from the piste without becoming visually heavy?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_berm"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.side_hit",
+      "suite": "environment",
+      "label": "Ramp texture side hit",
+      "state": "RAMP_TEXTURE",
+      "phase": "side_hit",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_side_hit",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the rotated side-hit keep the texture aligned without UV stretching?",
+        "Does its surface read as a snow feature at the same gameplay scale as the tabletop?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_side_hit"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "animation.timeline.ground",
+      "suite": "animation",
+      "label": "Ground stance",
+      "state": "GROUND",
+      "phase": "ground",
+      "view": "three_quarter",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_key": "ground",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.ground",
+      "human_review": [
+        "Does the stance read as balanced and ready to absorb terrain?"
+      ],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "ground"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.carve",
+      "suite": "animation",
+      "label": "Carve",
+      "state": "GROUND",
+      "phase": "carve",
+      "view": "three_quarter",
+      "capture_key": "carve",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.carve",
+      "human_review": [
+        "Does the body lean with the carve while the skis remain grounded?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "carve"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.scrape",
+      "suite": "animation",
+      "label": "Scrape",
+      "state": "GROUND",
+      "phase": "skid",
+      "view": "three_quarter",
+      "capture_key": "scrape",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.scrape",
+      "human_review": [
+        "Does the upper body stay readable during the skid pose?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "scrape"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.switch",
+      "suite": "animation",
+      "label": "Switch stance",
+      "state": "GROUND",
+      "phase": "switch",
+      "view": "three_quarter",
+      "capture_key": "switch",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.switch",
+      "human_review": [
+        "Are the stance and equipment directions visibly coherent in switch?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "switch"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.takeoff",
+      "suite": "animation",
+      "label": "Takeoff",
+      "state": "AIR",
+      "phase": "takeoff",
+      "view": "three_quarter",
+      "capture_key": "takeoff",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.takeoff",
+      "human_review": [
+        "Does the takeoff show readable extension before the air pose?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "takeoff"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.spin",
+      "suite": "animation",
+      "label": "Spin",
+      "state": "AIR",
+      "phase": "rotate",
+      "view": "three_quarter",
+      "capture_key": "spin",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.spin",
+      "human_review": [
+        "Does the torso compactness communicate rotation without losing the head or skis?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "spin"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.grab",
+      "suite": "animation",
+      "label": "Grab",
+      "state": "AIR",
+      "phase": "grab",
+      "view": "three_quarter",
+      "capture_key": "grab",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.grab",
+      "human_review": [
+        "Does the hand-to-ski contact read clearly at gameplay distance?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "grab"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.spread_eagle",
+      "suite": "animation",
+      "label": "Spread eagle",
+      "state": "AIR",
+      "phase": "style",
+      "view": "three_quarter",
+      "capture_key": "spread_eagle",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.spread_eagle",
+      "human_review": [
+        "Is the style pose distinct and balanced rather than a generic air pose?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "spread_eagle"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.daffy",
+      "suite": "animation",
+      "label": "Daffy",
+      "state": "AIR",
+      "phase": "style",
+      "view": "three_quarter",
+      "capture_key": "daffy",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.daffy",
+      "human_review": [
+        "Are the opposing ski directions legible without leg intersection?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "daffy"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.shifty",
+      "suite": "animation",
+      "label": "Shifty",
+      "state": "AIR",
+      "phase": "style",
+      "view": "three_quarter",
+      "capture_key": "shifty",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.shifty",
+      "human_review": [
+        "Does the shifty show a readable lower-body twist while the head remains intentional?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "shifty"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.frontflip",
+      "suite": "animation",
+      "label": "Frontflip",
+      "state": "AIR",
+      "phase": "rotate",
+      "view": "three_quarter",
+      "capture_key": "frontflip",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.frontflip",
+      "human_review": [
+        "Does the inversion retain safe terrain clearance and a readable body line?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "frontflip"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.backflip",
+      "suite": "animation",
+      "label": "Backflip",
+      "state": "AIR",
+      "phase": "rotate",
+      "view": "three_quarter",
+      "capture_key": "backflip",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.backflip",
+      "human_review": [
+        "Is the backflip silhouette visibly distinct from the frontflip?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "backflip"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.cork",
+      "suite": "animation",
+      "label": "Cork",
+      "state": "AIR",
+      "phase": "rotate",
+      "view": "three_quarter",
+      "capture_key": "cork",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.cork",
+      "human_review": [
+        "Does the cork axis read as deliberate without the head or skis clipping terrain?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "cork"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.rail_50_50",
+      "suite": "animation",
+      "label": "Rail 50-50",
+      "state": "GRIND",
+      "phase": "rail",
+      "view": "three_quarter",
+      "capture_key": "rail_50_50",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.rail_50_50",
+      "human_review": [
+        "Do the skis, hips, and rail agree on the 50-50 alignment?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "rail_50_50"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.rail_slide",
+      "suite": "animation",
+      "label": "Rail slide",
+      "state": "GRIND",
+      "phase": "rail",
+      "view": "three_quarter",
+      "capture_key": "rail_slide",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.rail_slide",
+      "human_review": [
+        "Is the slide pose clearly different from 50-50 while staying on the rail?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "rail_slide"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.landing_setup",
+      "suite": "animation",
+      "label": "Landing setup",
+      "state": "AIR",
+      "phase": "landing",
+      "view": "three_quarter",
+      "capture_key": "landing_setup",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.landing_setup",
+      "human_review": [
+        "Does the body open toward the predicted landing surface?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "landing_setup"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.landing_impact",
+      "suite": "animation",
+      "label": "Landing impact",
+      "state": "GROUND",
+      "phase": "impact",
+      "view": "three_quarter",
+      "capture_key": "landing_impact",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.landing_impact",
+      "human_review": [
+        "Does compression arrive after contact and settle without a pose snap?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "landing_impact"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "animation.timeline.runout",
+      "suite": "animation",
+      "label": "Runout",
+      "state": "GROUND",
+      "phase": "runout",
+      "view": "three_quarter",
+      "capture_key": "runout",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "baseline_id": "animation.timeline.runout",
+      "human_review": [
+        "Does the runout return to a stable, readable stance?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "timeline_seconds",
+        "key": "runout"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ]
+    },
+    {
+      "id": "sunset.capture",
+      "suite": "sunset",
+      "label": "Sunset gameplay capture",
+      "state": "GROUND",
+      "phase": "trajectory",
+      "view": "gameplay",
+      "capture_key": "sunset_resort",
+      "required_artifacts": [
+        "raw"
+      ],
+      "baseline_id": "sunset.capture",
+      "human_review": [
+        "Does warm lighting retain skier, snow, feature, and shadow readability?",
+        "Is the lower frame free of an oversized near-black region?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [
+        {
+          "kind": "hud",
+          "rects": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 0.24,
+              "height": 0.18
+            },
+            {
+              "x": 0.78,
+              "y": 0,
+              "width": 0.22,
+              "height": 0.22
+            }
+          ]
+        }
+      ],
+      "capture_timing": {
+        "trigger": "first_landing_or_fallback",
+        "key": "sunset_resort"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "sunset.profile",
+      "suite": "sunset",
+      "label": "Sunset render profile",
+      "state": "SYSTEM",
+      "phase": "profile",
+      "view": "gameplay",
+      "capture_key": "sunset_visual_profile",
+      "required_artifacts": [
+        "profile"
+      ],
+      "human_review": [
+        "Is this profile comparable with the selected reference renderer and GPU?"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "run_finish"
+      },
+      "semantic_checks": [
+        "profile_schema"
+      ]
+    }
+  ],
+  "templates": [
+    {
+      "id_prefix": "animation.audit.grab.",
+      "suite": "animation",
+      "capture_kind": "matrix",
+      "required_artifacts": [
+        "raw",
+        "timeline"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "matrix_hold"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ],
+      "human_review": [
+        "Inspect hand-to-ski contact, pole clearance, and silhouette separation across the named view."
+      ]
+    },
+    {
+      "id_prefix": "animation.audit.style.",
+      "suite": "animation",
+      "capture_kind": "matrix",
+      "required_artifacts": [
+        "raw",
+        "timeline"
+      ],
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0.18,
+        "y": 0.08,
+        "width": 0.64,
+        "height": 0.84
+      },
+      "masks": [],
+      "capture_timing": {
+        "trigger": "matrix_hold"
+      },
+      "semantic_checks": [
+        "finite_transforms",
+        "state_transition_valid"
+      ],
+      "human_review": [
+        "Inspect style-pose distinction, ski separation, and torso readability across the named view."
+      ]
+    }
+  ],
+  "defaults": {
+    "roi": {
+      "type": "normalized_rect",
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 1
+    },
+    "masks": []
+  }
+}

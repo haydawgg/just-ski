@@ -6,3 +6,5 @@
 world/generated/
 builds/
 *.log
+__pycache__/
+*.pyc

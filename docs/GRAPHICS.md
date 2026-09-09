@@ -58,6 +58,18 @@ The snow presentation combines:
 
 Fine detail fades before large-scale form so distant terrain remains readable without excessive shimmer.
 
+`SnowMaterial.PresentationRole` keeps ordinary piste snow on the `GROUND` path by
+default. Generated snow surfaces owned by `ParkLayout` opt into
+`PARK_FEATURE`, which reuses the same Snow 02 albedo/detail textures and
+world-space triplanar projection with a finer 1.10 m footprint, stronger
+bounded albedo/normal/roughness response, slightly stronger form and groom
+contrast, and an 84 m detail horizon. The editable
+`default_snow_presentation_profile.tres` owns those role-specific values;
+geometry, collision, surface kind, shadow-safe summit selection, and camera
+behavior are unchanged. Natural piste, diagnostic flat snow, rails, trees, and
+non-snow wallride/bonk faces remain on their existing ground or hard-surface
+materials.
+
 ### Fast and Premium tiers
 
 Both tiers share the same core triplanar material logic.
@@ -81,9 +93,15 @@ Environment resources own the maintained presentation values rather than scatter
 
 The environment is deterministic enough for repeatable capture-based review.
 
+Headless correctness runs use `RuntimeEnvironment.is_headless()` as the single
+capability check. They omit the transparent high-haze card and the player
+reflection probe, and every generated performance profile records the result as
+`runtime.headless=true`. GPU visual gates retain those presentation probes and
+validate their rendered pixels separately.
+
 Course guidance is presentation-only. Oversized overhead gates and persistent world labels are replaced by short paired flag posts with no collision, emission, or cross-course beam. They fade at close and long range. Takeoff/landing stamps remain surface-conforming, opaque, rough, and scene-lit so they read as snow treatment rather than see-through geometry, a rail, or a HUD overlay.
 
-The summit-to-first-landing vertical slice adds a deterministic heightfield render layer over the existing `MainSnowFace` collision box. The playable corridor stays coplanar with the collision plane; only the outer shoulder receives seeded relief, so render dressing cannot change ski contact or recovery. The heightfield uses the existing snow texture/detail parameter set through a shadow-safe unshaded variant (`snow_summit.gdshader`) because the large presentation mesh otherwise becomes a full receiver for low-angle sunset shadow cascades. The summit shader remaps the authored broad field into a bounded world-space breakup plus a finer seeded field: the near camera footprint spans only a few meters, so the profile's 0.018 world scale would otherwise sample almost one constant noise cell and flatten the snow. Its GI exclusion is intentional: sunset SDFGI remains enabled for the authored ridges, lift line, trees, and course dressing while the render-only summit surface keeps neutral snow readability. Summit boulders and the lift line are cataloged `DECORATION` assets with finite LOD ranges and no colliders.
+The summit-to-first-landing vertical slice adds a deterministic heightfield render layer over the existing `MainSnowFace` collision box. The playable corridor stays coplanar with the collision plane; only the outer shoulder receives seeded relief, so render dressing cannot change ski contact or recovery. The heightfield uses the existing snow texture/detail parameter set through a shadow-safe lit variant (`snow_summit.gdshader`) because the large presentation mesh otherwise becomes a full receiver for low-angle sunset shadow cascades. The summit shader remaps the authored broad field into a bounded world-space breakup plus a finer seeded field: the near camera footprint spans only a few meters, so the profile's 0.018 world scale would otherwise sample almost one constant noise cell and flatten the snow. A neutral, luminance-floored drift field adds broad value separation on the planar corridor while detail normals modulate wrapped diffuse lighting; shadow reception stays disabled. Sunset SDFGI reads the sky with energy 1.1 to preserve ambient snow visibility. The surface remains excluded from GI geometry baking; authored ridges, lift line, trees, and course dressing retain their existing GI participation. Summit boulders and the lift line are cataloged `DECORATION` assets with finite LOD ranges and no colliders.
 
 ## Procedural terrain presentation
 
@@ -99,7 +117,7 @@ The visible presentation includes the skinned body/clothing treatment plus proje
 
 `default_skier_outfit_profile.tres` and the animation/rig resources are the maintained source of truth for outfit palette, material response, proportions, and attachment calibration.
 
-The five original `Outfit_*` body regions retain UV0 data; generated jacket, pants, and glove shells intentionally do not. Material polish therefore uses per-region roughness, metallic, and specular response across the existing skeleton/outfit pipeline instead of adding a texture that only some overlapping surfaces can sample.
+The five original `Outfit_*` body regions retain UV0 data; generated jacket, pants, and glove shells intentionally do not. Material polish therefore uses per-region roughness, metallic, and specular response across the existing skeleton/outfit pipeline instead of adding a texture that only some overlapping surfaces can sample. The jacket also has authored panel, trim, zipper, pocket-flap, and back-stripe materials so close inspection has stable detail variation without cloth simulation or a texture dependency.
 
 Do not rely on historical mesh/surface counts in documentation; those are implementation details and change as presentation is refined.
 
@@ -111,9 +129,9 @@ The control onboarding, right-stick visualizer, and trick/landing callouts are i
 
 The project-wide control theme uses the pinned Inter 4.1 variable font and a restrained shared panel/button/focus treatment. HUD labels keep their local size and contrast overrides. Font provenance, checksum, and the bundled OFL license are recorded under `assets/ui/fonts/`.
 
-Snow VFX uses existing gameplay/contact signals to differentiate continuous ski spray, stronger skid/brake spray, landings, and bail scraping. Audio and rumble consume the same broad gameplay state but are separate systems.
+Snow VFX uses existing gameplay/contact signals to differentiate continuous ski spray, stronger skid/brake spray, landings, and bail scraping. Landing captures expose `vfx_mode="landing"`, `landing_spray_active`, and the configured emitter amount so the cool-gray spray can be reviewed against the snow surface. The summit shader's form/drift/luminance controls are profile-driven while its shadow-safe and GI-excluded restrictions remain explicit. Audio and rumble consume the same broad gameplay state but are separate systems.
 
-`snow_depth_visual_metrics.tscn` checks the five fixed gameplay trajectory captures for average neutral-snow value separation and bounds the coverage of dark blue shadows; unrelated diagnostic PNGs in the same directory are ignored. The matching capture loop remains `environment_visual_inspection.tscn`; the snow-depth baseline and result live under `.godot_user/captures/snow_depth_before` and `.godot_user/captures/snow_depth_after`.
+`tests/environment_visual_quality_gate.ps1` clears and refreshes the canonical `res://.godot_user/captures/snow_depth_after` directory, requires every PNG and telemetry JSON, rejects capture errors, nonzero exits, timeouts, and renderer shutdown leaks, then runs `snow_depth_visual_metrics.tscn` against those fresh files. The metric checks the five fixed gameplay trajectory captures for average neutral-snow value separation and bounds the coverage of dark blue shadows. The canonical capture loop is `tests/visual_analysis_bundle.ps1`, which keeps its review bundle isolated while using the same capture contract. The scenario catalog, ROIs, masks, baseline compatibility rules, and review order are documented in [Visual evidence](VISUAL_EVIDENCE.md).
 
 ## Gameplay clip output
 
@@ -135,6 +153,16 @@ Full runtime gate:
 .\tests\runtime_quality_gate.ps1
 ```
 
+GPU environment gate:
+
+```powershell
+.\tests\environment_visual_quality_gate.ps1
+```
+
+The standalone sunset gate applies the same process exit, timeout, required-file,
+capture-error, and shutdown-warning checks before running its near-black-region
+metric.
+
 The runtime gate is the source of truth for the maintained environment, asset-contract, camera, character-presentation, shader/runtime, and capture acceptance scenes.
 
-Visual inspection scenes and deterministic captures under `.godot_user/captures/` are used for checks that cannot be reduced to a reliable scalar assertion. Automated acceptance should not be treated as a substitute for real hardware profiling or human visual review; the current boundary is recorded in [Known Issues](KNOWN_ISSUES.md).
+Visual inspection scenes and deterministic captures under `.godot_user/visual_runs/` are used for checks that cannot be reduced to a reliable scalar assertion. Run `tests/visual_analysis_bundle.ps1` on the reference GPU, then review `visual_report.md`; automated acceptance should not be treated as a substitute for real hardware profiling or human visual review. The current boundary is recorded in [Known Issues](KNOWN_ISSUES.md).

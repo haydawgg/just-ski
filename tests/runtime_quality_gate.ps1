@@ -234,7 +234,8 @@ $sceneShards = [ordered]@{
 		"res://tests/input_manager_acceptance.tscn",
 		"res://tests/skier_input_frame_acceptance.tscn",
 		"res://tests/solver_layer_interface_acceptance.tscn",
-		"res://tests/mp4_encoder_acceptance.tscn"
+		"res://tests/mp4_encoder_acceptance.tscn",
+		"res://tests/visual_evidence_acceptance.tscn"
 	)
 }
 
@@ -276,7 +277,7 @@ foreach ($scene in $scenes) {
 	$output = [string]$result.Output
 	Write-Output $output.TrimEnd()
 	$sceneDuration = $sceneTimer.Elapsed.TotalSeconds.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture)
-	$sceneHasError = $output -match '(?m)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:'
+	$sceneHasError = $output -match '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
 	if ($exitCode -ne 0) {
 		$failures.Add("$scene exited with code $exitCode; logs: $stdoutPath, $stderrPath")
 	}

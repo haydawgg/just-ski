@@ -258,11 +258,20 @@ checks is not a claim that every pose is artistically finished.
 - Secondary motion: hands/poles respond sooner; pole stabilization uses the skier
   frame, including cross-body hand placement, rather than world gravity and the
   imported model's rotated axes.
+- Pole/cloth follow-up: every switch, grab, and style sample is checked at 30,
+  60, and 120 Hz. Pole shafts preserve their hand attachment while a deterministic
+  skier-frame fallback keeps each shaft at least `0.10 m` from the knee envelope
+  and points it outward/downhill. The production jacket, pants, and glove shells
+  copy the source skin weights and the jacket waist ring is checked against the
+  imported mesh. Full-body cloth collision or simulation remains deferred because
+  the refreshed captures show no confirmed cloth penetration; unusual cross-body
+  combinations still receive a human close-camera pass.
 
 The new `animation_presentation_quality_acceptance.tscn` covers moving contact,
 production boot/pelvis agreement, visible compression, bounded grab torso
-assistance, all supported production grabs, all style poses, final contact
-reach, landing handoff, flip rhythm, and slope-tangent contact advection. It is
+assistance, all supported production grabs, all style poses, maintained contact
+reach after acquisition, a 250 ms acquisition deadline during input HOLD,
+landing handoff, flip rhythm, and slope-tangent contact advection. It is
 included in the 16-scene animation runtime shard. The silhouette inspection
 audit writes JSON beside its fixed images with contact and presentation
 measurements.
@@ -271,7 +280,8 @@ Verification for this pass: animation runtime shard, terrain suspension course,
 crest unweighting acceptance, ground hover probe, and the static gate. Rendered
 review uses both showcase commands above, jump inspection, and environment
 inspection; motion review sheets are under
-`.godot_user/captures/presentation_repairs_final/`.
+`.godot_user/captures/presentation_repairs_final/`. Environment pixel review uses
+the fresh `snow_depth_after` capture set and its landing telemetry.
 
 The rendered follow-up fixed the two remaining confirmed issues from the prior
 review: the Nose shoulder envelope was reduced from 1.735 rad to 1.125 rad
@@ -280,5 +290,6 @@ root at the configured 0.190 m support offset. The imported jacket remains a
 stylized skinned mesh under extreme poses, so normal gameplay review should
 still check unusual grab combinations and control feel; deterministic fixtures
 do not establish those.
-The environment capture exits successfully but reports seven leaked texture RIDs
-at renderer shutdown; that warning has not been resolved in this animation pass.
+Capture teardown now stops recorder workers, shuts down audio, frees generated
+nodes, drains render frames on GPU, and treats texture/ObjectDB leak warnings as
+gate failures. The refreshed environment and sunset GPU gates exit cleanly.

@@ -1,7 +1,10 @@
 extends Node
 
 const OUTPUT_PATH := "res://.godot_user/captures/sunset_resort.png"
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
+const OutputPathGuard := preload("res://util/output_path_guard.gd")
 const ProfileMetrics := preload("res://tests/performance_profile_metrics.gd")
+const VisualEvidence := preload("res://tests/visual_evidence.gd")
 
 var frame_count := 0
 var frame_time_sum := 0.0
@@ -18,9 +21,42 @@ var profile_environment := "sunset"
 var profile_commit_sha := "unknown"
 var profile_working_tree_dirty := false
 var profile_render_scale := -1.0
+var evidence_root := ""
+var evidence: VisualEvidenceSession
+var evidence_finished := false
+var fixed_fps := 0
+var _finish_started := false
+var capture_written := false
 
 func _ready() -> void:
 	_parse_visual_arguments()
+	var evidence_directory := evidence_root
+	if evidence_directory.is_empty():
+		evidence_directory = "res://.godot_user/captures/sunset_visual_evidence"
+	else:
+		var compatibility_directory := evidence_directory.path_join("compat")
+		capture_path = compatibility_directory.path_join("sunset_resort.png")
+		profile_output_path = compatibility_directory.path_join("sunset_visual_profile.json")
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(evidence_directory))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(capture_path.get_base_dir()))
+	evidence = VisualEvidence.begin({
+		"suite_id": "sunset",
+		"evidence_root": evidence_directory,
+		"fixed_fps": fixed_fps,
+		"capture_width": 1280,
+		"capture_height": 720,
+		"context": {
+			"scene": "sunset_visual_inspection",
+			"environment": profile_environment,
+			"preset": profile_graphics_preset,
+			"isolation_mode": isolation_mode,
+			"render_scale": profile_render_scale,
+		},
+	})
+	if RuntimeEnvironment.is_headless():
+		push_error("SUNSET_VISUAL_CAPTURE_FAIL: GPU renderer required for pixel capture (runtime.headless=true)")
+		call_deferred("_finish", 1)
+		return
 	_apply_profile_settings()
 	_apply_isolation()
 	var skier := get_node_or_null("Resort/Skier") as SkierController
@@ -35,6 +71,10 @@ func _parse_visual_arguments() -> void:
 			feature_isolation_name = argument.trim_prefix("--sunset-feature=")
 		elif argument.begins_with("--capture-path="):
 			capture_path = OutputPathGuard.sanitize(argument.trim_prefix("--capture-path="), PackedStringArray([".png"]), OUTPUT_PATH)
+		elif argument.begins_with("--evidence-root="):
+			evidence_root = argument.trim_prefix("--evidence-root=")
+		elif argument.begins_with("--fixed-fps="):
+			fixed_fps = OutputPathGuard.parse_int_range(argument.trim_prefix("--fixed-fps="), 0, 0, 240)
 		elif argument.begins_with("--profile-snow-quality="):
 			profile_snow_quality = OutputPathGuard.parse_int_range(argument.trim_prefix("--profile-snow-quality="), 0, 0, 1)
 		elif argument.begins_with("--profile-preset="):
@@ -237,11 +277,20 @@ func _on_gameplay_landed(_result: Dictionary) -> void:
 	_capture()
 
 func _capture() -> void:
-	if not is_physics_processing():
+	if _finish_started or not is_physics_processing():
 		return
 	set_physics_process(false)
+	if RuntimeEnvironment.is_headless():
+		push_error("SUNSET_VISUAL_CAPTURE_FAIL: pixel capture is unavailable in headless mode")
+		_finish(1)
+		return
 	RenderingServer.force_draw(true)
-	var image := get_viewport().get_texture().get_image()
+	var viewport_texture := get_viewport().get_texture()
+	if viewport_texture == null:
+		push_error("SUNSET_VISUAL_CAPTURE_FAIL: viewport texture was unavailable")
+		_finish(1)
+		return
+	var image := viewport_texture.get_image()
 	var absolute_path := ProjectSettings.globalize_path(capture_path)
 	if image == null or image.is_empty():
 		push_error("SUNSET_VISUAL_CAPTURE_FAIL: viewport image was empty")
@@ -253,10 +302,51 @@ func _capture() -> void:
 		push_error("SUNSET_VISUAL_CAPTURE_FAIL: %s" % error_string(error))
 		_finish(1)
 		return
+	capture_written = true
+	if evidence != null:
+		if evidence.capture_image("sunset.capture", "raw", image, {
+			"artifact_filename": "sunset_resort.png",
+			"frame_index": frame_count,
+			"time_s": snappedf(float(frame_count) / maxf(float(fixed_fps if fixed_fps > 0 else Engine.physics_ticks_per_second), 1.0), 0.001),
+			"state": "GROUND",
+			"phase": "trajectory",
+			"view": "gameplay",
+			"environment": profile_environment,
+			"preset": profile_graphics_preset,
+			"isolation_mode": isolation_mode,
+		}).is_empty():
+			push_error("SUNSET_VISUAL_CAPTURE_FAIL: evidence artifact could not be written")
+			_finish(1)
+			return
+		if not _capture_clean_analysis_image(image):
+			push_error("SUNSET_VISUAL_CAPTURE_FAIL: clean analysis artifact could not be written")
+			_finish(1)
+			return
+		evidence.record_sample("sunset.capture", {
+			"time_s": snappedf(float(frame_count) / maxf(float(fixed_fps if fixed_fps > 0 else Engine.physics_ticks_per_second), 1.0), 0.001),
+			"frame_index": frame_count,
+			"state": "GROUND",
+			"phase": "trajectory",
+			"view": "gameplay",
+			"capture_written": true,
+			"finite_telemetry": true,
+		})
 	print("SUNSET_VISUAL_CAPTURED: mode=%s path=%s" % [isolation_mode, absolute_path])
 	_finish(0)
 
 func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	Input.action_release("steer_right")
+	Input.action_release("steer_left")
+	Input.action_release("brake")
+	Input.action_release("jump")
+	if not capture_written:
+		push_error("SUNSET_VISUAL_CAPTURE_FAIL: required capture was not written")
+		exit_code = 1
 	var average_fps := float(frame_time_samples) / maxf(frame_time_sum, 0.001)
 	var average_frame_ms := 1000.0 / maxf(average_fps, 0.001)
 	var render_metrics := {
@@ -292,13 +382,79 @@ func _finish(exit_code: int) -> void:
 	if not bool(validation.get("valid", false)):
 		push_error("SUNSET_VISUAL_PROFILE_SCHEMA_FAIL: %s" % str(validation.get("errors", [])))
 		exit_code = 1
+	if evidence != null:
+		evidence.register_scenario("sunset.profile", {
+		"environment": profile_environment,
+		"preset": profile_graphics_preset,
+		"phase": "profile",
+		"view": "gameplay",
+	})
+		evidence.record_check("sunset.profile.schema", "semantic", "pass" if bool(validation.get("valid", false)) else "fail", validation.get("errors", []), [], "Performance profile schema validation")
 	var profile_absolute_path := ProjectSettings.globalize_path(profile_output_path)
 	DirAccess.make_dir_recursive_absolute(profile_absolute_path.get_base_dir())
 	var profile_file := FileAccess.open(profile_absolute_path, FileAccess.WRITE)
-	if profile_file != null:
+	if profile_file == null:
+		push_error("SUNSET_VISUAL_PROFILE_FAIL: profile output could not be opened")
+		exit_code = 1
+	else:
 		profile_file.store_string(JSON.stringify(render_profile, "\t"))
 		profile_file.close()
+	if evidence != null:
+		var profile_artifact := evidence.write_json_artifact("sunset.profile", "profile", "sunset_visual_profile.json", render_profile, {
+		"environment": profile_environment,
+		"preset": profile_graphics_preset,
+		"isolation_mode": isolation_mode,
+	})
+		if profile_artifact.is_empty():
+			push_error("SUNSET_VISUAL_PROFILE_FAIL: evidence profile artifact could not be written")
+			exit_code = 1
+	if not FileAccess.file_exists(profile_absolute_path) or FileAccess.get_file_as_bytes(profile_absolute_path).is_empty():
+		push_error("SUNSET_VISUAL_PROFILE_FAIL: profile JSON was not produced")
+		exit_code = 1
+	if evidence != null:
+		_finish_evidence(exit_code)
 	print("SUNSET_VISUAL_PERF: average rendered FPS %.1f frame_ms %.2f samples=%d" % [average_fps, average_frame_ms, frame_time_samples])
 	print("SUNSET_RENDER_PROFILE: %s" % JSON.stringify(render_profile))
+	var resort := get_node_or_null("Resort")
+	if resort != null and resort.has_method("release_render_resources"):
+		resort.call("release_render_resources")
 	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	for _frame in range(10):
+		await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		for _frame in range(4):
+			await get_tree().process_frame
 	get_tree().quit(exit_code)
+
+func _finish_evidence(exit_code: int) -> void:
+	if evidence == null or evidence_finished:
+		return
+	evidence_finished = true
+	evidence.finish(exit_code)
+
+func _capture_clean_analysis_image(_source_image: Image) -> bool:
+	var ui := get_node_or_null("Resort/GameUI") as GameUI
+	var previous_visible := true
+	if ui != null and ui.hud_overlay != null:
+		previous_visible = ui.hud_overlay.visible
+		ui.hud_overlay.visible = false
+	RenderingServer.force_draw(true)
+	var viewport_texture := get_viewport().get_texture()
+	var clean_image := viewport_texture.get_image() if viewport_texture != null else null
+	if ui != null and ui.hud_overlay != null:
+		ui.hud_overlay.visible = previous_visible
+	if clean_image == null or clean_image.is_empty():
+		return false
+	return not evidence.capture_image("sunset.capture", "analysis", clean_image, {
+		"artifact_filename": "sunset_resort_clean.png",
+		"frame_index": frame_count,
+		"capture_kind": "clean_analysis",
+		"hud_suppressed": ui != null and ui.hud_overlay != null,
+		"environment": profile_environment,
+		"preset": profile_graphics_preset,
+		"isolation_mode": isolation_mode,
+	}).is_empty()

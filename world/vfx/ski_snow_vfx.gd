@@ -10,6 +10,7 @@ const TRACK_SAMPLE_DISTANCE := 0.16
 const TRACK_BREAK_DISTANCE := 3.0
 const MIN_TRACK_SPEED := 1.4
 const MAX_CONTINUOUS_PARTICLES := 184
+const LANDING_EMITTER_WINDOW := 0.68
 
 var skier: SkierController
 var track_mesh_instance: MeshInstance3D
@@ -36,13 +37,14 @@ var last_bail_surface_speed := 0.0
 var last_valid_contact_center := Vector3.ZERO
 var last_valid_contact_normal := Vector3.UP
 var last_valid_contact_allows_snow := false
+var landing_window_remaining := 0.0
 
 func _ready() -> void:
 	skier = get_parent() as SkierController
 	_build_track_mesh()
 	carve_spray = _build_particles("CarveSpray", 48, 0.38, Vector2(0.5, 2.4), Vector2(0.014, 0.042), Color(0.86, 0.93, 0.98, 0.74), 2.5)
 	skid_spray = _build_particles("SkidSpray", 96, 0.56, Vector2(1.8, 6.8), Vector2(0.018, 0.062), Color(0.79, 0.89, 0.96, 0.82), 3.0)
-	landing_spray = _build_particles("LandingBurst", 72, 0.32, Vector2(1.6, 5.2), Vector2(0.02, 0.07), Color(0.9, 0.96, 1.0, 0.88), 2.4)
+	landing_spray = _build_particles("LandingBurst", 84, 0.38, Vector2(1.8, 6.2), Vector2(0.024, 0.085), Color(0.76, 0.88, 0.96, 0.95), 2.6)
 	landing_spray.one_shot = true
 	landing_spray.explosiveness = 1.0
 	landing_spray.emitting = false
@@ -53,9 +55,49 @@ func _ready() -> void:
 	GameSettings.settings_applied.connect(_apply_quality)
 	_apply_quality()
 
+func _exit_tree() -> void:
+	# Particle curve/ramp textures allocate RenderingDevice RIDs when the GPU
+	# renderer is active. Clear every material/mesh reference before the node is
+	# released so visual capture shutdown cannot leave those RIDs alive until
+	# RenderingServer finalization.
+	release_render_resources()
+
+func release_render_resources() -> void:
+	var emitters: Array[GPUParticles3D] = [carve_spray, skid_spray, landing_spray, speed_snow, bail_scrape]
+	for emitter: GPUParticles3D in emitters:
+		if emitter == null:
+			continue
+		var process_material := emitter.process_material as ParticleProcessMaterial
+		if process_material != null:
+			process_material.scale_curve = null
+			process_material.color_ramp = null
+			process_material = null
+			emitter.process_material = null
+		emitter.draw_pass_1 = null
+	if track_mesh_instance != null:
+		track_mesh_instance.material_override = null
+		track_mesh_instance.mesh = null
+	carve_spray = null
+	skid_spray = null
+	landing_spray = null
+	speed_snow = null
+	bail_scrape = null
+	track_mesh_instance = null
+
 func update_from_existing_contact(delta: float) -> void:
 	if skier == null:
 		return
+	landing_window_remaining = maxf(landing_window_remaining - delta, 0.0)
+	# GPUParticles3D can finish a one-shot burst before the landing evidence
+	# frame is read back. Keep the authored burst alive for a short, bounded
+	# landing window and restart only if the one-shot emitter completed early.
+	if landing_window_remaining > 0.0:
+		if landing_spray != null and not landing_spray.emitting:
+			landing_spray.emitting = true
+			landing_spray.restart()
+	else:
+		if landing_spray != null and landing_spray.emitting:
+			landing_spray.emitting = false
 	# SkiContactPresentation captures skier.contact.left_hit_position and
 	# skier.contact.right_hit_position once for every presentation adapter.
 	contact_presentation.capture(skier.contact)
@@ -103,8 +145,12 @@ func debug_snapshot() -> Dictionary:
 		"track_rebuild_average_usec": float(track_rebuild_total_usec) / maxf(float(track_rebuild_count), 1.0),
 		"track_rebuild_max_usec": track_rebuild_max_usec,
 		"continuous_particle_cap": MAX_CONTINUOUS_PARTICLES,
-		"mode": last_mode,
+		"mode": "landing" if landing_window_remaining > 0.0 else last_mode,
 		"landing_severity": last_landing_severity,
+		"landing_spray_active": landing_spray.emitting if landing_spray != null else false,
+		"landing_amount": landing_spray.amount if landing_spray != null else 0,
+		"landing_amount_ratio": landing_spray.amount_ratio if landing_spray != null else 0.0,
+		"landing_window_remaining": landing_window_remaining,
 		"brake_response": last_brake_response,
 		"bail_surface_speed": last_bail_surface_speed,
 		"bail_scrape_active": bail_scrape.emitting if bail_scrape != null else false,
@@ -150,26 +196,10 @@ func _build_particles(label: String, amount: int, lifetime: float, velocity_rang
 	process_material.scale_min = scale_range.x
 	process_material.scale_max = scale_range.y
 	process_material.color = color
-	var scale_curve := Curve.new()
-	scale_curve.min_value = 0.0
-	scale_curve.max_value = 1.0
-	scale_curve.add_point(Vector2(0.0, 0.46))
-	scale_curve.add_point(Vector2(0.16, 1.0))
-	scale_curve.add_point(Vector2(0.72, 0.82))
-	scale_curve.add_point(Vector2(1.0, 0.18))
-	var scale_curve_texture := CurveTexture.new()
-	scale_curve_texture.curve = scale_curve
-	process_material.scale_curve = scale_curve_texture
-	var alpha_gradient := Gradient.new()
-	alpha_gradient.colors = PackedColorArray([
-		Color(1.0, 1.0, 1.0, 0.0),
-		Color(1.0, 1.0, 1.0, 0.94),
-		Color(1.0, 1.0, 1.0, 0.0),
-	])
-	alpha_gradient.offsets = PackedFloat32Array([0.0, 0.12, 1.0])
-	var alpha_ramp := GradientTexture1D.new()
-	alpha_ramp.gradient = alpha_gradient
-	process_material.color_ramp = alpha_ramp
+	# Keep the particle resource graph texture-free. The snow particle shader
+	# already provides distance/height fading and a shaped fleck edge; CurveTexture
+	# and GradientTexture1D resources add GPU RIDs that can outlive a short visual
+	# capture and trigger renderer shutdown leak warnings.
 	particles.process_material = process_material
 	# A camera-facing quad keeps the spray light and directional. The old
 	# low-resolution sphere read as a string of obvious white beads whenever a
@@ -192,7 +222,7 @@ func _apply_quality() -> void:
 	var premium := int(GameSettings.active.get("snow_quality", 1)) == 1
 	carve_spray.amount = 38 if premium else 22
 	skid_spray.amount = 78 if premium else 44
-	landing_spray.amount = 72 if premium else 42
+	landing_spray.amount = 84 if premium else 48
 	speed_snow.amount = 24 if premium else 14
 	bail_scrape.amount = 44 if premium else 24
 
@@ -299,16 +329,20 @@ func _add_track_ribbon(surface: SurfaceTool, samples: Array[Dictionary]) -> void
 		var a_right := a + across_a * half_width_a
 		var b_left := b - across_b * half_width_b
 		var b_right := b + across_b * half_width_b
-		_add_track_triangle(surface, a_left, b_left, b_right, normal_a, normal_b, float(previous.disturbance), float(current.disturbance), float(previous.carve), float(current.carve), age_alpha_a, age_alpha_b)
-		_add_track_triangle(surface, a_left, b_right, a_right, normal_a, normal_b, float(previous.disturbance), float(current.disturbance), float(previous.carve), float(current.carve), age_alpha_a, age_alpha_b)
+		# UV.x spans the groove; normals and age remain attached to each endpoint.
+		for vertex: Array in [
+			[a_left, normal_a, previous, age_alpha_a, 0.0],
+			[b_left, normal_b, current, age_alpha_b, 0.0],
+			[b_right, normal_b, current, age_alpha_b, 1.0],
+			[a_left, normal_a, previous, age_alpha_a, 0.0],
+			[b_right, normal_b, current, age_alpha_b, 1.0],
+			[a_right, normal_a, previous, age_alpha_a, 1.0],
+		]:
+			_add_track_vertex(surface, vertex[0], vertex[1], float(vertex[2].disturbance), float(vertex[2].carve), vertex[3], vertex[4])
 
-func _add_track_triangle(surface: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, normal_a: Vector3, normal_b: Vector3, disturbance_a: float, disturbance_b: float, carve_a: float, carve_b: float, alpha_a: float, alpha_b: float) -> void:
-	_add_track_vertex(surface, a, normal_a, disturbance_a, carve_a, alpha_a)
-	_add_track_vertex(surface, b, normal_b, disturbance_b, carve_b, alpha_b)
-	_add_track_vertex(surface, c, normal_b, disturbance_b, carve_b, alpha_b)
-
-func _add_track_vertex(surface: SurfaceTool, position: Vector3, normal: Vector3, disturbance: float, carve: float, alpha: float) -> void:
+func _add_track_vertex(surface: SurfaceTool, position: Vector3, normal: Vector3, disturbance: float, carve: float, alpha: float, across: float) -> void:
 	surface.set_normal(normal)
+	surface.set_uv(Vector2(across, 0.0))
 	surface.set_color(Color(disturbance, carve, 0.0, alpha))
 	surface.add_vertex(position)
 
@@ -427,6 +461,8 @@ func _on_landed(result: Dictionary) -> void:
 	process_material.initial_velocity_min = lerpf(1.25, 3.2, severity)
 	process_material.initial_velocity_max = lerpf(2.8, 6.2, severity)
 	landing_spray.amount_ratio = lerpf(0.34, 0.88, severity)
+	landing_window_remaining = LANDING_EMITTER_WINDOW
+	last_mode = "landing"
 	landing_spray.emitting = true
 	landing_spray.restart()
 

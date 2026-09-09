@@ -1,5 +1,8 @@
 extends Node3D
 
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
+const OutputPathGuard := preload("res://util/output_path_guard.gd")
+const VisualEvidence := preload("res://tests/visual_evidence.gd")
 const DURATION := 22.2
 const INVERSION_ROOT_HEIGHT := 1.9
 const REVIEW_TIMES: Array[float] = [0.8, 2.0, 3.2, 4.4, 5.6, 6.9, 8.2, 9.5, 10.7, 11.9, 13.1, 14.3, 15.5, 17.4, 18.5, 19.6, 20.8, 21.6]
@@ -37,6 +40,9 @@ var presentation_capture := false
 var grab_showcase_mode := false
 var presentation_audit_mode := false
 var capture_finished := false
+var capture_failed := false
+var capture_count := 0
+var _finish_started := false
 var output_directory := ""
 var inspection_rail: MeshInstance3D
 var inspection_rail_supports: Array[MeshInstance3D] = []
@@ -46,21 +52,41 @@ var _audit_pose_ids: Array[int] = []
 var _audit_capture_schedule: Array[Dictionary] = []
 var _audit_capture_index := 0
 var _audit_samples: Array[Dictionary] = []
+var _audit_scenario_ids: Array[String] = []
 var _audit_previous_rotations: Dictionary = {}
 var _audit_matrix_started := false
 var _audit_duration := DURATION
 var _audit_rate_label := "unspecified"
+var evidence_root := ""
+var fixed_fps := 0
+var evidence: VisualEvidenceSession
+var evidence_finished := false
+var visual_preset := "default"
+var visual_render_scale := 1.0
+var visual_environment := "daytime"
+var visual_seed := 0
 
 func _ready() -> void:
+	evidence_root = _argument_value("--evidence-root=", "")
+	fixed_fps = OutputPathGuard.parse_int_range(_argument_value("--fixed-fps=", _argument_value("--audit-fps=", "0")), 0, 0, 240)
 	_build_view()
 	presentation_capture = OS.get_cmdline_user_args().has("--capture-character-presentation")
 	grab_showcase_mode = OS.get_cmdline_user_args().has("--capture-production-grab-showcase")
 	presentation_audit_mode = OS.get_cmdline_user_args().has("--capture-animation-presentation-audit")
 	_audit_rate_label = _argument_value("--audit-fps=", "unspecified")
+	visual_preset = _argument_value("--visual-preset=", "default")
+	visual_render_scale = OutputPathGuard.parse_finite_float(_argument_value("--visual-render-scale=", "1.0"), 1.0, 0.5, 1.5)
+	visual_environment = _argument_value("--visual-environment=", "daytime").to_lower()
+	var seed_text := _argument_value("--visual-seed=", "0")
+	visual_seed = int(seed_text) if seed_text.is_valid_int() else 0
 	_audit_pose_ids = _grab_pose_ids()
 	if presentation_audit_mode:
 		_configure_presentation_audit()
 	capture_mode = OS.get_cmdline_user_args().has("--capture-silhouette-showcase") or presentation_capture or grab_showcase_mode or presentation_audit_mode
+	if capture_mode and RuntimeEnvironment.is_headless():
+		push_error("SILHOUETTE_INSPECTION_FAIL: pixel capture requires a GPU renderer")
+		call_deferred("_finish", 1, "SILHOUETTE_INSPECTION_FAIL: pixel capture requires a GPU renderer")
+		return
 	skier = SkierController.new()
 	skier.process_mode = Node.PROCESS_MODE_DISABLED
 	add_child(skier)
@@ -83,8 +109,29 @@ func _ready() -> void:
 			capture_path = "res://.godot_user/captures/production_grab_showcase"
 		elif presentation_audit_mode:
 			capture_path = "res://.godot_user/captures/animation_presentation_audit_%s" % _audit_rate_label
+		var evidence_directory := evidence_root if not evidence_root.is_empty() else capture_path
+		if not evidence_root.is_empty():
+			capture_path = evidence_root.path_join("compat")
 		output_directory = ProjectSettings.globalize_path(capture_path)
 		DirAccess.make_dir_recursive_absolute(output_directory)
+		evidence = VisualEvidence.begin({
+			"suite_id": "animation",
+			"evidence_root": evidence_directory,
+			"fixed_fps": fixed_fps,
+			"capture_width": 1280,
+			"capture_height": 720,
+			"context": {
+				"scene": "animation_silhouette_inspection",
+				"capture_mode": "presentation_audit" if presentation_audit_mode else "presentation" if presentation_capture else "grab_showcase" if grab_showcase_mode else "silhouette",
+				"rate_label": _audit_rate_label,
+				"production_skeleton": true,
+				"environment": visual_environment,
+				"preset": visual_preset,
+				"render_scale": visual_render_scale,
+				"seed": visual_seed,
+			},
+		})
+		get_viewport().scaling_3d_scale = visual_render_scale
 		if not presentation_capture and not grab_showcase_mode and not presentation_audit_mode:
 			ClipRecorder.clip_saved.connect(_on_clip_saved)
 			ClipRecorder.clip_failed.connect(_on_clip_failed)
@@ -105,7 +152,7 @@ func _process(delta: float) -> void:
 		_apply_grab_showcase(timeline, delta)
 	else:
 		_apply_timeline(timeline, delta)
-	camera_rig._physics_process(delta)
+	camera_rig.step_manual(delta)
 	if presentation_audit_mode and elapsed < DURATION:
 		_record_audit_sample("timeline", "production", _timeline_audit_label(elapsed), elapsed)
 	var review_times: Array[float] = GRAB_SHOWCASE_REVIEW_TIMES if grab_showcase_mode else REVIEW_TIMES
@@ -119,23 +166,26 @@ func _process(delta: float) -> void:
 			_capture_audit_frame(str(_audit_capture_schedule[_audit_capture_index].label))
 			_audit_capture_index += 1
 	if presentation_audit_mode and elapsed >= duration:
-		_write_presentation_audit_json()
-		capture_finished = true
-		print("ANIMATION_PRESENTATION_AUDIT_CAPTURED: %s" % output_directory)
-		get_tree().quit(0)
+		var audit_ok := _write_presentation_audit_json()
+		if _audit_capture_index < _audit_capture_schedule.size():
+			capture_failed = true
+			push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: captured %d of %d scheduled frames" % [_audit_capture_index, _audit_capture_schedule.size()])
+		_finish(0 if audit_ok and not capture_failed else 1, "ANIMATION_PRESENTATION_AUDIT_CAPTURED: %s" % output_directory)
 	elif grab_showcase_mode and elapsed >= duration:
-		capture_finished = true
-		print("PRODUCTION_GRAB_SHOWCASE_CAPTURED: %s" % output_directory)
-		get_tree().quit(0)
+		var grab_ok := capture_count == GRAB_SHOWCASE_REVIEW_TIMES.size() and not capture_failed
+		if not grab_ok:
+			push_error("SILHOUETTE_INSPECTION_FAIL: captured %d of %d grab showcase frames" % [capture_count, GRAB_SHOWCASE_REVIEW_TIMES.size()])
+		_finish(0 if grab_ok else 1, "PRODUCTION_GRAB_SHOWCASE_CAPTURED: %s" % output_directory)
 	elif presentation_capture and elapsed >= duration:
-		capture_finished = true
-		print("CHARACTER_PRESENTATION_CAPTURED: %s" % output_directory)
-		get_tree().quit(0)
+		var presentation_ok := capture_count == REVIEW_TIMES.size() and not capture_failed
+		if not presentation_ok:
+			push_error("SILHOUETTE_INSPECTION_FAIL: captured %d of %d presentation frames" % [capture_count, REVIEW_TIMES.size()])
+		_finish(0 if presentation_ok else 1, "CHARACTER_PRESENTATION_CAPTURED: %s" % output_directory)
 	elif capture_mode and not presentation_audit_mode and elapsed >= duration and ClipRecorder._recording:
 		ClipRecorder._stop_recording()
 	if capture_mode and not presentation_capture and not grab_showcase_mode and not presentation_audit_mode and elapsed > duration + 12.0:
 		push_error("SILHOUETTE_INSPECTION_FAIL: capture did not finish")
-		get_tree().quit(1)
+		_finish(1)
 	elif not capture_mode and elapsed >= duration:
 		elapsed = 0.0
 		previous_stage = -1
@@ -274,37 +324,40 @@ func _record_audit_sample(subject_name: String, view_name: String, phase_name: S
 	for value_key: String in ["grab_reach_error", "grab_contact_weight", "landing_compression", "landing_recovery", "left_boot_binding_position_error", "right_boot_binding_position_error", "left_gap", "right_gap"]:
 		if not _audit_value_is_finite(snapshot.get(value_key, 0.0)):
 			finite = false
-	_audit_samples.append({
-			"time_s": snappedf(sample_time, 0.001),
-			"subject": subject_name,
-			"view": view_name,
-			"phase": phase_name,
-			"pose_owner": str(snapshot.get("pose_owner", "")),
-			"state": str(snapshot.get("state", "")),
-			"hand_to_target_error_m": float(snapshot.get("grab_reach_error", 0.0)),
-			"grab_contact_weight": float(snapshot.get("grab_contact_weight", 0.0)),
-			"contact_latched": float(snapshot.get("grab_contact_weight", 0.0)) > 0.2,
-			"pole_to_hand_offset_m": max_pole_offset,
-			"pole_continuity_ok": max_pole_offset <= 1.6,
-			"boot_binding_gap_m": max_boot_gap,
-			"torso_motion_delta_rad": float(motion.get("torso_delta", 0.0)),
-			"shoulder_motion_delta_rad": maxf(float(motion.get("left_shoulder_delta", 0.0)), float(motion.get("right_shoulder_delta", 0.0))),
-			"knee_motion_delta_rad": maxf(float(motion.get("left_knee_delta", 0.0)), float(motion.get("right_knee_delta", 0.0))),
-			"head_motion_delta_rad": float(motion.get("head_delta", 0.0)),
-			"landing_handoff_timing": {
-				"phase": str(snapshot.get("landing_phase", "Idle")),
-				"blend": float(snapshot.get("landing_blend", 0.0)),
-				"alignment": float(snapshot.get("landing_alignment", 0.0)),
-				"anticipation": float(snapshot.get("landing_anticipation", 0.0)),
-			},
-			"landing_compression": float(snapshot.get("landing_compression", 0.0)),
-			"landing_recovery": float(snapshot.get("landing_recovery", 0.0)),
-			"minimum_inversion_clearance_m": _minimum_inversion_clearance if is_finite(_minimum_inversion_clearance) else null,
-			"terrain_clearance_m": terrain_clearance,
-			"production_skeleton": str(snapshot.get("rig_adapter", "")) == "skeleton",
-			"finite_transforms": finite,
-			"state_transition_valid": float(snapshot.get("transition_progress", 0.0)) >= -0.001 and float(snapshot.get("transition_progress", 0.0)) <= 1.001,
-		})
+	var sample := {
+		"time_s": snappedf(sample_time, 0.001),
+		"subject": subject_name,
+		"view": view_name,
+		"phase": phase_name,
+		"pose_owner": str(snapshot.get("pose_owner", "")),
+		"state": str(snapshot.get("state", "")),
+		"hand_to_target_error_m": float(snapshot.get("grab_reach_error", 0.0)),
+		"grab_contact_weight": float(snapshot.get("grab_contact_weight", 0.0)),
+		"contact_latched": float(snapshot.get("grab_contact_weight", 0.0)) > 0.2,
+		"pole_to_hand_offset_m": max_pole_offset,
+		"pole_continuity_ok": max_pole_offset <= 1.6,
+		"boot_binding_gap_m": max_boot_gap,
+		"torso_motion_delta_rad": float(motion.get("torso_delta", 0.0)),
+		"shoulder_motion_delta_rad": maxf(float(motion.get("left_shoulder_delta", 0.0)), float(motion.get("right_shoulder_delta", 0.0))),
+		"knee_motion_delta_rad": maxf(float(motion.get("left_knee_delta", 0.0)), float(motion.get("right_knee_delta", 0.0))),
+		"head_motion_delta_rad": float(motion.get("head_delta", 0.0)),
+		"landing_handoff_timing": {
+			"phase": str(snapshot.get("landing_phase", "Idle")),
+			"blend": float(snapshot.get("landing_blend", 0.0)),
+			"alignment": float(snapshot.get("landing_alignment", 0.0)),
+			"anticipation": float(snapshot.get("landing_anticipation", 0.0)),
+		},
+		"landing_compression": float(snapshot.get("landing_compression", 0.0)),
+		"landing_recovery": float(snapshot.get("landing_recovery", 0.0)),
+		"minimum_inversion_clearance_m": _minimum_inversion_clearance if is_finite(_minimum_inversion_clearance) else null,
+		"terrain_clearance_m": terrain_clearance,
+		"production_skeleton": str(snapshot.get("rig_adapter", "")) == "skeleton",
+		"finite_transforms": finite,
+		"state_transition_valid": float(snapshot.get("transition_progress", 0.0)) >= -0.001 and float(snapshot.get("transition_progress", 0.0)) <= 1.001,
+	}
+	_audit_samples.append(sample)
+	if evidence != null:
+		evidence.record_sample("animation.audit.timeline", sample)
 
 func _audit_value_is_finite(value) -> bool:
 	if value is Vector3:
@@ -313,20 +366,89 @@ func _audit_value_is_finite(value) -> bool:
 		return is_finite(float(value))
 	return true
 
-func _capture_audit_frame(label: String) -> void:
-	if OS.has_feature("headless") or DisplayServer.get_name() == "headless":
-		return
+func _vector3_array(value: Vector3) -> Array[float]:
+	return [value.x, value.y, value.z]
+
+func _timeline_scenario_id(label: String) -> String:
+	var normalized := label.to_lower().replace(" ", "_")
+	if grab_showcase_mode:
+		return "animation.showcase.%s" % normalized
+	return "animation.timeline.%s" % normalized
+
+func _audit_scenario_id(label: String) -> String:
+	var parts := label.get_basename().split("_")
+	if parts.size() >= 3:
+		var kind := "grab" if parts[0] == "grab" else "style"
+		var pose_id := parts[1]
+		return "animation.audit.%s.%s.%s" % [kind, pose_id, _audit_view_name(label)]
+	return "animation.audit.%s" % label.get_basename().to_lower()
+
+func _audit_view_name(label: String) -> String:
+	var parts := label.get_basename().split("_")
+	return parts[parts.size() - 2] if parts.size() >= 2 else "unknown"
+
+func _timeline_state(label: String) -> String:
+	if label in ["ground", "carve", "scrape", "switch", "runout"]:
+		return "GROUND"
+	if label in ["rail_50_50", "rail_slide"]:
+		return "GRIND"
+	return "AIR"
+
+func _timeline_phase(label: String) -> String:
+	if label in ["ground", "runout"]:
+		return "ground"
+	if label in ["carve", "scrape", "switch"]:
+		return label
+	if label in ["rail_50_50", "rail_slide"]:
+		return "rail"
+	if label in ["landing_setup", "landing_impact"]:
+		return "landing"
+	if label in ["spread_eagle", "daffy", "shifty"]:
+		return "style"
+	return "air"
+
+func _capture_audit_frame(label: String) -> bool:
+	if RuntimeEnvironment.is_headless():
+		capture_failed = true
+		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: pixel capture requires a GPU renderer")
+		return false
 	RenderingServer.force_draw(true)
 	var viewport_texture := get_viewport().get_texture()
 	if viewport_texture == null:
-		return
+		capture_failed = true
+		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: viewport texture was unavailable for %s" % label)
+		return false
 	var image := viewport_texture.get_image()
 	if image == null or image.is_empty():
-		return
-	image.resize(960, 540, Image.INTERPOLATE_BILINEAR)
-	image.save_png(output_directory.path_join(label))
+		capture_failed = true
+		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: viewport image was empty for %s" % label)
+		return false
+	image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
+	var error := image.save_png(output_directory.path_join(label))
+	if error != OK:
+		capture_failed = true
+		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: could not save %s (%s)" % [label, error_string(error)])
+		return false
+	if evidence != null:
+		var scenario_id := _audit_scenario_id(label)
+		var audit_artifact := evidence.capture_image(scenario_id, "raw", image, {
+			"artifact_filename": label,
+			"frame_index": _audit_capture_index,
+			"time_s": snappedf(float(_audit_capture_schedule[_audit_capture_index].time) if _audit_capture_index < _audit_capture_schedule.size() else elapsed, 0.001),
+			"state": "AIR",
+			"phase": "hold",
+			"view": _audit_view_name(label),
+		})
+		if audit_artifact.is_empty():
+			capture_failed = true
+			push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: evidence artifact could not be written for %s" % label)
+			return false
+		if not _audit_scenario_ids.has(scenario_id):
+			_audit_scenario_ids.append(scenario_id)
+	capture_count += 1
+	return true
 
-func _write_presentation_audit_json() -> void:
+func _write_presentation_audit_json() -> bool:
 	var payload := {
 		"format": "animation_presentation_audit_v1",
 		"rate_hint": _audit_rate_label,
@@ -341,9 +463,27 @@ func _write_presentation_audit_json() -> void:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: could not open %s" % path)
-		return
+		capture_failed = true
+		return false
 	file.store_string(JSON.stringify(payload, "\t"))
 	file.close()
+	if evidence != null:
+		var timeline_path := evidence.write_json_artifact("animation.audit.timeline", "timeline", "animation_presentation_audit.json", payload, {
+			"rate_label": _audit_rate_label,
+			"sample_count": _audit_samples.size(),
+		})
+		if timeline_path.is_empty():
+			capture_failed = true
+			push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: evidence timeline artifact could not be written")
+			return false
+		# The trace is emitted once per audit-rate run, but every captured pose
+		# references it so catalog role validation remains scenario-local.
+		for scenario_id: String in _audit_scenario_ids:
+			evidence.register_file_artifact(scenario_id, "timeline", timeline_path, {
+				"shared_scenario_id": "animation.audit.timeline",
+				"rate_label": _audit_rate_label,
+			})
+	return true
 
 func _apply_grab_showcase(time: float, delta: float) -> void:
 	frame.reset()
@@ -645,41 +785,110 @@ func _apply_inspection_root_motion(time: float) -> void:
 		root_height = lerpf(0.08, 0.0, runout_progress)
 	skier.position.y = root_height
 
-func _capture_review_frame(index: int) -> void:
-	if OS.has_feature("headless") or DisplayServer.get_name() == "headless":
-		return
+func _capture_review_frame(index: int) -> bool:
+	if RuntimeEnvironment.is_headless():
+		capture_failed = true
+		push_error("SILHOUETTE_INSPECTION_FAIL: pixel capture requires a GPU renderer")
+		return false
 	RenderingServer.force_draw(true)
 	var viewport_texture := get_viewport().get_texture()
 	if viewport_texture == null:
-		return
+		capture_failed = true
+		push_error("SILHOUETTE_INSPECTION_FAIL: viewport texture was unavailable for review frame %d" % (index + 1))
+		return false
 	var image := viewport_texture.get_image()
 	if image == null or image.is_empty():
-		return
-	image.resize(960, 540, Image.INTERPOLATE_BILINEAR)
+		capture_failed = true
+		push_error("SILHOUETTE_INSPECTION_FAIL: viewport image was empty for review frame %d" % (index + 1))
+		return false
+	image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
 	var label: String = GRAB_SHOWCASE_REVIEW_LABELS[index] if grab_showcase_mode else REVIEW_LABELS[index] if index < REVIEW_LABELS.size() else "pose"
 	var filename := "audit_timeline_%02d_%s.png" % [index + 1, label] if presentation_audit_mode else "character_%02d_%s.png" % [index + 1, label] if presentation_capture else "grab_%02d_%s.png" % [index + 1, label] if grab_showcase_mode else "silhouette_%02d.png" % (index + 1)
-	image.save_png(output_directory.path_join(filename))
+	var error := image.save_png(output_directory.path_join(filename))
+	if error != OK:
+		capture_failed = true
+		push_error("SILHOUETTE_INSPECTION_FAIL: could not save %s (%s)" % [filename, error_string(error)])
+		return false
+	if evidence != null:
+		var scenario_id := _timeline_scenario_id(label)
+		var sample_time := REVIEW_TIMES[index] if not grab_showcase_mode and index < REVIEW_TIMES.size() else GRAB_SHOWCASE_REVIEW_TIMES[index] if grab_showcase_mode and index < GRAB_SHOWCASE_REVIEW_TIMES.size() else elapsed
+		var review_artifact := evidence.capture_image(scenario_id, "raw", image, {
+			"artifact_filename": filename,
+			"frame_index": index,
+			"time_s": sample_time,
+			"state": _timeline_state(label),
+			"phase": _timeline_phase(label),
+			"view": "three_quarter",
+		})
+		if review_artifact.is_empty():
+			capture_failed = true
+			push_error("SILHOUETTE_INSPECTION_FAIL: evidence artifact could not be written for %s" % filename)
+			return false
+		evidence.record_sample(scenario_id, {
+			"time_s": sample_time,
+			"frame_index": index,
+			"state": _timeline_state(label),
+			"phase": _timeline_phase(label),
+			"view": "three_quarter",
+			"root_position_m": _vector3_array(skier.global_position) if skier != null else [0.0, 0.0, 0.0],
+			"root_rotation_rad": _vector3_array(skier.global_rotation) if skier != null else [0.0, 0.0, 0.0],
+			"production_skeleton": rig != null,
+			"finite_transforms": skier != null and skier.global_position.is_finite() and skier.global_rotation.is_finite(),
+		})
+	capture_count += 1
+	return true
 
 func _on_clip_saved(path: String) -> void:
 	var destination := output_directory.path_join("character_presentation.mp4" if presentation_capture else "animation_silhouette_comparison.mp4")
 	var error := DirAccess.copy_absolute(path, destination)
 	if error != OK:
 		push_error("SILHOUETTE_INSPECTION_FAIL: could not copy clip (%s)" % error_string(error))
-		get_tree().quit(1)
+		_finish(1)
 		return
-	capture_finished = true
+	if evidence != null:
+		evidence.register_file_artifact("animation.timeline", "video", destination, {
+			"capture_mode": "presentation" if presentation_capture else "silhouette",
+		})
 	if not grab_showcase_mode:
 		print("SILHOUETTE_INVERSION_CLEARANCE: %.3fm" % _minimum_inversion_clearance)
 		if _minimum_inversion_clearance < 0.0:
 			push_error("SILHOUETTE_INSPECTION_FAIL: inversion fixture intersects the snow")
-			get_tree().quit(1)
+			_finish(1)
 			return
 	print("SILHOUETTE_INSPECTION_CAPTURED: %s" % destination)
-	get_tree().quit(0)
+	_finish(0)
 
 func _on_clip_failed(reason: String) -> void:
 	push_error("SILHOUETTE_INSPECTION_FAIL: " + reason)
-	get_tree().quit(1)
+	_finish(1)
+
+func _finish(exit_code: int, success_message: String = "") -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	capture_finished = true
+	set_process(false)
+	if evidence != null and not evidence_finished:
+		evidence_finished = true
+		evidence.record_check("animation.capture.completed", "capture", "pass" if exit_code == 0 else "fail", capture_count, REVIEW_TIMES.size() if presentation_capture else GRAB_SHOWCASE_REVIEW_TIMES.size() if grab_showcase_mode else _audit_capture_schedule.size(), "Capture process completed")
+		evidence.record_check("animation.inversion.clearance", "semantic", "pass" if _minimum_inversion_clearance >= 0.0 else "fail", _minimum_inversion_clearance if is_finite(_minimum_inversion_clearance) else null, 0.0, "Minimum headwear clearance above inspection snow")
+		evidence.finish(exit_code)
+	if not success_message.is_empty() and exit_code == 0:
+		print(success_message)
+	if is_instance_valid(ClipRecorder) and ClipRecorder.has_method("_shutdown_capture_workers"):
+		ClipRecorder.call("_shutdown_capture_workers")
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		# Let queued visual nodes and recorder textures release after the last
+		# rendered frame. Quitting immediately can report stale texture RIDs.
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)
 
 func _build_view() -> void:
 	var light := DirectionalLight3D.new()

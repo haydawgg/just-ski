@@ -1,6 +1,7 @@
 extends Node
 
 const SKIER_VISUAL_SCENE := preload("res://player/animation/skier_visual.tscn")
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 const REQUIRED_BODY_REGIONS := ["Outfit_Jacket", "Outfit_Pants", "Outfit_Skin", "Outfit_Gloves", "Outfit_BootUnderlay"]
 const REQUIRED_CLOTHING_SHELLS := ["Outfit_Jacket", "Outfit_Pants", "Outfit_Gloves"]
 const REQUIRED_RIGID_PARTS := [
@@ -14,6 +15,7 @@ const REQUIRED_RIGID_PARTS := [
 const FORBIDDEN_NECK_ARTIFACTS := ["JacketBackYoke", "JacketCollar"]
 
 var failures: Array[String] = []
+var _finish_started := false
 
 func _ready() -> void:
 	var controller := SKIER_VISUAL_SCENE.instantiate() as SkierAnimationController
@@ -28,15 +30,33 @@ func _ready() -> void:
 	if adapter != null:
 		_check(adapter.outfit_profile != null, "Production rig has no data-driven outfit profile")
 		_check_body_regions(adapter)
+		_check_tailored_hem(adapter)
 		_check_rigid_parts(adapter)
 		_print_inventory(adapter)
 	if failures.is_empty():
 		print("CHARACTER_PRESENTATION_PASS: explicit body regions, shared palette, headwear, and detailed equipment passed")
-		get_tree().quit(0)
+		_finish(0)
 	else:
 		for failure: String in failures:
 			push_error("CHARACTER_PRESENTATION_FAIL: " + failure)
-		get_tree().quit(1)
+		_finish(1)
+
+func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)
 
 func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 	var found: Dictionary = {}
@@ -69,6 +89,7 @@ func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 		var pants := (found["Outfit_Pants"] as StandardMaterial3D).albedo_color
 		var color_distance := Vector3(jacket.r, jacket.g, jacket.b).distance_to(Vector3(pants.r, pants.g, pants.b))
 		_check(color_distance >= 0.18, "Jacket and pants do not provide readable color blocking")
+
 		_check(maxf(jacket.r, maxf(jacket.g, jacket.b)) < 0.9, "Jacket is still near-white")
 		_check(maxf(pants.r, maxf(pants.g, pants.b)) < 0.9, "Pants are still near-white")
 	if found.has("Outfit_Jacket") and found.has("Outfit_Skin") and found.has("Outfit_BootUnderlay"):
@@ -78,6 +99,27 @@ func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 		_check(jacket_surface.roughness > skin_surface.roughness, "Cloth and skin no longer have distinct authored roughness")
 		_check(boot_surface.metallic > jacket_surface.metallic, "Boot underlay no longer has a distinct hardgoods response")
 		_check(jacket_surface.metallic_specular < boot_surface.metallic_specular, "Cloth and hardgoods no longer have distinct specular response")
+
+func _check_tailored_hem(adapter: SkeletonSkierRig) -> void:
+	# Inspect the actual imported mesh, not a duplicate of the tailoring math.
+	# Waist vertices must meet on a ring; the old centroid partition had none.
+	var seam_vertices := 0
+	for node: Node in adapter.body_root.find_children("*", "MeshInstance3D", true, false):
+		var instance := node as MeshInstance3D
+		if instance.skin == null:
+			continue
+		for surface_index: int in mini(5, instance.mesh.get_surface_count()):
+			var material := instance.mesh.surface_get_material(surface_index)
+			if material == null or material.resource_name != "Outfit_Jacket":
+				continue
+			var arrays := instance.mesh.surface_get_arrays(surface_index)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			for vertex: Vector3 in vertices:
+				if absf(vertex.y - 0.16) < 0.0001:
+					seam_vertices += 1
+				if absf(vertex.x) < 0.17 and absf(vertex.z) < 0.17:
+					_check(vertex.y >= 0.1599, "Jacket triangle extends below the tailored waist seam")
+	_check(seam_vertices >= 20, "Jacket is missing a continuous tailored waist ring")
 
 func _check_rigid_parts(adapter: SkeletonSkierRig) -> void:
 	for part_name: String in REQUIRED_RIGID_PARTS:

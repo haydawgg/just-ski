@@ -1,6 +1,7 @@
 class_name PerformanceProfileMetrics
 extends RefCounted
 
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 const SCHEMA_VERSION := "1.0"
 
 static func summarize_frame_times(samples: Array) -> Dictionary:
@@ -54,7 +55,7 @@ static func make_profile(
 		"godot_version": Engine.get_version_info().get("string", "unknown"),
 		"platform": OS.get_name(),
 		"display_server": DisplayServer.get_name(),
-		"headless": OS.has_feature("headless"),
+		"headless": RuntimeEnvironment.is_headless(),
 		"processor_count": OS.get_processor_count(),
 		"processor_name": OS.get_processor_name(),
 		"video_adapter": RenderingServer.get_video_adapter_name(),

@@ -7,6 +7,7 @@ This file tracks unresolved behavior, missing production work, and checks that s
 - **Crest unweighting is covered and tuned.** Production roller geometry now has deterministic front/rear contact, tip-load, vertical-response, partial-support, and runout-recontact coverage in `tests/crest_unweighting_acceptance.tscn`. The active profile uses symmetric `0.84m` front/rear probe offsets; `tip_grip_gain` remains at its existing value.
 - **Production grab contact is calibrated.** The default `Skeleton3D` adapter measures its scaled rest-pose arm lengths, follows attached equipment markers, and evaluates a calibrated palm point with `0.18 m` acquisition and `0.12 m` maintenance caps. Remaining grab presentation issues are limited to the intersections listed below.
 - **Deterministic animation presentation coverage is complete for automated gates.** All grabs in `default_grab_animation_library.tres`, all four style poses, the transition phases, fixed front/side/opposite/three-quarter views, and 30/60/120 Hz continuity are covered by `animation_presentation_quality_acceptance.tscn` and the ignored `animation_presentation_audit_<fps>` captures. This does not close human feel or final cloth/pole review.
+- **Visual capture correctness is now a blocking gate.** Headless capture requests fail clearly with `runtime.headless=true`; GPU environment and sunset gates clear stale outputs, wait for process exit, require pixels plus telemetry, run their metrics, and fail on timeout, nonzero exit, capture errors, or texture/ObjectDB shutdown warnings. The canonical daylight metric input is `res://.godot_user/captures/snow_depth_after`.
 - **Lower-run and hub procedural dressing is contract-tested.** Deterministic catalog-backed boulders are grounded, non-colliding, outside the authored feature routes, and inherit finite ordered catalog LOD ranges. Final art direction and target-display/performance review remain open.
 
 ## Ski feel and controls
@@ -18,7 +19,9 @@ This file tracks unresolved behavior, missing production work, and checks that s
 
 ## Animation and character presentation
 
-- **Occasional pole/body and cloth/skin intersections may still occur.** These need visual checking from multiple camera angles during normal play. The current rig does not attempt full-body collision solving or cloth simulation.
+- **Daylight snow contrast is now within the automated visual target.** The September 2026 pass adds a neutral drift-value field and luminance floor to the render-only summit surface. Fresh capture runs average about 0.10 luminance spread (the gate keeps a 0.095 stability floor); blue-shadow coverage and the sunset near-black-region check pass. Keep a human art-direction review in the release matrix because the surface remains procedural.
+
+- **Pole clearance is enforced; cloth simulation remains deferred.** The confirmed ground-pose inward pole crossing is fixed. Switch skiing and every supported grab/style pose now assert outward/downhill shafts with at least `0.10 m` pole-to-knee clearance at 30/60/120 Hz, while preserving hand attachment through a deterministic fallback. Clothing shells share the body skin weights and the tailored seam check passes. The rig has no full-body collision solver or cloth simulation, and the refreshed captures show no confirmed cloth penetration, so unusual combinations still need a human camera pass.
 - **Secondary-motion amplitudes still need final visual tuning.** Deterministic tests cover continuity, settling, clamps, combined trick/grab behavior, and frame-rate consistency, but the final inertia feel is still a presentation judgment.
 
 ## Graphics and performance
@@ -28,7 +31,7 @@ This file tracks unresolved behavior, missing production work, and checks that s
 - **Snow presentation still needs representative GPU profiling.** Fast and Premium snow compile and run, but near/far detail blending, crystal response, subsurface strength, and production GPU cost need a dedicated profiling pass.
 - **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, FPS cap, and a profile-gated GI toggle. FSR2, HDR, reflection-quality controls, and risky-resolution confirmation are not implemented.
 - **The resort is not final production art.** The summit-to-first-landing slice and the lower-run/hub edge dressing now have deterministic procedural coverage. The lower run and hub remain graybox-oriented in their broader terrain/feature language and still need human art-direction review plus a profiler-driven 1080p High optimization pass.
-- **The texture-RID shutdown warning remains unresolved.** The environment capture can exit successfully while reporting seven leaked texture RIDs at renderer shutdown. This is tracked separately from animation and content acceptance.
+- **Renderer shutdown warnings are treated as capture failures.** The GPU environment, sunset, and animation capture teardowns drain render frames after freeing generated nodes; any leaked texture RID or ObjectDB warning now fails the corresponding gate. No such warning appears in the refreshed environment or sunset runs.
 
 ## Audio and capture
 

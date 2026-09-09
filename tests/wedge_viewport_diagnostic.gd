@@ -7,12 +7,14 @@ extends Node
 
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
 const SnowSurface := preload("res://world/snow_material.gd")
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 
 var viewport: SubViewport
 var camera: Camera3D
 var sun: DirectionalLight3D
 var jump_root: Node3D
 var capture_done := false
+var _finish_started := false
 
 func _ready() -> void:
 	# Build a minimal resort-like environment for the isolated jump.
@@ -113,18 +115,19 @@ func _perform_capture() -> void:
 		return
 	capture_done = true
 	var image: Image = null
-	var use_viewport := viewport
-	# Try SubViewport first.
-	await RenderingServer.frame_post_draw
-	await get_tree().process_frame
-	var tex := viewport.get_texture()
-	if tex != null:
-		image = tex.get_image()
-	# Fallback to main viewport if SubViewport is dummy.
-	if image == null or _is_dummy_image(image):
-		var main_tex := get_viewport().get_texture()
-		if main_tex != null:
-			image = main_tex.get_image()
+	if not RuntimeEnvironment.is_headless():
+		# Try SubViewport first. Headless diagnostics intentionally avoid render
+		# synchronization and dummy viewport reads; geometry remains authoritative.
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+		var tex := viewport.get_texture()
+		if tex != null:
+			image = tex.get_image()
+		# Fallback to main viewport if SubViewport is dummy.
+		if image == null or _is_dummy_image(image):
+			var main_tex := get_viewport().get_texture()
+			if main_tex != null:
+				image = main_tex.get_image()
 	var geom_result := _geometric_wedge_metric()
 	var image_result := _image_wedge_metric(image)
 	print("WEDGE_DIAGNOSTIC_START")
@@ -132,6 +135,8 @@ func _perform_capture() -> void:
 	print("GEOM_MAX_SLOPE_STEP_M: %.3f" % geom_result.max_height_step)
 	print("GEOM_DUPLICATE_WALL_COUNT: %d" % geom_result.duplicate_wall_count)
 	print("IMAGE_VALID: %s" % str(image_result.valid))
+	if RuntimeEnvironment.is_headless():
+		print("WEDGE_IMAGE_SKIP: geometry-only headless renderer")
 	if image_result.valid:
 		print("IMAGE_DARK_LUMINANCE_MIN: %.3f" % image_result.dark_min_lum)
 		print("IMAGE_WEDGE_PIXEL_RATIO: %.4f" % image_result.wedge_ratio)
@@ -142,15 +147,19 @@ func _perform_capture() -> void:
 		print("IMAGE_SSIM_LIKE: N/A (dummy renderer, using geometry)")
 	# Pass criteria: geometry must be wedge-free; if image available, also image must be wedge-free.
 	var geom_pass = geom_result.max_deviation_deg < 18.0 and geom_result.max_height_step < 0.12 and geom_result.duplicate_wall_count == 0
-	var image_pass = (not image_result.valid) or (image_result.dark_min_lum > 0.38 and image_result.wedge_ratio < 0.015 and image_result.triangle_score < 0.12)
+	var image_pass = RuntimeEnvironment.is_headless() or (image_result.valid and image_result.dark_min_lum > 0.38 and image_result.wedge_ratio < 0.015 and image_result.triangle_score < 0.12)
 	if geom_pass and image_pass:
 		print("WEDGE_VIEWPORT_PASS: wedge not detected (geom %.1fdeg step %.3fm image lum %.2f ratio %.3f)" % [geom_result.max_deviation_deg, geom_result.max_height_step, image_result.dark_min_lum if image_result.valid else 0.0, image_result.wedge_ratio if image_result.valid else 0.0])
 		# Save image for manual review if valid.
 		if image_result.valid and image != null:
 			var save_path := "user://wedge_capture.png"
-			image.save_png(save_path)
+			var save_error := image.save_png(save_path)
+			if save_error != OK:
+				push_error("WEDGE_VIEWPORT_FAIL: could not save GPU image")
+				_finish(1)
+				return
 			print("WEDGE_IMAGE_SAVED: %s" % save_path)
-		get_tree().quit(0)
+		_finish(0)
 	else:
 		var reasons: Array[String] = []
 		if not geom_pass:
@@ -160,7 +169,24 @@ func _perform_capture() -> void:
 		push_error("WEDGE_VIEWPORT_FAIL: " + ", ".join(reasons))
 		if image != null and image_result.valid:
 			image.save_png("user://wedge_capture_fail.png")
-		get_tree().quit(1)
+		_finish(1)
+
+func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)
 
 func _is_dummy_image(img: Image) -> bool:
 	if img == null or img.is_empty():
