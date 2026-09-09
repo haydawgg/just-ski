@@ -18,8 +18,8 @@ else {
 	if ($workflow -match 'Invoke-WebRequest|Expand-Archive|Get-FileHash') {
 		$failures.Add("Godot download/checksum/extraction logic is duplicated in the workflow")
 	}
-	foreach ($required in @('export_pack:', '--export-pack "Windows Desktop"', '--main-pack builds\\windows\\SummitSessions.pck', 'EXPORT_PACK_RESULT')) {
-		if ($workflow -notmatch [regex]::Escape($required)) {
+	foreach ($required in @('export_pack:', '--export-pack "Windows Desktop"', '--main-pack builds\windows\SummitSessions.pck', 'EXPORT_PACK_RESULT')) {
+		if (-not $workflow.Contains($required)) {
 			$failures.Add("Quality workflow is missing production pack contract: $required")
 		}
 	}
