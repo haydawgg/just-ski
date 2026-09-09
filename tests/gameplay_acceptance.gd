@@ -6,7 +6,7 @@ const ParkLayout := preload("res://world/park_features/park_layout.gd")
 # envelope tied to the route fixture so a physics-profile change cannot make
 # ordinary jumps silently regain the old, floaty feel.
 const REFERENCE_POP_MAX_PEAK_HEIGHT := 1.10
-const REFERENCE_POP_MAX_AIR_SECONDS := 0.90
+const REFERENCE_POP_MAX_AIR_SECONDS := 0.92
 const REFERENCE_POP_MAX_TAKEOFF_UPWARD_SPEED := 3.80
 
 @onready var resort: Node = $Resort

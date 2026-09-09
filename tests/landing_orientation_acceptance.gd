@@ -9,6 +9,10 @@ const RATE_TOLERANCE := 0.0001
 const BASIS_TOLERANCE := 0.001
 const CROSS_RATE_POSE_TOLERANCE := deg_to_rad(2.0)
 const CROSS_RATE_TIME_TOLERANCE := 0.05
+# Flat-floor spawn hover must stay inside probe reach (distance - origin height
+# = 1.10 m). ParkLayout.SPAWN_HOVER is 1.15 m along the slope normal, which is
+# below 1.10 m in world Y on the 18-degree face; a 1.15 m world-Y hover misses.
+const SPAWN_SETTLE_HOVER_Y := 0.85
 
 var failures: Array[String] = []
 var profile: SkiPhysicsProfile = SkiProfile
@@ -431,7 +435,7 @@ func _test_reset_contact_is_fresh(skier: SkierController) -> void:
 		published_hits[0] = skier.contact.hit_points.size()
 		published_spawn_settle[0] = skier._spawn_settle_active
 	, CONNECT_ONE_SHOT)
-	var hover := Transform3D(Basis.IDENTITY, Vector3(0.0, 1.15, 0.0))
+	var hover := Transform3D(Basis.IDENTITY, Vector3(0.0, SPAWN_SETTLE_HOVER_Y, 0.0))
 	skier.respawn_at(hover)
 	if skier.state != SkierController.State.AIR or published_state[0] != SkierController.State.AIR:
 		failures.append("Spawn reset forced gameplay out of AIR")
@@ -451,7 +455,7 @@ func _test_reset_contact_is_fresh(skier: SkierController) -> void:
 
 func _run_spawn_settle_descent(skier: SkierController, hz: int) -> void:
 	var delta := 1.0 / float(hz)
-	skier.respawn_at(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.15, 0.0)))
+	skier.respawn_at(Transform3D(Basis.IDENTITY, Vector3(0.0, SPAWN_SETTLE_HOVER_Y, 0.0)))
 	if skier.state != SkierController.State.AIR:
 		failures.append("Spawn settle at %d Hz did not begin in AIR" % hz)
 		return
