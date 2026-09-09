@@ -8,6 +8,9 @@ const FACE_SLOPE_LENGTH := 337.0
 const SURFACE_Y_AT_ORIGIN := 52.0
 const SPAWN_HOVER := 1.15
 const MARKER_HOVER := 0.5
+# Shallow skirt depth used to close the render manifold of profiled snow
+# features (matches the summit terrain's render skirt).
+const RENDER_SKIRT_DEPTH := 0.18
 const SNOW_SHADOW := Color("#a9c7d8")
 const SnowSurface := preload("res://world/snow_material.gd")
 
@@ -823,12 +826,14 @@ static func _add_grid_snow_body(
 		for point: Vector3 in world_row:
 			local_row.append(point - origin)
 		local_rows.append(local_row)
-	# Keep the buried shell for collision fidelity, but do not send its underside
-	# and vertical skirt through the renderer. At a low sunset angle the camera
-	# can see that shell on a close feature; with SDFGI enabled it becomes an
-	# oversized near-black surface even though the playable top is valid.
+	# Keep the deep buried shell for collision fidelity. The render mesh closes
+	# its manifold with a shallow skirt (matching the summit terrain treatment):
+	# without side walls the single-sided top surface is culled when viewed from
+	# behind/beside the feature and the ramp reads as a see-through plane, while
+	# the deep full-bury shell walls rendered as an oversized near-black surface
+	# under SDFGI at low sun angles.
 	var collision_mesh := _profile_grid_mesh(local_rows, normal, bury, true)
-	var render_mesh := _profile_grid_mesh(local_rows, normal, bury, false)
+	var render_mesh := _profile_grid_mesh(local_rows, normal, RENDER_SKIRT_DEPTH, true)
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = render_mesh
 	mesh_instance.set_meta("render_surface_only", true)
