@@ -46,6 +46,8 @@ $builder = Read-RequiredFile "world/course/park_course_builder.gd"
 $course = Read-RequiredFile "world/course/park_course_profile.gd"
 $courseResource = Read-RequiredFile "resources/course/default_course_profile.tres"
 $ui = Read-RequiredFile "ui/hud/game_ui.gd"
+$sessionManager = Read-RequiredFile "autoload/session_manager.gd"
+$clipRecorder = Read-RequiredFile "autoload/clip_recorder.gd"
 $mountainShader = Read-RequiredFile "shaders/distant_mountain.gdshader"
 $groundMotion = Read-RequiredFile "player/motion/ground_motion_solver.gd"
 $airMotion = Read-RequiredFile "player/motion/air_motion_solver.gd"
@@ -229,6 +231,48 @@ Require-Match $contentTracker 'grab_qualified' "Challenge grab observation must 
 Require-Match $controller '(?s)func _physics_process.*if recovery_frozen:.*if input_frame\.respawn_pressed:' "Frozen recovery must ignore session input."
 Reject-Match $controller '(?s)func _physics_process.*if input_frame\.respawn_pressed:.*if recovery_frozen:' "Frozen recovery cannot handle respawn before the freeze guard."
 Require-Match $flickInterpreter '(?s)func _step_grind.*_command\.kind != TrickCommand\.Kind\.RAIL_POP' "Off-axis grind setup releases must not keep a deferred takeoff."
+Require-Match $controller 'func _close_inbound_air_trick' "Rail capture must close inbound air as its own interrupted trick."
+$railCapture = [regex]::Match($controller, 'func _try_capture_rail\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($railCapture.Success) {
+	Require-Match $railCapture.Groups["body"].Value '_close_inbound_air_trick\(\)' "Rail capture must close inbound air before entering grind."
+	Reject-Match $railCapture.Groups["body"].Value 'scoring\.bail\(' "Rail capture cannot bail inbound air as a failed landing."
+	Reject-Match $railCapture.Groups["body"].Value 'trick\.land\(' "Rail capture cannot score inbound air as a landing."
+} else {
+	$failures.Add("Could not locate _try_capture_rail.")
+}
+$closeInbound = [regex]::Match($controller, 'func _close_inbound_air_trick\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($closeInbound.Success) {
+	Require-Match $closeInbound.Groups["body"].Value 'trick\.reset\(\)' "Closing inbound air must reset trick scoring state."
+	Reject-Match $closeInbound.Groups["body"].Value 'scoring\.bail\(' "Closing inbound air cannot count as a bail."
+	Reject-Match $closeInbound.Groups["body"].Value 'trick\.land\(' "Closing inbound air cannot count as a landing."
+} else {
+	$failures.Add("Could not locate _close_inbound_air_trick.")
+}
+$enterAir = [regex]::Match($controller, 'func _enter_air\([\s\S]*?\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($enterAir.Success) {
+	Require-Match $enterAir.Groups["body"].Value 'trick\.begin_air\(' "Air entry must start a fresh outbound trick."
+	Require-Match $enterAir.Groups["body"].Value 'trick_rotation_state\.reset\(\)' "Air entry must reset trick rotation history."
+	Require-Match $enterAir.Groups["body"].Value 'inherited_angular_velocity' "Rail exits may still inherit body angular velocity."
+	Reject-Match $enterAir.Groups["body"].Value 'retain_trick_history' "Air entry cannot restore pre-rail trick history."
+	Reject-Match $enterAir.Groups["body"].Value 'accumulated_rotation\s*=' "Air entry cannot restore accumulated rotation."
+} else {
+	$failures.Add("Could not locate _enter_air.")
+}
+Reject-Match $controller 'retain_trick_history' "Inbound air history cannot be retained through a grind."
+Require-Match $sessionManager 'func request_summit_restart\(\) -> void' "Summit restart must be an explicit session intent."
+Require-Match $sessionManager 'RESPAWN_SUMMIT_RESTART' "Summit restart must have a dedicated respawn reason."
+Require-Match $sessionManager 'RESPAWN_COURSE_RECOVERY' "Course recovery must have a dedicated respawn reason."
+Require-Match $clipRecorder 'func handle_session_respawn\(' "Clip recorder must gate start/stop on session respawn reason."
+Require-Match $clipRecorder 'RESPAWN_SUMMIT_RESTART' "Clip capture start must require an explicit summit restart."
+Require-Match $ui 'SessionManager\.request_summit_restart\(\)' "Restart from Summit must use the explicit summit-restart intent."
+$restartSummit = [regex]::Match($ui, 'func _restart_summit\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($restartSummit.Success) {
+	Reject-Match $restartSummit.Groups["body"].Value 'request_respawn\(\)' "Restart from Summit cannot use an unqualified session respawn."
+} else {
+	$failures.Add("Could not locate _restart_summit.")
+}
+Require-Match $resort 'ClipRecorder\.handle_session_respawn\(reason\)' "Resort clip wiring must pass the respawn reason."
+Reject-Match $resort 'func _on_respawn_requested_recorder[\s\S]*?SessionManager\.default_spawn' "Clip start/stop cannot match the default spawn transform."
 
 Require-Match $inputSampler 'frame\.brake\s*=\s*Input\.get_action_strength' "The sampled frame must preserve analog brake strength."
 Require-Match $groundMotion 'profile\.brake_steer_multiplier' "Ground handling policy must use profile-owned analog brake steering."

@@ -308,14 +308,8 @@ func _notification(what: int) -> void:
 func _on_run_finished_recorder(_snapshot: Dictionary) -> void:
 	ClipRecorder.end_run_capture()
 
-func _on_respawn_requested_recorder(transform: Transform3D) -> void:
-	if transform == SessionManager.default_spawn:
-		# Fresh run from the summit: start the armed clip capture.
-		if ClipRecorder.armed:
-			ClipRecorder.begin_run_capture()
-	elif ClipRecorder.is_recording():
-		# Mid-run interruption (marker respawn, course recovery): save what was captured.
-		ClipRecorder.end_run_capture()
+func _on_respawn_requested_recorder(_transform: Transform3D, reason: StringName = SessionManager.RESPAWN_SESSION) -> void:
+	ClipRecorder.handle_session_respawn(reason)
 
 func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees: Vector3, color: Color, collision_enabled: bool, surface_kind: int = -1, visual_surface_kind: int = -1) -> StaticBody3D:
 	var body := StaticBody3D.new()

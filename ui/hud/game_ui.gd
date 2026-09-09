@@ -831,7 +831,7 @@ func _restart_summit() -> void:
 		total_score = 0
 		_reset_combo()
 		score_label.text = "SCORE 000000"
-	SessionManager.request_respawn()
+	SessionManager.request_summit_restart()
 	_show_notice("RESTART FROM SUMMIT")
 	_resume()
 

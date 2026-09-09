@@ -15,7 +15,6 @@ This file tracks concrete, actionable bugs and missing functionality. Resolved i
 
 - **Airborne skis do not IK-anticipate the predicted surface.** Terrain probes and capsule touchdown end airborne state within 0.05 m of the seat, touchdown freezes the shared trick-rotation snapshot used by display, scoring, and landing validity, and anticipation leg extension is restrained near the seat. The rendered skis are still FK-posed in AIR, so exact pre-touchdown surface agreement still needs a human visual pass.
 - **Grab recognition is proximity-based by design.** Initial contact now requires a 0.14 m hand-to-ski reach with pose, airtime, hold-time, and scoring gates behind it. Whether 0.14 m reads as convincing contact still needs a human camera pass.
-- **Pre-rail aerial rotation is retained through a grind and credited on the next landing.** Rail capture does not close the inbound air trick. `commit_grind()` scores the grind as CLEAN on exit, then `_enter_air(..., retain_trick_history=true)` restores the pre-rail `accumulated_rotation` and `had_trick_intent`. The HUD and landed score can therefore attribute a spin that happened before the rail to the post-rail air, and a bailed landing after a grind still keeps those grind points plus a clean-trick increment.
 
 ## Ski and pole IK
 
@@ -29,4 +28,3 @@ This file tracks concrete, actionable bugs and missing functionality. Resolved i
 ## Audio and capture
 
 - **Gameplay clips use MJPEG-in-MP4 and contain no game audio.** The recorder produces large MJPEG-in-MP4 files with limited browser/Discord compatibility and does not include synchronized game audio. H.264 output and audio capture are missing.
-- **Out-of-bounds recovery to the default spawn is treated as a new summit run by the clip recorder.** `world/resort.gd` starts an armed capture whenever the respawn transform equals `SessionManager.default_spawn`, and does not end an in-progress recording in that case. Uphill OOB recovery with no marker uses the default spawn, so a clip can continue across the teleport or an armed recorder can start from a fail recovery.

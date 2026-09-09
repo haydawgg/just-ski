@@ -328,14 +328,13 @@ func _test_rail_slip_preserves_bounded_angular_state() -> void:
 	skier.trick.begin_air(false, TrickCommand.Kind.BACKFLIP, true, Vector3.RIGHT)
 	skier.trick.accumulated_rotation = Vector3(1.1, -0.7, 0.2)
 	skier.active_trick_kind = TrickCommand.Kind.BACKFLIP
-	var retained_rotation := skier.trick.accumulated_rotation
 	skier._slip_off_rail()
 	if skier.state != SkierController.State.AIR or skier.active_rail != null:
 		failures.append("rail slip did not atomically release rail gameplay ownership")
 	if skier.angular_velocity.length() < 0.5 or skier.angular_velocity.length() > skier.profile.maximum_angular_speed + 0.001:
 		failures.append("rail slip discarded or failed to bound inherited angular state")
-	if skier.trick.accumulated_rotation.distance_to(retained_rotation) > 0.001:
-		failures.append("rail slip erased incoming trick rotation history")
+	if skier.trick.accumulated_rotation.length() > 0.001 or skier.trick.had_trick_intent:
+		failures.append("rail slip retained inbound trick rotation for post-rail scoring")
 	remove_child(rail)
 	rail.queue_free()
 	remove_child(skier)

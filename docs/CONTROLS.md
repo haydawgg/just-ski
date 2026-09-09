@@ -116,7 +116,7 @@ F9 controls the built-in run recorder:
 
 1. Press F9 while idle to arm capture for the next summit run.
 2. Press F9 again while idle to cancel the pending arm; ending an unstarted run does not cancel it.
-3. Start a run from the summit; the pending arm is consumed and capture begins automatically.
+3. Choose Restart from Summit; the pending arm is consumed and capture begins automatically. Session respawn and out-of-bounds recovery do not start capture, even when they use the default spawn.
 4. While recording, press F9 to stop the capture. It also ends at the finish trigger or 90-second safety cap.
 5. Encoding finishes after recording stops; leaving the game discards incomplete data and any temporary encode output.
 

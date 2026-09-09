@@ -3,13 +3,13 @@ extends Node
 const ClipTimelineModule = preload("res://util/clip_timeline.gd")
 
 ## F9-toggleable gameplay clip capture. Pressing F9 arms or cancels the
-## recorder; the next run started from the summit spawn is recorded until the finish trigger
-## (or an early save / 90 s safety cap) and saved to the user's Downloads
-## folder (user:// fallback) as an MJPEG-in-MP4 file. Frames are
-## JPEG-encoded during capture and the MP4 is muxed on a background thread
-## so play continues. Capture slots are retained even when the JPEG worker is
-## back-pressured; missing slots are repeated during muxing to preserve the
-## recorded run's presentation duration.
+## recorder; an explicit Restart from Summit consumes a pending arm and records
+## until the finish trigger (or an early save / 90 s safety cap). The clip is
+## saved to the user's Downloads folder (user:// fallback) as an MJPEG-in-MP4
+## file. Frames are JPEG-encoded during capture and the MP4 is muxed on a
+## background thread so play continues. Capture slots are retained even when
+## the JPEG worker is back-pressured; missing slots are repeated during muxing
+## to preserve the recorded run's presentation duration.
 
 signal recording_changed(active: bool)
 signal encoding_changed(active: bool)
@@ -137,6 +137,16 @@ func begin_run_capture() -> void:
 		armed = false
 		armed_changed.emit(false)
 	_start_recording()
+
+func handle_session_respawn(reason: StringName) -> void:
+	if _shutting_down:
+		return
+	if reason == SessionManager.RESPAWN_SUMMIT_RESTART:
+		if armed:
+			begin_run_capture()
+		return
+	if is_recording():
+		end_run_capture()
 
 func end_run_capture() -> void:
 	if _shutting_down:
