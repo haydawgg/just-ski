@@ -3,6 +3,8 @@ extends Node
 var failures: Array[String] = []
 
 func _ready() -> void:
+	_test_crash_presentation_clock_and_notice()
+	_test_airborne_crash_rotation_continuity()
 	_test_guarded_crash_entry_and_respawn_cleanup()
 	_test_repeated_crash_respawn_cycles()
 	_test_reseat_landing_outcomes_and_trick_cleanup()
@@ -11,6 +13,13 @@ func _ready() -> void:
 	_test_ground_angle_contract()
 	_test_landing_prediction_cache()
 	_test_bail_rest_damping()
+	_test_crash_entry_clears_locomotion()
+	_test_grounded_crash_tumbles_gradually()
+	_test_crash_settling_shows_low_speed_motion()
+	_test_recovery_is_rate_limited_and_coordinated()
+	await _test_world_origin_seating()
+	await _test_landing_requires_close_support()
+	_test_pop_preserves_impulse()
 	await _test_failed_landing_emits_crash_only()
 	await _test_feature_collision_thresholds()
 	await _test_airborne_bail_timeout_respawns()
@@ -26,6 +35,149 @@ func _ready() -> void:
 	for failure: String in failures:
 		push_error("CRASH_RECOVERY_FAIL: " + failure)
 	get_tree().quit(1)
+
+func _test_world_origin_seating() -> void:
+	var floor_body := _make_box_body("OriginFloor", 1, Vector3(30.0, 0.5, 30.0), Vector3(0.0, -0.25, 0.0))
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	await get_tree().physics_frame
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.22, 0.0)), Vector3(0.0, -0.5, 0.0))
+	skier.air_time = 0.2
+	skier.air_deliberate = true
+	skier._physics_process(1.0 / 60.0)
+	if skier.contact.hit_points.is_empty() or skier.contact.average_hit_position.length() > 0.001:
+		failures.append("Origin seating fixture did not sample real terrain at the world origin")
+	if skier.state != SkierController.State.GROUND or absf(skier.global_position.y - skier.profile.ground_attach_height) > 0.002:
+		failures.append("Valid world-origin contact was treated as missing and left the landed skier hovering")
+	remove_child(skier)
+	skier.queue_free()
+	remove_child(floor_body)
+	floor_body.queue_free()
+
+func _test_landing_requires_close_support() -> void:
+	var floor_body := _make_box_body("TouchdownFloor", 1, Vector3(30.0, 0.5, 30.0), Vector3(0.0, -0.25, 0.0))
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	await get_tree().physics_frame
+	for deliberate: bool in [false, true]:
+		skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.72, 0.0)), Vector3(0.0, -0.5, 0.0))
+		skier.air_time = 0.2
+		skier.air_deliberate = deliberate
+		skier._physics_process(1.0 / 60.0)
+		if skier.state != SkierController.State.AIR:
+			failures.append("Landing accepted distant snow support with %.3f m clearance (deliberate=%s)" % [0.72 - skier.profile.ground_attach_height, deliberate])
+		var frames := 0
+		while skier.state == SkierController.State.AIR and frames < 120:
+			await get_tree().physics_frame
+			skier._physics_process(1.0 / 60.0)
+			frames += 1
+		var seat_tolerance := 0.002 if deliberate else 0.05
+		if skier.state != SkierController.State.GROUND or absf(skier.global_position.y - skier.profile.ground_attach_height) > seat_tolerance:
+			failures.append("Touchdown did not enter grounded locomotion at the support surface (deliberate=%s height=%.3f)" % [deliberate, skier.global_position.y])
+	for elapsed_air_time: float in [0.0, 0.2]:
+		skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.4, 0.0)), Vector3(0.0, -16.0, 0.0))
+		skier.air_time = elapsed_air_time
+		skier.air_deliberate = true
+		for _index: int in 3:
+			skier._physics_process(1.0 / 60.0)
+			if skier.get_slide_collision_count() > 0 and skier.state == SkierController.State.AIR:
+				failures.append("Physical snow collision left airborne/trick processing active for another tick")
+			if skier.state != SkierController.State.AIR:
+				break
+		var impact := skier.crash_context.impact_speed if skier.state == SkierController.State.BAIL else float(skier.landing_context.get("impact", 0.0))
+		if impact < 15.0:
+			failures.append("Touchdown discarded incoming collision speed (impact=%.3f)" % impact)
+	remove_child(skier)
+	skier.queue_free()
+	remove_child(floor_body)
+	floor_body.queue_free()
+
+func _test_pop_preserves_impulse() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	var normal := Vector3(0.0, 1.0, 0.3).normalized()
+	var tangent := Vector3.RIGHT * 8.0
+	for approach_speed: float in [-1.4, 0.0, 2.0]:
+		skier.state = SkierController.State.GROUND
+		skier.velocity = tangent + normal * approach_speed
+		skier._pop(normal, 1.0)
+		if absf(skier.velocity.dot(normal) - (skier.profile.pop_impulse + maxf(0.0, approach_speed))) > 0.001:
+			failures.append("Suspension velocity consumed the pop impulse or upward momentum was lost")
+		if skier.velocity.slide(normal).distance_to(tangent) > 0.001:
+			failures.append("Pop changed tangential skiing momentum")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_crash_presentation_clock_and_notice() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3.ZERO)
+	var ui := GameUI.new()
+	add_child(ui)
+	ui.set_process(false)
+	ui.bind_player(skier)
+	skier._bail()
+	ui._process(3.0)
+	if ui.notice_label.modulate.a < 0.99 or "BAIL" not in ui.notice_label.text:
+		failures.append("Bail notice expired while the player was still in BAIL")
+	ui._show_notice("SESSION MARKER SAVED")
+	if "BAIL" not in ui.notice_label.text:
+		failures.append("An unrelated notice replaced the active bail status")
+	skier.crash_context.elapsed = 3.0
+	skier.contact.grounded = true
+	for stage: int in [CrashContext.Stage.IMPACT, CrashContext.Stage.FALL, CrashContext.Stage.REST, CrashContext.Stage.RECOVERY]:
+		skier.crash_context.set_stage(stage)
+		skier._update_animation(1.0 / 60.0)
+		if skier.animation_controller._crash_stage_progress > 0.001:
+			failures.append("Crash stage %s presentation started at %.2f instead of zero on the handoff" % [CrashContext.Stage.keys()[stage], skier.animation_controller._crash_stage_progress])
+	ui._process(3.0)
+	if "getting up" not in ui.notice_label.text or ui.notice_label.modulate.a < 0.99:
+		failures.append("Recovery did not retain a visible get-up status")
+	skier._recover_from_bail()
+	ui._process(1.0 / 60.0)
+	if ui.notice_label.modulate.a > 0.01 and "BAIL" in ui.notice_label.text:
+		failures.append("Bail notice survived the completed recovery")
+	ui._show_notice("SETTINGS SAVED")
+	if ui.notice_label.text != "SETTINGS SAVED" or ui.notice_label.modulate.a < 0.99:
+		failures.append("Recovery broke ordinary HUD notices")
+	ui._process(3.0)
+	if ui.notice_label.modulate.a > 0.01:
+		failures.append("Ordinary HUD notices no longer expire")
+	skier._bail()
+	ui.bind_player(skier)
+	if "BAIL" not in ui.notice_label.text or ui.notice_label.modulate.a < 0.99:
+		failures.append("Binding the HUD during a crash missed its active status")
+	skier.respawn_at(Transform3D(Basis.IDENTITY, Vector3(0.0, 3.0, 0.0)))
+	ui._process(1.0 / 60.0)
+	if "BAIL" in ui.notice_label.text:
+		failures.append("Respawn retained stale bail status")
+	remove_child(ui)
+	ui.queue_free()
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_airborne_crash_rotation_continuity() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	for axis: Vector3 in [Vector3.RIGHT, Vector3.BACK]:
+		var initial_basis := Basis(axis, deg_to_rad(150.0))
+		skier.reset_for_benchmark(Transform3D(initial_basis, Vector3(0.0, 10.0, 0.0)), Vector3.DOWN)
+		skier.angular_velocity = axis * 1.0
+		skier._bail()
+		skier.contact.grounded = false
+		skier._update_bail(1.0 / 60.0)
+		var turn := initial_basis.get_rotation_quaternion().angle_to(skier.global_basis.get_rotation_quaternion())
+		if turn > 0.04:
+			failures.append("Airborne crash snapped %.1f degrees in one tick instead of following angular momentum" % rad_to_deg(turn))
+		if skier.angular_velocity.dot(axis) < 0.9:
+			failures.append("Airborne crash discarded tumble momentum before snow contact")
+	remove_child(skier)
+	skier.queue_free()
 
 func _test_guarded_crash_entry_and_respawn_cleanup() -> void:
 	var skier := SkierController.new()
@@ -233,6 +385,9 @@ func _test_landing_prediction_cache() -> void:
 	add_child(skier)
 	skier.set_physics_process(false)
 	skier.state = SkierController.State.AIR
+	# Spawn now primes presentation and its landing prediction before rendering.
+	# Begin a new physics step to test the per-step cache contract.
+	skier._physics_step_serial += 1
 	var before: int = skier._landing_prediction_evaluations
 	skier._predict_landing()
 	skier._predict_landing()
@@ -261,6 +416,132 @@ func _test_bail_rest_damping() -> void:
 	)
 	if result.velocity.length() >= velocity.length() or result.angular_velocity.length() >= angular_velocity.length():
 		failures.append("Bail REST motion did not monotonically damp linear and angular velocity")
+
+func _make_crash_context(incoming: Vector3) -> CrashContext:
+	var context := CrashContext.new()
+	context.begin(
+		CrashContext.Reason.LANDING_IMPACT,
+		CrashContext.Source.LANDING,
+		SkierController.State.AIR,
+		incoming,
+		incoming,
+		Vector3.UP,
+		maxf(0.0, -incoming.y),
+		0.8
+	)
+	return context
+
+func _test_crash_entry_clears_locomotion() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(0.0, -1.0, -8.0))
+	skier.edge_amount = 0.8
+	skier.steering_input = 0.6
+	skier.steering_input_raw = 0.6
+	skier.pressure_amount = 0.5
+	skier.tuck_amount = 0.7
+	skier.brake_amount = 0.4
+	skier.braking = true
+	skier.skid_amount = 0.5
+	skier.carve_force = 3.0
+	skier.lateral_slip = 1.2
+	if not skier.enter_crash(_make_crash_context(skier.velocity)):
+		failures.append("Locomotion-clear setup could not enter crash")
+	elif skier.edge_amount != 0.0 or skier.steering_input != 0.0 or skier.pressure_amount != 0.0 or skier.tuck_amount != 0.0 or skier.brake_amount != 0.0 or skier.braking or skier.skid_amount != 0.0 or skier.carve_force != 0.0 or skier.lateral_slip != 0.0:
+		failures.append("Crash entry retained downhill locomotion channels into BAIL")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_grounded_crash_tumbles_gradually() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3(2.0, -0.5, -3.0))
+	skier.enter_crash(_make_crash_context(skier.velocity))
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_basis = Basis(Vector3.FORWARD, deg_to_rad(20.0))
+	skier.angular_velocity = Vector3(0.5, 0.3, 0.4)
+	skier.crash_context.set_stage(CrashContext.Stage.FALL)
+	var before := skier.global_basis.orthonormalized().get_rotation_quaternion()
+	var up_before := skier.global_basis.y.normalized().dot(Vector3.UP)
+	skier._update_bail(1.0 / 60.0)
+	var after := skier.global_basis.orthonormalized().get_rotation_quaternion()
+	var turn := before.angle_to(after)
+	if turn < 0.0005:
+		failures.append("Grounded crash did not tumble; bail froze with angular momentum available")
+	if turn > 0.1:
+		failures.append("Grounded crash snapped %.1f degrees in one tick instead of settling gradually" % rad_to_deg(turn))
+	var up_after := skier.global_basis.y.normalized().dot(Vector3.UP)
+	if up_after < up_before - 0.05:
+		failures.append("Grounded crash tilted further from the snow instead of owning upright alignment through contact")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_crash_settling_shows_low_speed_motion() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3.ZERO)
+	skier.enter_crash(_make_crash_context(Vector3.ZERO))
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.velocity = Vector3.ZERO
+	skier.angular_velocity = Vector3.ZERO
+	skier.crash_context.current_velocity = Vector3.ZERO
+	skier.crash_context.set_stage(CrashContext.Stage.FALL)
+	skier._update_animation(1.0 / 60.0)
+	var fall_first: Vector3 = skier.animation_controller.debug_snapshot().get("pelvis_rotation", Vector3.ZERO)
+	skier.crash_context.advance(1.0 / 60.0)
+	skier._update_animation(1.0 / 60.0)
+	var fall_second: Vector3 = skier.animation_controller.debug_snapshot().get("pelvis_rotation", Vector3.ZERO)
+	if fall_first.distance_to(fall_second) < 0.00005:
+		failures.append("Low-speed FALL presented a frozen pose instead of secondary settle motion")
+	skier.crash_context.set_stage(CrashContext.Stage.REST)
+	skier._update_animation(1.0 / 60.0)
+	var rest_first: Vector3 = skier.animation_controller.debug_snapshot().get("spine_rotation", Vector3.ZERO)
+	skier.crash_context.advance(1.0 / 60.0)
+	skier._update_animation(1.0 / 60.0)
+	var rest_second: Vector3 = skier.animation_controller.debug_snapshot().get("spine_rotation", Vector3.ZERO)
+	if rest_first.distance_to(rest_second) < 0.00002:
+		failures.append("Low-speed REST presented a frozen pose instead of decaying wobble")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_recovery_is_rate_limited_and_coordinated() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3(3.0, -0.5, -4.0))
+	var incoming_speed := skier.velocity.slide(Vector3.UP).length()
+	skier.enter_crash(_make_crash_context(skier.velocity))
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_basis = Basis(Vector3.FORWARD, deg_to_rad(30.0))
+	# Simulate stale channels if any path reintroduces them before recovery.
+	skier.edge_amount = 0.7
+	skier.steering_input = 0.5
+	var before := skier.global_basis.orthonormalized().get_rotation_quaternion()
+	skier._recover_from_bail(1.0 / 60.0)
+	var after := skier.global_basis.orthonormalized().get_rotation_quaternion()
+	if before.angle_to(after) > 0.08:
+		failures.append("Recovery snapped the root instead of rate-limited realignment")
+	if skier.state != SkierController.State.GROUND:
+		failures.append("Recovery did not return to grounded skiing")
+	if skier.edge_amount != 0.0 or skier.steering_input != 0.0:
+		failures.append("Recovery retained stale locomotion into the first grounded frames")
+	if skier.angular_velocity.length() > 0.001:
+		failures.append("Recovery retained crash angular velocity into skiing")
+	var expected_speed := incoming_speed * skier.profile.bail_recovery_speed_retain
+	if absf(skier.velocity.length() - expected_speed) > 0.05:
+		failures.append("Recovery did not preserve the configured post-crash speed retention")
+	if skier.landing_orientation_duration <= 0.0:
+		failures.append("Recovery did not seed ground orientation settle for the remaining alignment")
+	if bool((skier.telemetry().crash as Dictionary).active):
+		failures.append("Recovery retained active crash state")
+	remove_child(skier)
+	skier.queue_free()
 
 func _test_bounded_rest_and_recovery() -> void:
 	var floor_body := StaticBody3D.new()
@@ -306,6 +587,8 @@ func _test_bounded_rest_and_recovery() -> void:
 			recovery_frames += 1
 		if stage != previous_stage and previous_stage != "NONE" and float(crash.get("stage_elapsed", 999.0)) > 0.05:
 			failures.append("Crash stage-local clock did not reset at %s handoff" % stage)
+		if stage != previous_stage and stage != "NONE" and skier.animation_controller._crash_stage_progress > 0.1:
+			failures.append("Real crash lifecycle jumped presentation progress at %s handoff" % stage)
 		previous_stage = stage
 		var equipment := skier.telemetry().crash_equipment as Dictionary
 		if not equipment_failure_reported and (not bool(equipment.get("valid", false)) or not bool(equipment.get("ski_separation_in_range", false)) or not bool(equipment.get("poles_attached", false))):

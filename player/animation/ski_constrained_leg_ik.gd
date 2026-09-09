@@ -8,6 +8,21 @@ func reset() -> void:
 	_last_poles.clear()
 	_last_rotations.clear()
 
+## Enforce a minimum lateral boot stance so crossed ski targets can never form
+## an X-shaped configuration. Separation is applied along the pelvis lateral
+## axis in world space and is idempotent once the stance is satisfied.
+static func separate_boot_targets(left_target: Vector3, right_target: Vector3, pelvis_global_basis: Basis, min_stance: float) -> Array:
+	var lateral := pelvis_global_basis.x
+	if lateral.length_squared() < 0.5 or not lateral.is_finite():
+		lateral = Vector3.RIGHT
+	else:
+		lateral = lateral.normalized()
+	var separation := (right_target - left_target).dot(lateral)
+	if separation >= min_stance:
+		return [left_target, right_target]
+	var push := (min_stance - separation) * 0.5
+	return [left_target - lateral * push, right_target + lateral * push]
+
 func solve_leg(
 	hip: Node3D,
 	knee: Node3D,

@@ -347,8 +347,12 @@ static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: 
 	body.name = "BonkBody"
 	body.collision_layer = 4
 	body.collision_mask = 2
-	body.transform = Transform3D(upright_feature_basis(), snow_at(x, z) + Vector3.UP * (height * 0.5))
+	# The collider and the visual mesh share this transform, so they agree by
+	# construction. Center along the snow normal (not vertical) and sink the
+	# base slightly so the upright post leaves no gap on the pitched face.
+	body.transform = Transform3D(upright_feature_basis(), snow_at(x, z) + snow_normal() * (height * 0.5 - 0.06))
 	var mesh_instance := MeshInstance3D.new()
+	mesh_instance.name = "BonkMesh"
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = radius
 	mesh.bottom_radius = radius
@@ -361,18 +365,22 @@ static func add_bonk(parent: Node3D, label: String, x: float, z: float, height: 
 	mesh_instance.material_override = material
 	body.add_child(mesh_instance)
 	var snow_cap := MeshInstance3D.new()
+	snow_cap.name = "SnowCap"
 	var cap_mesh := CylinderMesh.new()
 	cap_mesh.top_radius = radius * 0.72
 	cap_mesh.bottom_radius = radius * 1.08
 	cap_mesh.height = 0.1
 	cap_mesh.radial_segments = 10
 	snow_cap.mesh = cap_mesh
-	snow_cap.position = snow_at(x, z) + snow_normal() * (height + 0.045)
+	# Child of the collider body so the cap always sits exactly on the physical
+	# top instead of drifting on slopes where vertical and normal diverge.
+	snow_cap.position = Vector3(0.0, height * 0.5 + 0.045, 0.0)
 	snow_cap.material_override = _park_feature_snow_material(SnowSurface.Kind.POWDER, Vector2(0.0, -1.0), 0.22)
 	snow_cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	root.add_child(snow_cap)
+	body.add_child(snow_cap)
 	_add_feature_snow_collar(root, downhill_basis(), snow_at(x, z) + snow_normal() * 0.026, Vector3(radius * 3.2, 0.1, radius * 3.2))
 	var shape_node := CollisionShape3D.new()
+	shape_node.name = "CollisionShape3D"
 	var shape := CylinderShape3D.new()
 	shape.radius = radius
 	shape.height = height

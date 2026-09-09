@@ -29,17 +29,24 @@ func _ready() -> void:
 			scenario_results.append(_run_case(scenario, hz))
 		results_by_scenario[scenario] = scenario_results
 		_validate_cross_rate_results(scenario, scenario_results)
+	var reseat_results: Array[Dictionary] = []
+	for hz: int in TEST_HZ:
+		reseat_results.append(_run_case("tilted_sketchy", hz, false))
+	_validate_cross_rate_results("terrain_hop", reseat_results)
+	_test_rotational_landing_releases_crouch()
+	_test_spawn_reseat_seats_quietly()
+	_test_touchdown_freezes_trick_snapshot()
 
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("LANDING_ORIENTATION_PASS: bounded deliberate landing orientation, residual rotation, slope, steering, and 30/60/120 Hz continuity passed")
+		print("LANDING_ORIENTATION_PASS: bounded deliberate and terrain-hop landing orientation, residual rotation, slope, steering, and 30/60/120 Hz continuity passed")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
 		push_error("LANDING_ORIENTATION_FAIL: " + failure)
 	get_tree().quit(1)
 
-func _run_case(scenario: String, hz: int) -> Dictionary:
+func _run_case(scenario: String, hz: int, deliberate: bool = true) -> Dictionary:
 	var setup := _scenario_setup(scenario)
 	var normal: Vector3 = setup.normal
 	var touchdown_basis: Basis = setup.basis
@@ -47,7 +54,7 @@ func _run_case(scenario: String, hz: int) -> Dictionary:
 	add_child(skier)
 	skier.set_physics_process(false)
 	skier.state = SkierController.State.AIR
-	skier.air_deliberate = true
+	skier.air_deliberate = deliberate
 	skier.air_time = 0.8
 	skier.landing_feedback_armed = false
 	skier.contact.grounded = true
@@ -58,10 +65,13 @@ func _run_case(scenario: String, hz: int) -> Dictionary:
 	skier.angular_velocity = setup.angular_velocity
 
 	var before_basis := skier.global_basis
-	skier._handle_landing()
+	if deliberate:
+		skier._handle_landing()
+	else:
+		skier._reseat_on_snow()
 	var touchdown_rotation := _basis_angle(before_basis, skier.global_basis)
 	if touchdown_rotation > TOUCHDOWN_SNAP_LIMIT:
-		failures.append("%s at %d Hz changed root orientation by %.3f degrees inside _handle_landing()" % [scenario, hz, rad_to_deg(touchdown_rotation)])
+		failures.append("%s at %d Hz changed root orientation by %.3f degrees at touchdown (deliberate=%s)" % [scenario, hz, rad_to_deg(touchdown_rotation), deliberate])
 	if skier.state != SkierController.State.GROUND:
 		failures.append("%s at %d Hz did not enter GROUND immediately" % [scenario, hz])
 	if skier.motion_mode != CharacterBody3D.MOTION_MODE_GROUNDED:
@@ -201,6 +211,136 @@ func _ground_target_from_touchdown(touchdown_basis: Basis, normal: Vector3) -> B
 
 func _basis_angle(a: Basis, b: Basis) -> float:
 	return a.orthonormalized().get_rotation_quaternion().angle_to(b.orthonormalized().get_rotation_quaternion())
+
+func _test_rotational_landing_releases_crouch() -> void:
+	# A 360-style landing carries high balance error; the crouch and wobble
+	# must still decay and release instead of holding indefinitely.
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3(0.0, -1.0, -9.0))
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.landing_context = {
+		"impact_speed": 3.0,
+		"impact_severity": 0.8,
+		"balance_error": 0.85,
+		"ski_alignment_error": 0.2,
+		"body_roll_error": 0.2,
+		"body_pitch_error": 0.2,
+		"rotation_error": 0.4,
+		"rotation_accumulated": Vector3(0.0, TAU, 0.0),
+		"rotation_residual": Vector3(0.0, 0.4, 0.0),
+		"lateral_velocity": 1.0,
+		"forward_velocity": 9.0,
+		"air_time": 0.9,
+		"surface_normal": Vector3.UP,
+		"outcome": LandingSolver.Outcome.CLEAN,
+		"active": true,
+		"deliberate": true,
+	}
+	skier.animation_controller.trigger(SkierAnimationController.AnimationEvent.LAND_HARD, 0.8, 1.0)
+	for _frame: int in 180:
+		skier._update_animation(1.0 / 60.0)
+	if not skier.animation_controller.is_landing_idle():
+		failures.append("Rotational landing held compression/wobble past 3 seconds instead of releasing the crouch")
+	if float(skier.animation_controller.debug_snapshot().get("landing_compression", 1.0)) > 0.05:
+		failures.append("Rotational landing remained compressed after the recovery window")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_spawn_reseat_seats_quietly() -> void:
+	# Post-spawn hover seating (never armed via _enter_air) must settle without
+	# playing a landing crouch; armed terrain hops keep their presentation.
+	var quiet := SkierController.new()
+	add_child(quiet)
+	quiet.set_physics_process(false)
+	quiet.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.3, 0.0)), Vector3(0.0, -0.5, -2.0))
+	quiet.state = SkierController.State.AIR
+	quiet.air_deliberate = false
+	quiet.air_time = 0.05
+	quiet.landing_feedback_armed = false
+	quiet.contact.grounded = true
+	quiet.contact.average_normal = Vector3.UP
+	quiet.velocity = Vector3(0.0, -0.5, -2.0)
+	quiet.angular_velocity = Vector3.ZERO
+	quiet._reseat_on_snow()
+	if quiet.state != SkierController.State.GROUND:
+		failures.append("Quiet spawn reseat did not reach GROUND")
+	elif not quiet.animation_controller.is_landing_idle():
+		failures.append("Spawn hover seating played a landing crouch instead of settling quietly")
+	remove_child(quiet)
+	quiet.queue_free()
+
+	var hop := SkierController.new()
+	add_child(hop)
+	hop.set_physics_process(false)
+	hop.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.6, 0.0)), Vector3(0.0, -2.0, -6.0))
+	hop.state = SkierController.State.AIR
+	hop.air_deliberate = false
+	hop.air_time = 0.3
+	hop.landing_feedback_armed = true
+	hop.contact.grounded = true
+	hop.contact.average_normal = Vector3.UP
+	hop.velocity = Vector3(0.0, -2.0, -6.0)
+	hop.angular_velocity = Vector3.ZERO
+	hop._reseat_on_snow()
+	if hop.state != SkierController.State.GROUND:
+		failures.append("Armed terrain-hop reseat did not reach GROUND")
+	elif hop.animation_controller.is_landing_idle():
+		failures.append("Armed terrain-hop reseat lost its landing presentation")
+	remove_child(hop)
+	hop.queue_free()
+
+func _test_touchdown_freezes_trick_snapshot() -> void:
+	# Display, scoring, and landing validity must share one touchdown snapshot:
+	# accumulation stops at contact and the captured rotation stays stable.
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3.ZERO)
+	skier.state = SkierController.State.AIR
+	skier.air_deliberate = true
+	skier.air_time = 0.8
+	skier.landing_feedback_armed = true
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.contact.last_normal = Vector3.UP
+	skier.global_basis = Basis.IDENTITY
+	skier.velocity = Vector3(0.0, -2.0, -10.0)
+	skier.angular_velocity = Vector3(0.0, 0.5, 0.0)
+	skier.trick.begin_air(false, TrickCommand.Kind.SPIN_RIGHT, true, Vector3.UP)
+	for _frame: int in 60:
+		skier.trick.update_air(Vector3(0.0, 6.0, 0.0), 1.0 / 60.0, null)
+	var touchdown_display := skier.trick.live_name()
+	var touchdown_accumulated: Vector3 = skier.trick.accumulated_rotation
+	if touchdown_accumulated.y < 5.0:
+		failures.append("Trick snapshot setup did not accumulate spin rotation")
+		remove_child(skier)
+		skier.queue_free()
+		return
+	skier._handle_landing()
+	if skier.state != SkierController.State.GROUND:
+		failures.append("Trick snapshot landing did not reach GROUND")
+		remove_child(skier)
+		skier.queue_free()
+		return
+	var captured: Vector3 = skier.landing_context.get("rotation_accumulated", Vector3.ZERO)
+	if captured.distance_to(touchdown_accumulated) > 0.001:
+		failures.append("Landing validity captured different rotation than the touchdown display")
+	for _frame: int in 30:
+		skier._update_ground(1.0 / 60.0)
+		skier._update_animation(1.0 / 60.0)
+	var settled: Vector3 = skier.landing_context.get("rotation_accumulated", Vector3.ZERO)
+	if settled.distance_to(touchdown_accumulated) > 0.001:
+		failures.append("Accumulated trick rotation kept changing after ground contact")
+	if skier.trick.active:
+		failures.append("Trick state stayed active after the landing was scored")
+	if touchdown_display.is_empty():
+		failures.append("Touchdown display showed no trick name for a near-360 spin")
+	remove_child(skier)
+	skier.queue_free()
 
 func _basis_valid(value: Basis) -> bool:
 	return (

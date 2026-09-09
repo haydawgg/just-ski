@@ -1,7 +1,7 @@
 class_name GrabPoseLayer
 extends RefCounted
 
-const CONTACT_ACQUIRE_CAP := 0.18
+const CONTACT_ACQUIRE_CAP := 0.14
 const CONTACT_MAINTAIN_CAP := 0.12
 const CONTACT_HOLD_WEIGHT := 0.8
 

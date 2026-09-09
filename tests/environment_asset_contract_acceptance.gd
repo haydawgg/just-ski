@@ -1,6 +1,7 @@
 extends Node
 
 const DEFAULT_CATALOG := preload("res://resources/environment/default_environment_asset_catalog.tres")
+const ParkLayout := preload("res://world/park_features/park_layout.gd")
 var failures: Array[String] = []
 
 @onready var resort: Node3D = $Resort
@@ -11,6 +12,7 @@ func _ready() -> void:
 	_validate_catalog()
 	_validate_feature_specs()
 	_validate_built_contracts()
+	_validate_bonk_assembly()
 	if failures.is_empty():
 		print("ENVIRONMENT_ASSET_PASS: production catalog metadata, scene selection, feature contracts, and collision affordances validated")
 		AudioManager.shutdown_audio()
@@ -87,3 +89,41 @@ func _validate_built_contracts() -> void:
 			failures.append("Physical feature %s has no matching collision geometry" % feature_name)
 		if float(feature.get_meta("scale_override", 0.0)) <= 0.0:
 			failures.append("Feature %s retained an invalid scale override" % feature_name)
+
+func _validate_bonk_assembly() -> void:
+	# The orange bonk's collider and visual mesh share one body transform, the
+	# snow cap rides the physical top, and the base seats into the slope so
+	# skis cannot slip through a visual/collision gap.
+	var parent := Node3D.new()
+	add_child(parent)
+	var bonk := ParkLayout.add_bonk(parent, "ContractBonk", 22.0, 76.0, 1.3, 0.42, Color("#ffc857"))
+	var body := bonk.get_node_or_null("BonkBody") as StaticBody3D
+	if body == null:
+		failures.append("Bonk assembly did not create its BonkBody collider")
+		parent.queue_free()
+		return
+	if int(body.collision_layer) != 4:
+		failures.append("BonkBody left the Features collision layer")
+	var shape_node := body.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	var mesh_instance := body.get_node_or_null("BonkMesh") as MeshInstance3D
+	var shape := shape_node.shape as CylinderShape3D if shape_node != null else null
+	var mesh := mesh_instance.mesh as CylinderMesh if mesh_instance != null else null
+	if shape == null or mesh == null:
+		failures.append("Bonk assembly lost its cylinder collider or visual mesh")
+	elif absf(shape.radius - mesh.top_radius) > 0.001 or absf(shape.radius - mesh.bottom_radius) > 0.001 or absf(shape.height - mesh.height) > 0.001:
+		failures.append("Bonk collider (r=%.3f h=%.3f) disagrees with its visual mesh (r=%.3f/%.3f h=%.3f)" % [shape.radius, shape.height, mesh.top_radius, mesh.bottom_radius, mesh.height])
+	var cap := body.get_node_or_null("SnowCap")
+	if cap == null:
+		for child: Node in body.get_children():
+			if child is MeshInstance3D and child != mesh_instance:
+				cap = child
+	if cap == null:
+		failures.append("Bonk snow cap is not attached to the collider body")
+	elif (cap as Node3D).position.distance_to(Vector3(0.0, 1.3 * 0.5 + 0.045, 0.0)) > 0.001:
+		failures.append("Bonk snow cap drifted off the physical top")
+	var snow := ParkLayout.snow_at(22.0, 76.0)
+	var normal := ParkLayout.snow_normal()
+	var base_point: Vector3 = body.global_transform * Vector3(0.0, -1.3 * 0.5, 0.0)
+	if (base_point - snow).dot(normal) > 0.01:
+		failures.append("Bonk base floats above the snow surface")
+	parent.queue_free()

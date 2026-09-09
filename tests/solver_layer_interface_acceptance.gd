@@ -9,6 +9,7 @@ func _ready() -> void:
 	_test_motion_interfaces()
 	_test_animation_interfaces()
 	_test_camera_interfaces()
+	_test_contact_and_extension_contracts()
 	if failures.is_empty():
 		print("SOLVER_LAYER_PASS: typed ground, air, rail, landing, crash, animation, framing, collision, and composition interfaces passed")
 		get_tree().quit(0)
@@ -211,3 +212,60 @@ func _test_camera_interfaces() -> void:
 		failures.append("Camera collision solver did not treat an unbound world as clear")
 	if collision.foreground_occluded(Vector3.ZERO, Vector3.FORWARD, 0.12):
 		failures.append("Camera collision solver reported foreground occlusion without a bound world")
+
+func _test_contact_and_extension_contracts() -> void:
+	# Grab awards require convincing hand-to-ski proximity: a 0.16 m reach must
+	# not acquire, a 0.10 m reach acquires, and a held grab tolerates 0.11 m
+	# hysteresis but releases at 0.13 m.
+	var grab := GrabPoseLayer.new()
+	var definition := GrabAnimationDefinition.new()
+	if GrabPoseLayer.CONTACT_ACQUIRE_CAP > 0.141:
+		failures.append("Grab acquire cap %.3f m still permits proximity awards" % GrabPoseLayer.CONTACT_ACQUIRE_CAP)
+	if grab.should_latch_contact(definition, 1.0, true, 0.9, 0.5, 0.08, false, 0.16):
+		failures.append("Grab latched at 0.16 m without convincing hand-to-ski contact")
+	if not grab.should_latch_contact(definition, 1.0, true, 0.9, 0.5, 0.08, false, 0.10):
+		failures.append("Grab refused a convincing 0.10 m hand-to-ski contact")
+	if not grab.should_latch_contact(definition, 1.0, true, 0.9, 0.5, 0.08, true, 0.11):
+		failures.append("Held grab dropped inside its 0.12 m maintenance envelope")
+	if grab.should_latch_contact(definition, 1.0, true, 0.9, 0.5, 0.08, true, 0.13):
+		failures.append("Held grab survived outside its maintenance envelope")
+	if grab.should_latch_contact(definition, 1.0, true, 0.9, 0.03, 0.08, false, 0.05):
+		failures.append("Grab latched before the minimum air time")
+	# Anticipation reach stays full without snow readings but restrains near
+	# the seat so rendered skis cannot punch through before touchdown.
+	var landing := LandingPoseLayer.new()
+	if absf(landing.air_extension_scale(2.0, 2.0, 0.54) - 1.0) > 0.001:
+		failures.append("Extension restraint altered the reach without snow readings")
+	if absf(landing.air_extension_scale(1.0, 1.0, 0.54) - 1.0) > 0.001:
+		failures.append("Extension restraint altered the reach far above the seat")
+	var near_scale := landing.air_extension_scale(0.64, 0.64, 0.54)
+	if near_scale < 0.25 or near_scale > 0.45:
+		failures.append("Extension restraint did not scale the reach at 0.10 m seat gap (%.3f)" % near_scale)
+	if absf(landing.air_extension_scale(0.5, 0.5, 0.54) - 0.15) > 0.001:
+		failures.append("Extension restraint did not hold its minimum at seat penetration")
+	var asymmetric := landing.air_extension_scale(2.0, 0.60, 0.54)
+	if asymmetric < 0.15 or asymmetric > 0.3:
+		failures.append("Extension restraint ignored the nearer ski probe (%.3f)" % asymmetric)
+	# Crossed boot targets must be separated to the minimum stance so the leg
+	# solve can never present an X-shaped ski configuration.
+	var crossed: Array = SkiConstrainedLegIK.separate_boot_targets(Vector3(0.2, 0.0, 0.0), Vector3(-0.2, 0.0, 0.0), Basis.IDENTITY, 0.16)
+	if float((crossed[1] as Vector3 - crossed[0] as Vector3).x) < 0.159:
+		failures.append("Boot stance separation did not restore the minimum ski stance")
+	var ordered: Array = SkiConstrainedLegIK.separate_boot_targets(Vector3(-0.3, 0.0, 0.0), Vector3(0.3, 0.0, 0.0), Basis.IDENTITY, 0.16)
+	if (ordered[0] as Vector3).distance_to(Vector3(-0.3, 0.0, 0.0)) > 0.001 or (ordered[1] as Vector3).distance_to(Vector3(0.3, 0.0, 0.0)) > 0.001:
+		failures.append("Boot stance separation moved an already valid stance")
+	# Contact spray must ramp toward demand instead of switching on/off in one
+	# frame, while still responding within a few physics ticks.
+	var first_step := SkiSnowVFX.smooth_emitter_ratio(0.0, 0.68, 1.0 / 60.0)
+	if first_step <= 0.04 or first_step >= 0.68:
+		failures.append("Emitter smoothing did not ramp spray onset (first step %.3f)" % first_step)
+	var settled := 0.0
+	for _frame: int in 120:
+		settled = SkiSnowVFX.smooth_emitter_ratio(settled, 0.68, 1.0 / 60.0)
+	if absf(settled - 0.68) > 0.01:
+		failures.append("Emitter smoothing did not converge to spray demand")
+	var released := 0.68
+	for _frame: int in 120:
+		released = SkiSnowVFX.smooth_emitter_ratio(released, 0.0, 1.0 / 60.0)
+	if released > 0.04:
+		failures.append("Emitter smoothing did not trail spray off after demand ended")

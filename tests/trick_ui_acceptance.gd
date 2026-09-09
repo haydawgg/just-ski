@@ -4,6 +4,7 @@ var failures: Array[String] = []
 
 func _ready() -> void:
 	_test_visualizer_contract()
+	_test_visualizer_does_not_duplicate_trick_readout()
 	_test_game_ui_teaching_surfaces()
 	_test_scoring_finish_contract()
 	await _test_pause_menu_actions()
@@ -42,6 +43,31 @@ func _test_visualizer_contract() -> void:
 	if visualizer.visible:
 		failures.append("Neutral trick input kept the full visualizer on screen")
 
+func _test_visualizer_does_not_duplicate_trick_readout() -> void:
+	# The center-top trick label owns the scored trick name and degrees. The
+	# lower-right teaching widget must show input gesture state, not a second
+	# copy of the scored readout.
+	var visualizer := FlickVisualizer.new()
+	add_child(visualizer)
+	visualizer.apply_snapshot({
+		"stick": Vector2(0.7, -0.7),
+		"kind": "SPIN_RIGHT",
+		"phase": "ROTATE",
+		"strength": 0.9,
+		"left_trigger": 0.0,
+		"right_trigger": 0.0,
+		"grab": "",
+		"trick_text": "Right 360",
+		"yaw_degrees": 360,
+		"flip_degrees": 0,
+	})
+	if "Right 360" in visualizer.title_label.text:
+		failures.append("Visualizer repeated the scored trick name from the trick label")
+	if "360" in visualizer.detail_label.text:
+		failures.append("Visualizer repeated scored rotation degrees from the trick label")
+	if "Spin Right" not in visualizer.title_label.text:
+		failures.append("Visualizer lost its input-gesture teaching title")
+	visualizer.queue_free()
 func _test_game_ui_teaching_surfaces() -> void:
 	var ui := GameUI.new()
 	add_child(ui)

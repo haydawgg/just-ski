@@ -129,9 +129,20 @@ The control onboarding, right-stick visualizer, and trick/landing callouts are i
 
 The project-wide control theme uses the pinned Inter 4.1 variable font and a restrained shared panel/button/focus treatment. HUD labels keep their local size and contrast overrides. Font provenance, checksum, and the bundled OFL license are recorded under `assets/ui/fonts/`.
 
-Snow VFX uses existing gameplay/contact signals to differentiate continuous ski spray, stronger skid/brake spray, landings, and bail scraping. Landing captures expose `vfx_mode="landing"`, `landing_spray_active`, and the configured emitter amount so the cool-gray spray can be reviewed against the snow surface. The summit shader's form/drift/luminance controls are profile-driven while its shadow-safe and GI-excluded restrictions remain explicit. Audio and rumble consume the same broad gameplay state but are separate systems.
+Snow VFX uses existing gameplay/contact signals to differentiate continuous ski spray, stronger skid/brake spray, landings, and bail scraping. Contact-spray density ramps toward demand each frame (`SkiSnowVFX.smooth_emitter_ratio`) instead of switching on/off in one tick, so spray fades in and trails off rather than popping. Landing captures expose `vfx_mode="landing"`, `landing_spray_active`, and the configured emitter amount so the cool-gray spray can be reviewed against the snow surface. The summit shader's form/drift/luminance controls are profile-driven while its shadow-safe and GI-excluded restrictions remain explicit. Audio and rumble consume the same broad gameplay state but are separate systems.
 
 `tests/environment_visual_quality_gate.ps1` clears and refreshes the canonical `res://.godot_user/captures/snow_depth_after` directory, requires every PNG and telemetry JSON, rejects capture errors, nonzero exits, timeouts, and renderer shutdown leaks, then runs `snow_depth_visual_metrics.tscn` against those fresh files. The metric checks the five fixed gameplay trajectory captures for average neutral-snow value separation and bounds the coverage of dark blue shadows. The canonical capture loop is `tests/visual_analysis_bundle.ps1`, which keeps its review bundle isolated while using the same capture contract. The scenario catalog, ROIs, masks, baseline compatibility rules, and review order are documented in [Visual evidence](VISUAL_EVIDENCE.md).
+
+The bail HUD notice follows the player's `BAIL` state through rest and get-up,
+then clears on recovery or respawn. It takes priority over transient notices;
+ordinary notices retain their two-second expiry. The crash recovery acceptance
+suite checks persistence, stage wording, late HUD binding, unrelated notices,
+and recovery/respawn cleanup.
+
+The center-top trick label is the single scored-trick readout. The lower-right
+Flick-It visualizer is an input-teaching widget: it shows the recognized
+gesture, phase, stick path, and trigger state with rotation arcs, never the
+scored trick name or degrees. The trick UI suite guards the separation.
 
 ## Gameplay clip output
 

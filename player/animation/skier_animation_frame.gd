@@ -132,8 +132,10 @@ var rotation_inertia_scale: float = 1.0
 var crash_reason: int = CrashContext.Reason.NONE
 var crash_stage: int = CrashContext.Stage.NONE
 var crash_elapsed: float = 0.0
-var crash_stage_elapsed: float = 0.0
-var crash_stage_progress: float = 0.0
+## Negative values mean an older presentation fixture supplied only total time.
+## Zero is a valid authoritative value on the first frame of each crash stage.
+var crash_stage_elapsed: float = -1.0
+var crash_stage_progress: float = -1.0
 var crash_impact_normal: Vector3 = Vector3.UP
 var crash_incoming_velocity: Vector3 = Vector3.ZERO
 var crash_current_velocity: Vector3 = Vector3.ZERO
@@ -269,8 +271,8 @@ func reset() -> void:
 	crash_reason = CrashContext.Reason.NONE
 	crash_stage = CrashContext.Stage.NONE
 	crash_elapsed = 0.0
-	crash_stage_elapsed = 0.0
-	crash_stage_progress = 0.0
+	crash_stage_elapsed = -1.0
+	crash_stage_progress = -1.0
 	crash_impact_normal = Vector3.UP
 	crash_incoming_velocity = Vector3.ZERO
 	crash_current_velocity = Vector3.ZERO

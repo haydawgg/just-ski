@@ -93,5 +93,23 @@ func readiness_targets(frame: SkierAnimationFrame, profile: SkierAnimationProfil
 func ready_for_values(valid: bool, anticipation: float, readiness: float, profile: SkierAnimationProfile) -> bool:
 	return valid and anticipation >= profile.ready_anticipation_threshold and readiness >= profile.ready_readiness_threshold
 
+## Restraint for airborne landing anticipation leg extension. The reach is
+## time-driven, but the rendered skis must not punch through the support
+## surface before the authoritative touchdown seats the body. Probe distances
+## at or above NO_HIT_DISTANCE mean no valid snow reading and leave the reach
+## untouched; near the seat the extension scales down to a held minimum.
+static func air_extension_scale(left_ground_distance: float, right_ground_distance: float, seat_distance: float) -> float:
+	const NO_HIT_DISTANCE := 1.5
+	const FULL_REACH_GAP := 0.3
+	const MIN_SCALE := 0.15
+	var gap := INF
+	if left_ground_distance < NO_HIT_DISTANCE:
+		gap = minf(gap, left_ground_distance - seat_distance)
+	if right_ground_distance < NO_HIT_DISTANCE:
+		gap = minf(gap, right_ground_distance - seat_distance)
+	if gap == INF:
+		return 1.0
+	return clampf(gap / FULL_REACH_GAP, MIN_SCALE, 1.0)
+
 func _finite_vector(value: Vector3) -> bool:
 	return value.is_finite()
