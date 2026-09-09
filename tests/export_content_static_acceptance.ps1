@@ -16,7 +16,6 @@ $preset = (Get-Content -Raw $presetPath) -replace "`r", ""
 if ($preset -notmatch '(?m)^export_filter="all_resources"\s*$') {
 	$failures.Add("Windows export must include the complete production resource graph.")
 }
-var_unused = $null
 $excludeMatch = [regex]::Match($preset, '(?m)^exclude_filter="([^"]*)"\s*$')
 if (-not $excludeMatch.Success) {
 	$failures.Add("Windows export is missing its development-resource exclude filter.")
@@ -24,7 +23,7 @@ if (-not $excludeMatch.Success) {
 else {
 	$exclude = $excludeMatch.Groups[1].Value
 	foreach ($requiredPattern in @("tests/*", "tools/*")) {
-		if ($exclude -notlike "*$requiredPattern*") {
+		if (-not $exclude.Contains($requiredPattern)) {
 			$failures.Add("Windows export does not exclude $requiredPattern")
 		}
 	}
