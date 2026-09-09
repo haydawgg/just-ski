@@ -134,12 +134,77 @@ jobs:
           path: ${{ runner.temp }}/summit-sessions-runtime-logs-${{ matrix.shard }}
           if-no-files-found: warn
 
+  export_pack:
+    name: export-pack-smoke
+    needs: prepare_runtime
+    if: ${{ needs.prepare_runtime.result == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pinned Godot
+        uses: ./.github/actions/setup-godot
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          archive-sha256: ${{ env.GODOT_ARCHIVE_SHA256 }}
+
+      - name: Restore project import state
+        uses: actions/cache@v4
+        with:
+          path: |
+            .godot/imported
+            .godot/global_script_class_cache.cfg
+            .godot/uid_cache.bin
+          key: windows-godot-${{ env.GODOT_VERSION }}-imported-v2-${{ hashFiles('project.godot', '**/*.gd', '**/*.tscn', '**/*.tres', '**/*.res', '**/*.svg', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.webp', '**/*.glb', '**/*.gltf', '**/*.obj', '**/*.mtl', '**/*.ogg', '**/*.wav') }}
+          restore-keys: |
+            windows-godot-${{ env.GODOT_VERSION }}-imported-v2-
+
+      - name: Export production PCK
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path builds\windows -Force | Out-Null
+          & $env:GODOT_PATH --headless --audio-driver Dummy --path $PWD --export-pack "Windows Desktop" builds\windows\SummitSessions.pck
+          if ($LASTEXITCODE -ne 0) {
+            throw "Godot production pack export failed with exit code $LASTEXITCODE"
+          }
+          $pack = Get-Item -LiteralPath builds\windows\SummitSessions.pck
+          if ($pack.Length -le 0) {
+            throw 'Exported production pack is empty.'
+          }
+          Write-Output ("EXPORT_PACK_BYTES={0}" -f $pack.Length)
+
+      - name: Smoke-test exported PCK
+        shell: pwsh
+        run: |
+          $userData = Join-Path $env:RUNNER_TEMP 'summit-sessions-export-pack-user'
+          $roaming = Join-Path $userData 'roaming'
+          $local = Join-Path $userData 'local'
+          New-Item -ItemType Directory -Path $roaming -Force | Out-Null
+          New-Item -ItemType Directory -Path $local -Force | Out-Null
+          $env:APPDATA = (Resolve-Path $roaming).Path
+          $env:LOCALAPPDATA = (Resolve-Path $local).Path
+          & $env:GODOT_PATH --headless --audio-driver Dummy --main-pack builds\windows\SummitSessions.pck --quit-after 120
+          if ($LASTEXITCODE -ne 0) {
+            throw "Exported production pack smoke test failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Upload export pack
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-production-pack
+          path: builds/windows/SummitSessions.pck
+          if-no-files-found: error
+
   quality:
     name: quality
     needs:
       - static
       - prepare_runtime
       - runtime
+      - export_pack
     if: ${{ always() }}
     runs-on: windows-2025
     timeout-minutes: 5
@@ -150,9 +215,10 @@ jobs:
           STATIC_RESULT: ${{ needs.static.result }}
           PREPARE_RESULT: ${{ needs.prepare_runtime.result }}
           RUNTIME_RESULT: ${{ needs.runtime.result }}
+          EXPORT_PACK_RESULT: ${{ needs.export_pack.result }}
         run: |
-          Write-Output "static=$env:STATIC_RESULT prepare-runtime=$env:PREPARE_RESULT runtime=$env:RUNTIME_RESULT"
-          if ($env:STATIC_RESULT -ne 'success' -or $env:PREPARE_RESULT -ne 'success' -or $env:RUNTIME_RESULT -ne 'success') {
-            throw 'One or more required static/runtime quality jobs did not pass.'
+          Write-Output "static=$env:STATIC_RESULT prepare-runtime=$env:PREPARE_RESULT runtime=$env:RUNTIME_RESULT export-pack=$env:EXPORT_PACK_RESULT"
+          if ($env:STATIC_RESULT -ne 'success' -or $env:PREPARE_RESULT -ne 'success' -or $env:RUNTIME_RESULT -ne 'success' -or $env:EXPORT_PACK_RESULT -ne 'success') {
+            throw 'One or more required static/runtime/export quality jobs did not pass.'
           }
-          Write-Output 'QUALITY_GATE_PASS: static checks and all five runtime shards passed.'
+          Write-Output 'QUALITY_GATE_PASS: static checks, production pack export, and all five runtime shards passed.'
