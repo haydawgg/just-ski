@@ -17,13 +17,16 @@ reset_to_frame(frame: SkierAnimationFrame)
 The animation controller may smooth, classify, and blend that data for presentation, but it must not change the gameplay transform, velocity, collision state, rail state, or scored trick state.
 
 Startup and respawn use `reset_to_frame` to clear pose/IK/secondary history and
-evaluate the initial pose without advancing animation time. Canonical joints,
-the visible body, and equipment attachments are synchronized before the player
-emits `respawn_applied` and the camera resets. Ordinary frames retain their
+evaluate the initial pose without advancing animation time. Before that evaluate,
+gameplay synchronously samples terrain/contact so the published reset pose is
+fresh-contact-aware while remaining in AIR. Canonical joints, the visible body,
+and equipment attachments are synchronized before the player emits
+`respawn_applied` and the camera resets. Ordinary frames retain their
 normal smoothing. Player and camera reset physics interpolation after a teleport.
 The camera runtime stability suite compares startup and post-crash reset body
 landmarks, ski/pole transforms, and camera framing before any movement, and
-checks that grab input/release state is cleared.
+checks that grab input/release state is cleared. Spawn settling does not add a
+separate AIR ski IK path; predicted-surface targeting remains a later phase.
 
 ## Rig architecture
 

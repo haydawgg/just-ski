@@ -59,6 +59,15 @@ func _test_motion_interfaces() -> void:
 	var landing_damping := air.angular_damping(0.0, PHYSICS_PROFILE.air_landing_window * 0.1, 1.0, true, PHYSICS_PROFILE)
 	if landing_damping <= open_damping:
 		failures.append("Air solver did not increase angular damping near landing")
+	var capped := air.limit_normal_approach(Vector3(0.0, -6.0, 0.0), Vector3.UP, PHYSICS_PROFILE.seat_approach_speed, PHYSICS_PROFILE.seat_approach_speed, 0.0, 1.0 / 60.0)
+	if capped.y < -PHYSICS_PROFILE.seat_approach_speed - 0.0001:
+		failures.append("Air solver did not enforce the seat approach-speed ceiling")
+	var slower := air.limit_normal_approach(Vector3(0.0, -0.4, 0.0), Vector3.UP, PHYSICS_PROFILE.seat_approach_speed, PHYSICS_PROFILE.seat_approach_speed, PHYSICS_PROFILE.spawn_settle_response, 1.0 / 60.0)
+	if slower.y < -0.4001:
+		failures.append("Air solver added extra into-surface pull below the desired approach speed")
+	var eased := air.limit_normal_approach(Vector3(0.0, -2.0, 0.0), Vector3.UP, PHYSICS_PROFILE.seat_approach_speed, 0.4, PHYSICS_PROFILE.spawn_settle_response, 1.0 / 60.0)
+	if eased.y <= -2.0 or eased.y > -0.4:
+		failures.append("Air solver did not ease an over-fast approach toward the desired seat speed")
 
 	var rail := RailMotionSolver.new()
 	var rail_step := rail.advance(4.0, 1.0, 1.0, 20.0, -2.0, 0.5, 0.1)

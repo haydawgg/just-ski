@@ -46,6 +46,10 @@ extends Resource
 @export var ground_attach_stiffness: float = 55.0
 @export var ground_attach_max_accel: float = 24.0
 @export var seat_approach_speed: float = 2.0
+## Spawn-settle easing toward the support surface. The hard ceiling remains
+## `seat_approach_speed`; this only shapes how quickly the approach speed
+## responds as remaining seat clearance shrinks.
+@export var spawn_settle_response: float = 8.0
 @export_range(0.0, 89.0) var maximum_ground_angle_degrees: float = 62.0
 
 func contact_probe_offsets() -> Array[Vector3]:

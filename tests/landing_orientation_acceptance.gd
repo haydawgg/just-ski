@@ -9,6 +9,10 @@ const RATE_TOLERANCE := 0.0001
 const BASIS_TOLERANCE := 0.001
 const CROSS_RATE_POSE_TOLERANCE := deg_to_rad(2.0)
 const CROSS_RATE_TIME_TOLERANCE := 0.05
+# Flat-floor spawn hover must stay inside probe reach (distance - origin height
+# = 1.10 m). ParkLayout.SPAWN_HOVER is 1.15 m along the slope normal, which is
+# below 1.10 m in world Y on the 18-degree face; a 1.15 m world-Y hover misses.
+const SPAWN_SETTLE_HOVER_Y := 0.85
 
 var failures: Array[String] = []
 var profile: SkiPhysicsProfile = SkiProfile
@@ -36,10 +40,12 @@ func _ready() -> void:
 	_test_rotational_landing_releases_crouch()
 	_test_spawn_reseat_seats_quietly()
 	_test_touchdown_freezes_trick_snapshot()
+	_test_spawn_settle_does_not_alter_pop_or_hops()
+	await _test_spawn_settle_window()
 
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("LANDING_ORIENTATION_PASS: bounded deliberate and terrain-hop landing orientation, residual rotation, slope, steering, and 30/60/120 Hz continuity passed")
+		print("LANDING_ORIENTATION_PASS: bounded deliberate and terrain-hop landing orientation, residual rotation, slope, steering, spawn settle, and 30/60/120 Hz continuity passed")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
@@ -57,6 +63,7 @@ func _run_case(scenario: String, hz: int, deliberate: bool = true) -> Dictionary
 	skier.air_deliberate = deliberate
 	skier.air_time = 0.8
 	skier.landing_feedback_armed = false
+	skier._spawn_settle_active = false
 	skier.contact.grounded = true
 	skier.contact.average_normal = normal
 	skier.contact.last_normal = normal
@@ -293,6 +300,35 @@ func _test_spawn_reseat_seats_quietly() -> void:
 	remove_child(hop)
 	hop.queue_free()
 
+	var spawn := SkierController.new()
+	add_child(spawn)
+	spawn.set_physics_process(false)
+	spawn.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.3, 0.0)), Vector3(0.0, -0.5, -2.0))
+	spawn.state = SkierController.State.AIR
+	spawn.air_deliberate = false
+	spawn.air_time = 0.5
+	spawn.landing_feedback_armed = false
+	spawn._spawn_settle_active = true
+	spawn.contact.grounded = true
+	spawn.contact.average_normal = Vector3.UP
+	spawn.velocity = Vector3(0.0, -0.5, -2.0)
+	spawn.angular_velocity = Vector3.ZERO
+	var spawn_landed := [false]
+	spawn.landed.connect(func(_result: Dictionary) -> void: spawn_landed[0] = true)
+	spawn._reseat_on_snow()
+	if spawn.state != SkierController.State.GROUND:
+		failures.append("Explicit spawn-settle reseat did not reach GROUND")
+	elif spawn._spawn_settle_active:
+		failures.append("Spawn settle stayed active after quiet reseat")
+	elif not spawn.animation_controller.is_landing_idle():
+		failures.append("Spawn settle emitted a landing crouch after min_air_time")
+	elif spawn_landed[0]:
+		failures.append("Spawn settle emitted the deliberate landing signal")
+	elif bool(spawn.landing_context.get("active", false)):
+		failures.append("Spawn settle left landing presentation context active")
+	remove_child(spawn)
+	spawn.queue_free()
+
 func _test_touchdown_freezes_trick_snapshot() -> void:
 	# Display, scoring, and landing validity must share one touchdown snapshot:
 	# accumulation stops at contact and the captured rotation stays stable.
@@ -341,6 +377,166 @@ func _test_touchdown_freezes_trick_snapshot() -> void:
 		failures.append("Touchdown display showed no trick name for a near-360 spin")
 	remove_child(skier)
 	skier.queue_free()
+
+func _test_spawn_settle_does_not_alter_pop_or_hops() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3.RIGHT * 8.0)
+	if skier._spawn_settle_active:
+		failures.append("Benchmark reset enabled spawn settle, which would change crest hops and charged pops")
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.contact.last_normal = Vector3.UP
+	var normal := Vector3.UP
+	var tangent := Vector3.RIGHT * 8.0
+	for approach_speed: float in [-1.4, 0.0, 2.0]:
+		skier.state = SkierController.State.GROUND
+		skier._spawn_settle_active = false
+		skier.velocity = tangent + normal * approach_speed
+		skier._pop(normal, 1.0)
+		if skier._spawn_settle_active:
+			failures.append("Charged pop left spawn settle active")
+		if absf(skier.velocity.dot(normal) - (skier.profile.pop_impulse + maxf(0.0, approach_speed))) > 0.001:
+			failures.append("Spawn-settle work changed charged pop impulse")
+		if skier.velocity.slide(normal).distance_to(tangent) > 0.001:
+			failures.append("Spawn-settle work changed charged pop tangential momentum")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_spawn_settle_window() -> void:
+	var floor_body := _make_box_body("SpawnSettleFloor", 1, Vector3(30.0, 0.5, 30.0), Vector3(0.0, -0.25, 0.0))
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_test_reset_contact_is_fresh(skier)
+	for hz: int in TEST_HZ:
+		_run_spawn_settle_descent(skier, hz)
+	_test_non_deliberate_air_is_not_spawn_settle(skier)
+	remove_child(skier)
+	skier.queue_free()
+	remove_child(floor_body)
+	floor_body.queue_free()
+
+func _test_reset_contact_is_fresh(skier: SkierController) -> void:
+	skier.respawn_at(Transform3D(Basis.IDENTITY, Vector3(0.0, 8.0, 0.0)))
+	var stale_distance := skier.contact.average_distance
+	var stale_hits := skier.contact.hit_points.size()
+	var published_state := [-1]
+	var published_left_distance := [-1.0]
+	var published_hits := [-1]
+	var published_spawn_settle := [false]
+	skier.respawn_applied.connect(func(_value: Transform3D) -> void:
+		published_state[0] = skier.state
+		published_left_distance[0] = skier.animation_frame.left_ground_distance
+		published_hits[0] = skier.contact.hit_points.size()
+		published_spawn_settle[0] = skier._spawn_settle_active
+	, CONNECT_ONE_SHOT)
+	var hover := Transform3D(Basis.IDENTITY, Vector3(0.0, SPAWN_SETTLE_HOVER_Y, 0.0))
+	skier.respawn_at(hover)
+	if skier.state != SkierController.State.AIR or published_state[0] != SkierController.State.AIR:
+		failures.append("Spawn reset forced gameplay out of AIR")
+	if not skier._spawn_settle_active or not published_spawn_settle[0]:
+		failures.append("respawn_at did not enable the spawn-settle window before publishing")
+	if skier.contact.hit_points.is_empty() or published_hits[0] <= 0:
+		failures.append("Synchronous reset contact stayed empty instead of sampling the support surface")
+	if is_equal_approx(skier.contact.average_distance, stale_distance) and skier.contact.hit_points.size() == stale_hits:
+		failures.append("Synchronous reset contact reused the stale high-air sample")
+	if absf(published_left_distance[0] - skier.contact.left_distance) > 0.0001:
+		failures.append("First published reset pose did not use the fresh contact sample")
+	var reset_pose := _visible_pose(skier)
+	skier._update_animation(1.0 / 120.0)
+	var first_step := _pose_distance(reset_pose, _visible_pose(skier))
+	if first_step > 0.03:
+		failures.append("Spawn reset pose jumped %.3f m on the first published frame" % first_step)
+
+func _run_spawn_settle_descent(skier: SkierController, hz: int) -> void:
+	var delta := 1.0 / float(hz)
+	skier.respawn_at(Transform3D(Basis.IDENTITY, Vector3(0.0, SPAWN_SETTLE_HOVER_Y, 0.0)))
+	if skier.state != SkierController.State.AIR:
+		failures.append("Spawn settle at %d Hz did not begin in AIR" % hz)
+		return
+	var landed_emitted := [false]
+	var on_landed := func(_result: Dictionary) -> void: landed_emitted[0] = true
+	skier.landed.connect(on_landed)
+	var previous_gap := INF
+	var frames := 0
+	var frame_limit := int(ceil(2.0 * float(hz)))
+	while skier.state == SkierController.State.AIR and frames < frame_limit:
+		skier._physics_process(delta)
+		frames += 1
+		if skier.state != SkierController.State.AIR:
+			break
+		if not skier._spawn_settle_active:
+			failures.append("Spawn settle at %d Hz cleared before quiet reseat" % hz)
+			break
+		var into := skier.velocity.dot(skier.contact.average_normal)
+		if into < -skier.profile.seat_approach_speed - 0.0001:
+			failures.append("Spawn settle at %d Hz exceeded seat_approach_speed (into=%.4f)" % [hz, into])
+			break
+		if skier.contact.hit_points.is_empty():
+			continue
+		var gap := skier._seat_clearance()
+		if previous_gap < INF and gap > previous_gap + 0.002:
+			failures.append("Spawn settle at %d Hz increased seat distance from %.3f to %.3f" % [hz, previous_gap, gap])
+			break
+		previous_gap = gap
+	if skier.landed.is_connected(on_landed):
+		skier.landed.disconnect(on_landed)
+	if skier.state != SkierController.State.GROUND:
+		failures.append("Spawn settle at %d Hz did not reach GROUND through quiet reseat" % hz)
+	elif skier._spawn_settle_active:
+		failures.append("Spawn settle at %d Hz stayed active after GROUND" % hz)
+	elif landed_emitted[0]:
+		failures.append("Spawn settle at %d Hz emitted a landing event" % hz)
+	elif skier.animation_controller._landing_active or skier.animation_controller._stomp_active:
+		failures.append("Spawn settle at %d Hz invoked landing crouch presentation" % hz)
+	elif bool(skier.landing_context.get("active", false)):
+		failures.append("Spawn settle at %d Hz left landing context active" % hz)
+
+func _test_non_deliberate_air_is_not_spawn_settle(skier: SkierController) -> void:
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 0.85, 0.0)), Vector3(0.0, -5.0, 0.0))
+	skier.air_deliberate = false
+	skier.landing_feedback_armed = true
+	if skier._spawn_settle_active:
+		failures.append("Non-deliberate AIR inferred spawn settle from air_deliberate == false")
+		return
+	skier._physics_process(1.0 / 60.0)
+	if skier.velocity.y > -5.0:
+		failures.append("Ordinary non-deliberate AIR was clamped by spawn settle (vy=%.3f)" % skier.velocity.y)
+
+func _visible_pose(skier: SkierController) -> Array[Vector3]:
+	var rig := skier.animation_controller
+	var result: Array[Vector3] = []
+	for point: Vector3 in rig.rig_adapter.landmarks().values():
+		result.append(skier.to_local(point))
+	for joint: Node3D in [rig.left_ski, rig.right_ski, rig.left_pole, rig.right_pole]:
+		result.append(skier.to_local(joint.global_position))
+		result.append(skier.to_local(joint.to_global(Vector3.FORWARD)))
+	return result
+
+func _pose_distance(first: Array[Vector3], second: Array[Vector3]) -> float:
+	var maximum := 0.0
+	for index: int in first.size():
+		maximum = maxf(maximum, first[index].distance_to(second[index]))
+	return maximum
+
+func _make_box_body(body_name: String, layer: int, size: Vector3, body_position: Vector3) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.name = body_name
+	body.collision_layer = layer
+	body.collision_mask = 0
+	var shape_node := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape_node.shape = box
+	body.add_child(shape_node)
+	body.position = body_position
+	add_child(body)
+	return body
 
 func _basis_valid(value: Basis) -> bool:
 	return (

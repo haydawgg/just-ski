@@ -98,9 +98,14 @@ deliberate landings. The landing orientation suite covers tilted reseating at
 30, 60, and 120 Hz; the reproduced 18.4-degree instantaneous correction is
 removed. Contact seating uses actual probe hits to establish validity, so a
 terrain hit at world position `(0, 0, 0)` is no longer mistaken for missing data.
-Unarmed post-spawn seating settles quietly without a landing presentation;
-armed terrain hops keep their landing absorption. The landing orientation suite
-guards both paths.
+Unarmed post-spawn seating uses an explicit `_spawn_settle_active` window enabled
+only by initial spawn/reset and `respawn_at()`. Reset samples terrain contact
+synchronously and publishes that pose before `respawn_applied`, but gameplay
+remains in AIR. While the window is active the root approaches the support
+surface with `seat_approach_speed` as the hard ceiling, then the existing quiet
+`_reseat_on_snow()` path enters GROUND without landing presentation. Terrain hops,
+crest transitions, and charged pops do not share this window. The landing
+orientation suite guards the spawn-settle lifecycle at 30, 60, and 120 Hz.
 
 ## Rails
 
