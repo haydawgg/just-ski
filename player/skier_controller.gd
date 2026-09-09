@@ -166,15 +166,18 @@ func _physics_process(delta: float) -> void:
 	_landing_prediction_cache_serial = -1
 	_landing_prediction_cache.clear()
 	_input_sampler.sample_into(input_frame)
-	if input_frame.respawn_pressed:
-		SessionManager.request_respawn()
-	if input_frame.marker_pressed and state == State.GROUND and contact.grounded:
-		SessionManager.set_marker(_marker_transform())
 	if recovery_frozen:
+		# Course recovery owns respawn/marker during the fade. Honoring those
+		# actions here can teleport mid-fade, save an out-of-bounds marker, or
+		# race the recovery spawn.
 		if scoring != null:
 			scoring.step(delta, 0.0)
 		telemetry_updated.emit(telemetry())
 		return
+	if input_frame.respawn_pressed:
+		SessionManager.request_respawn()
+	if input_frame.marker_pressed and state == State.GROUND and contact.grounded:
+		SessionManager.set_marker(_marker_transform())
 	var velocity_before_motion := velocity
 	var state_before_motion := state
 	last_collision_diagnostics.clear()
@@ -1525,6 +1528,8 @@ func telemetry() -> Dictionary:
 			"left_trigger": input_frame.left_trigger,
 			"right_trigger": input_frame.right_trigger,
 			"grab": TrickController.GRAB_NAMES[trick.grab_pose],
+			"grab_qualified": trick.grab_qualified,
+			"live_grab": trick.live_grab_name,
 			"style": TrickController.STYLE_NAMES[trick.style_pose],
 			"trick_text": trick.live_name() if trick != null else "",
 			"yaw_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.y)))) if trick != null else 0,

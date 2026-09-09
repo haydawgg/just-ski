@@ -149,7 +149,7 @@ func _on_player_telemetry(data: Dictionary) -> void:
 			_last_rotation_degrees,
 			maxf(float(flick.get("yaw_degrees", 0)), maxf(float(flick.get("flip_degrees", 0)), float(flick.get("cork_degrees", 0))))
 		)
-	var grab_active := str(flick.get("grab", "None")) != "None" and str(flick.get("grab", "")) != ""
+	var grab_active := bool(flick.get("grab_qualified", false)) or str(flick.get("live_grab", "")) != ""
 	if grab_active and not _last_grab_active:
 		record_event(&"grab", {"active": true})
 	_last_grab_active = grab_active

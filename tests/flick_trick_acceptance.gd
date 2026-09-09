@@ -15,6 +15,7 @@ func _ready() -> void:
 	_test_flip_air_management_requires_preload()
 	_test_contextual_trigger_grabs()
 	_test_grind_gestures()
+	_test_grind_off_axis_release_does_not_defer_takeoff()
 	_test_motion_driven_recognition_and_scoring()
 	_test_live_degrees_are_not_finalized()
 	if failures.is_empty():
@@ -359,6 +360,26 @@ func _test_grind_gestures() -> void:
 	command = interpreter.step(sample, FlickTrickInterpreter.Context.GRIND, 0.06)
 	if command.kind != TrickCommand.Kind.RAIL_POP:
 		failures.append("Down-to-up rail gesture did not pop off")
+
+func _test_grind_off_axis_release_does_not_defer_takeoff() -> void:
+	var interpreter := FlickTrickInterpreter.new()
+	var sample := TrickInputSample.new()
+	interpreter.step(sample, FlickTrickInterpreter.Context.GRIND, 0.11)
+	sample.right_stick = Vector2(0.0, 0.8)
+	interpreter.step(sample, FlickTrickInterpreter.Context.GRIND, 0.05)
+	sample.right_stick = Vector2.LEFT
+	var grind_command := interpreter.step(sample, FlickTrickInterpreter.Context.GRIND, 0.06)
+	if grind_command.kind != TrickCommand.Kind.RAIL_SLIDE_LEFT:
+		failures.append("Off-axis grind setup release did not resolve to a boardslide")
+	if grind_command.takeoff_rotation_committed or grind_command.rotation_impulse.length() > 0.0001 or grind_command.pop_strength > 0.0:
+		failures.append("Off-axis grind setup release kept a deferred takeoff impulse")
+	var snap := interpreter.snapshot()
+	if bool(snap.takeoff_rotation_committed) or (snap.pending_takeoff_impulse as Vector3).length() > 0.0001:
+		failures.append("Off-axis grind setup release retained interpreter takeoff commitment")
+	sample.right_stick = Vector2.ZERO
+	var air_command := interpreter.step(sample, FlickTrickInterpreter.Context.AIR, 0.02)
+	if air_command.rotation_impulse.length() > 0.0001 or air_command.takeoff_release_impulse.length() > 0.0001:
+		failures.append("Leaving a rail after an off-axis setup release applied a leftover takeoff impulse")
 
 func _test_motion_driven_recognition_and_scoring() -> void:
 	var tricks := TrickController.new()
