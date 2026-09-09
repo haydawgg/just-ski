@@ -37,16 +37,16 @@ func feature_specs() -> Array[Dictionary]:
 		{"kind": "gate", "name": "SummitStartGate", "x": 0.0, "z": 134.0, "width": 13.0, "color": Color("#55d6be")},
 		{"kind": "roller", "name": "SummitRollerA", "x": 0.0, "z": 128.0, "length": 5.0, "height": 0.42, "width": 10.0},
 		{"kind": "roller", "name": "SummitRollerB", "x": 0.0, "z": 120.0, "length": 5.5, "height": 0.5, "width": 10.0},
-		{"kind": "tabletop", "name": "SmallTable", "route": "air", "difficulty": "beginner", "x": -12.0, "z": 110.0, "speed": 14.0, "lip": 7.0, "width": 8.5, "pop": 0.72},
-		{"kind": "rail", "name": "SummitFlatBox", "route": "jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.BOX, "radius": 1.2, "friction": 1.15, "approach": 52.0, "drift_bias": -0.18, "points": [Vector3(12.0, 124.0, 0.22), Vector3(12.0, 112.0, 0.22)]},
-		{"kind": "rail", "name": "BeginnerTube", "route": "jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.PIPE, "radius": 1.0, "friction": 0.7, "approach": 48.0, "drift_bias": 0.14, "points": [Vector3(12.0, 106.0, 0.16), Vector3(12.0, 96.0, 0.16)]},
+		{"kind": "tabletop", "name": "SmallTable", "discipline": &"air", "difficulty": "beginner", "x": -12.0, "z": 110.0, "speed": 14.0, "lip": 7.0, "width": 8.5, "pop": 0.72},
+		{"kind": "rail", "name": "SummitFlatBox", "discipline": &"jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.BOX, "radius": 1.2, "friction": 1.15, "approach": 52.0, "drift_bias": -0.18, "points": [Vector3(12.0, 124.0, 0.22), Vector3(12.0, 112.0, 0.22)]},
+		{"kind": "rail", "name": "BeginnerTube", "discipline": &"jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.PIPE, "radius": 1.0, "friction": 0.7, "approach": 48.0, "drift_bias": 0.14, "points": [Vector3(12.0, 106.0, 0.16), Vector3(12.0, 96.0, 0.16)]},
 
 		# Upper park: three readable lanes.
 		{"kind": "side_hit", "name": "UpperLeftSideHit", "x": -22.0, "z": 96.0, "length": 9.0, "height": 1.25, "width": 7.0, "yaw": -18.0},
 		{"kind": "roller", "name": "UpperRoller", "x": -12.0, "z": 82.0, "length": 8.0, "height": 0.8, "width": 9.0},
 		{"kind": "berm", "name": "UpperBermLeft", "x": -1.0, "z": 98.0, "length": 14.0, "width": 6.0, "bank": 13.0, "yaw": -16.0},
 		{"kind": "berm", "name": "UpperBermRight", "x": 2.0, "z": 82.0, "length": 14.0, "width": 6.0, "bank": -13.0, "yaw": 16.0},
-		{"kind": "rail", "name": "DownRail", "route": "jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.RAIL, "radius": 0.82, "friction": 0.55, "approach": 42.0, "drift_bias": -0.22, "points": [Vector3(14.0, 90.0, 0.16), Vector3(14.0, 76.0, 0.16)]},
+		{"kind": "rail", "name": "DownRail", "discipline": &"jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.RAIL, "radius": 0.82, "friction": 0.55, "approach": 42.0, "drift_bias": -0.22, "points": [Vector3(14.0, 90.0, 0.16), Vector3(14.0, 76.0, 0.16)]},
 		{"kind": "bonk", "name": "UpperBonk", "x": 22.0, "z": 76.0, "height": 1.3, "radius": 0.42, "color": Color("#ffc857")},
 
 		# Mid park: jump, mogul, and technical jib choices.
@@ -180,6 +180,8 @@ static func validate_content_specs(features: Array[Dictionary], spots: Array[Par
 	var feature_names: Dictionary = {}
 	var spot_ids: Dictionary = {}
 	var valid_kinds := [&"tabletop", &"hip", &"roller", &"rail", &"berm", &"moguls", &"butter", &"side_hit", &"wallride", &"bonk", &"cannon", &"gate"]
+	var valid_routes := [&"safe", &"intermediate", &"expert"]
+	var valid_disciplines := [&"air", &"jib", &"flow", &"guide", &"terrain"]
 	for spot: ParkSpotSpec in spots:
 		if spot == null or spot.id == &"":
 			errors.append("Spot IDs must be non-empty")
@@ -191,6 +193,8 @@ static func validate_content_specs(features: Array[Dictionary], spots: Array[Par
 		var feature_id := StringName(feature.get("feature_id", &""))
 		var feature_name := str(feature.get("name", ""))
 		var kind := StringName(feature.get("kind", &""))
+		var route := StringName(feature.get("route", &""))
+		var discipline := StringName(feature.get("discipline", &""))
 		if feature_id == &"" or feature_ids.has(feature_id):
 			errors.append("Missing or duplicate feature ID: %s" % feature_id)
 		feature_ids[feature_id] = feature
@@ -199,6 +203,10 @@ static func validate_content_specs(features: Array[Dictionary], spots: Array[Par
 		feature_names[feature_name] = true
 		if kind not in valid_kinds:
 			errors.append("Invalid feature kind on %s: %s" % [feature_name, kind])
+		if route not in valid_routes:
+			errors.append("Invalid route tier on %s: %s" % [feature_name, route])
+		if discipline not in valid_disciplines:
+			errors.append("Invalid discipline on %s: %s" % [feature_name, discipline])
 		if not spot_ids.has(StringName(feature.get("spot_id", &""))):
 			errors.append("Invalid spot ID on %s" % feature_name)
 		if kind == &"rail" and (feature.get("points", []) as Array).size() < 2:
@@ -248,25 +256,41 @@ static func validate_challenge_specs(challenges: Array[ParkChallengeSpec], featu
 
 func _apply_content_semantics(spec: Dictionary) -> void:
 	var feature_name := str(spec.get("name", "ParkFeature"))
+	var kind := str(spec.get("kind", "feature"))
 	var placement := _content_placement_for(feature_name)
+	var discipline := StringName(spec.get("discipline", _discipline_for_kind(kind)))
 	spec["feature_id"] = StringName(feature_name.to_snake_case())
 	spec["spot_id"] = placement.spot_id
 	spec["route"] = placement.route
+	spec["discipline"] = discipline
 	spec["skill_floor"] = placement.skill_floor
 	spec["skill_ceiling"] = placement.skill_ceiling
 	spec["risk_level"] = placement.risk_level
 	spec["hero_feature"] = feature_name in ["SmallTable", "UpperLeftSideHit", "KinkRail", "HipTransfer", "Rainbow", "FinalCannon"]
 	spec["optional"] = placement.route == &"expert"
-	var tags: Array[StringName] = [StringName(spec.get("kind", "feature")), placement.route]
+	var tags: Array[StringName] = [StringName(kind), discipline, placement.route]
 	if bool(spec["hero_feature"]):
 		tags.append(&"hero")
-	if str(spec.get("kind", "")) in ["berm", "roller", "butter", "gate"]:
+	if kind in ["berm", "roller", "butter", "gate"]:
 		tags.append(&"recovery")
 	if placement.route == &"safe":
 		tags.append(&"bypass")
 	elif placement.route == &"expert":
 		tags.append(&"transfer")
 	spec["intent_tags"] = tags
+
+static func _discipline_for_kind(kind: String) -> StringName:
+	match kind:
+		"tabletop", "hip", "side_hit", "cannon":
+			return &"air"
+		"rail", "wallride", "bonk":
+			return &"jib"
+		"roller", "berm", "moguls", "butter":
+			return &"flow"
+		"gate":
+			return &"guide"
+		_:
+			return &"terrain"
 
 func _content_placement_for(feature_name: String) -> Dictionary:
 	var spot_by_feature := {
