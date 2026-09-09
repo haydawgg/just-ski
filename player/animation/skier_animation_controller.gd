@@ -1293,7 +1293,7 @@ func _landing_ready_for_values(valid: bool, anticipation: float, readiness: floa
 func _update_landing_animation(frame: SkierAnimationFrame, delta: float) -> void:
 	var alignment_target := 0.0
 	var readiness_target := 0.0
-	if frame.locomotion_state == STATE_AIR and frame.predicted_landing_time >= 0.0:
+	if frame.locomotion_state == STATE_AIR and frame.predicted_landing_time >= 0.0 and not frame.spawn_settle_active:
 		var alignment_start := maxf(profile.landing_alignment_start, 0.05)
 		var readiness_start := maxf(profile.landing_readiness_start, 0.05)
 		if frame.predicted_landing_time <= alignment_start:

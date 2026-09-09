@@ -170,6 +170,34 @@ if ($landingHandler.Success) {
 	Reject-Match $landingHandler.Groups["body"].Value 'global_basis\s*=\s*Basis\.looking_at' "Successful landing handler cannot replace the physical orientation in one frame."
 }
 
+Require-Match $profile 'seat_approach_speed:\s*float\s*=\s*2\.0' "Seat approach speed must remain the spawn-settle hard ceiling."
+Require-Match $profile 'spawn_settle_response:\s*float\s*=\s*8\.0' "Spawn settle may add only a response/easing parameter beside the approach-speed ceiling."
+Require-Match $airMotion 'func limit_normal_approach\(' "Air motion solver must own spawn-settle approach-speed policy."
+Require-Match $controller 'var _spawn_settle_active\s*:=\s*false' "Spawn settle must be an explicit controller window."
+Require-Match $controller 'func _begin_spawn_settle\(' "Initial spawn and respawn_at must enable spawn settle through one seam."
+Require-Match $controller 'func _end_spawn_settle\(' "Quiet reseat and GROUND-to-AIR entries must clear spawn settle explicitly."
+Require-Match $controller 'func _sample_reset_contact\(' "Presentation reset must sample fresh terrain contact."
+Require-Match $controller '_sample_reset_contact\(\)' "Reset presentation must publish from a synchronous contact sample."
+Require-Match $controller '_begin_spawn_settle\(\)' "Spawn settle must be enabled on the reset/respawn path."
+Require-Match $controller '_apply_spawn_settle_approach\(' "Spawn descent must ease toward the support surface while still in AIR."
+Reject-Match $controller '_spawn_settle_active\s*=\s*not\s+air_deliberate|_spawn_settle_active\s*=\s*air_deliberate\s*==\s*false' "Spawn settle cannot be inferred from air_deliberate."
+$resetPresentation = [regex]::Match($controller, 'func _reset_presentation\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($resetPresentation.Success) {
+	Require-Match $resetPresentation.Groups["body"].Value '_sample_reset_contact\(\)' "Reset presentation must sample contact before publishing the pose."
+	Require-Match $resetPresentation.Groups["body"].Value '_update_animation\(0\.0,\s*true\)' "Reset presentation must publish the sampled pose before respawn observers."
+	Reject-Match $resetPresentation.Groups["body"].Value 'state\s*=\s*State\.GROUND' "Reset presentation cannot force gameplay into GROUND."
+}
+$reseatHandler = [regex]::Match($controller, 'func _reseat_on_snow\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($reseatHandler.Success) {
+	Require-Match $reseatHandler.Groups["body"].Value 'spawn_settle' "Quiet reseat must distinguish spawn settle from armed terrain hops."
+	Require-Match $reseatHandler.Groups["body"].Value '_end_spawn_settle\(\)' "Successful spawn reseat must clear the spawn-settle window immediately."
+	Reject-Match $reseatHandler.Groups["body"].Value 'landed\.emit' "Spawn reseat cannot emit the deliberate landing signal."
+}
+$groundUpdate = [regex]::Match($controller, 'func _update_ground\(delta: float\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($groundUpdate.Success) {
+	Reject-Match $groundUpdate.Groups["body"].Value '_apply_spawn_settle_approach|_spawn_settle_active' "Ground suspension and spawn descent cannot apply competing normal pulls in GROUND."
+}
+
 Require-Match $resort '@export var physics_profile:\s*SkiPhysicsProfile' "Resort must own the active physics profile."
 Require-Match $resort 'ParkCourseBuilderModule\.build\(self,\s*course_profile,\s*physics_profile(?:,\s*environment_asset_catalog)?\)' "Course construction must receive the active profile."
 Require-Match $resort 'player\.profile\s*=\s*physics_profile' "The skier must receive the same active profile."

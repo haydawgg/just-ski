@@ -101,6 +101,9 @@ var landing_orientation_duration := 0.0
 # so its yaw/tilt split remains relative to the receiving surface normal.
 var landing_residual_angular_velocity := Vector3.ZERO
 var air_deliberate := false
+# Explicit spawn/reset window. Never inferred from air_deliberate == false;
+# terrain hops and crest transitions also use non-deliberate AIR.
+var _spawn_settle_active := false
 var air_takeoff_type := SkierAnimationFrame.TakeoffType.NONE
 var air_takeoff_charge := 0.0
 var air_takeoff_upward_speed := 0.0
@@ -129,7 +132,9 @@ func _ready() -> void:
 	collision_mask = 1 | 4
 	floor_max_angle = deg_to_rad(profile.maximum_ground_angle_degrees)
 	floor_snap_length = 0.42
-	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
+	# Initial spawn is airborne settle, not grounded skiing. Floor snap must
+	# not compete with the spawn approach onto the support surface.
+	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	_build_body()
 	_build_snow_vfx()
 	_build_contact_shadow()
@@ -143,6 +148,7 @@ func _ready() -> void:
 	flick = FlickTrickInterpreter.new(flick_profile)
 	trick_command = TrickCommand.new()
 	SessionManager.respawn_requested.connect(respawn_at)
+	_begin_spawn_settle()
 	_reset_presentation()
 	state_changed.emit("Air")
 
@@ -209,6 +215,10 @@ func _physics_process(delta: float) -> void:
 		if state == State.GROUND and contact.grounded:
 			_suppress_into_slope_bounce()
 			_update_wall_pin(delta)
+		elif state == State.AIR and _spawn_settle_active:
+			# Hard ceiling after collision. Ground suspension never shares this
+			# tick: spawn settle is AIR-only and clears on quiet reseat.
+			_suppress_into_slope_bounce()
 	scoring.step(delta, velocity.length())
 	_update_animation(delta)
 	snow_vfx.update_from_existing_contact(delta)
@@ -507,13 +517,14 @@ func _update_air(delta: float) -> void:
 	_try_capture_rail()
 	if state != State.AIR:
 		return
-	var seat_clearance := (global_position - contact.average_hit_position).dot(contact.average_normal) - profile.ground_attach_height
+	_apply_spawn_settle_approach(delta)
+	var seat_clearance := _seat_clearance()
 	if contact.grounded and not contact.hit_points.is_empty() and seat_clearance <= TOUCHDOWN_SEAT_MARGIN and air_time >= profile.min_air_time and velocity.dot(contact.average_normal) < 1.5:
 		if air_deliberate:
 			_handle_landing()
 		else:
-			# Terrain hop (crest, deck lip, spawn seat): rejoin the snow without
-			# presenting a jump landing.
+			# Terrain hop (crest, deck lip) and spawn settle both rejoin through
+			# quiet reseat; spawn settle additionally suppresses landing feedback.
 			_reseat_on_snow()
 
 func _resolve_air_snow_collision(incoming_velocity: Vector3) -> void:
@@ -717,6 +728,8 @@ func _enter_air(
 ) -> void:
 	if state == State.AIR:
 		return
+	# Pops, crest hops, and other GROUND→AIR entries are not spawn settle.
+	_end_spawn_settle()
 	air_reference_up = takeoff_normal.normalized() if takeoff_normal.length_squared() > 0.01 else contact.last_normal.normalized()
 	if air_reference_up.length_squared() < 0.01:
 		air_reference_up = Vector3.UP
@@ -743,6 +756,7 @@ func _enter_air(
 	state_changed.emit("Air")
 
 func _handle_landing() -> void:
+	_end_spawn_settle()
 	var transition := _landing_transition.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
 	var result: Dictionary = transition.data
 	_apply_trick_rotation_to_landing(result)
@@ -886,15 +900,19 @@ func _update_wall_pin(delta: float) -> void:
 func _reseat_on_snow() -> void:
 	var transition := _landing_transition.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
 	var result: Dictionary = transition.data
+	var spawn_settle := _spawn_settle_active
+	_end_spawn_settle()
 	_capture_landing_context(result, false)
+	if spawn_settle:
+		landing_context["active"] = false
 	var was_armed := landing_feedback_armed
 	landing_feedback_armed = false
 	if int(result.get("outcome", LandingSolver.Outcome.BAIL)) == LandingSolver.Outcome.BAIL:
 		enter_crash(_landing_crash_context(result))
 		return
-	# Post-spawn seating (never armed via _enter_air) must not play a landing
-	# crouch as the hover settles onto the snow; terrain hops stay expressive.
-	if was_armed or float(landing_context.get("impact_severity", 0.0)) >= 0.05 or air_time >= 0.1:
+	# Spawn settle must not play a landing crouch. Armed terrain hops keep
+	# their absorption; unarmed short hops stay quiet via the existing gates.
+	if not spawn_settle and (was_armed or float(landing_context.get("impact_severity", 0.0)) >= 0.05 or air_time >= 0.1):
 		animation_controller.trigger(
 			SkierAnimationController.AnimationEvent.LAND_CLEAN,
 			float(landing_context.get("impact_severity", 0.12)),
@@ -952,6 +970,7 @@ func _try_capture_rail() -> void:
 			1.0
 		)
 		_close_inbound_air_trick()
+		_end_spawn_settle()
 		state = State.GRIND
 		rail_pose = 0
 		motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
@@ -1034,6 +1053,7 @@ func _slip_off_rail() -> void:
 func enter_crash(context: CrashContext) -> bool:
 	if state == State.BAIL or context == null or not context.active:
 		return false
+	_end_spawn_settle()
 	_clear_landing_orientation_settle()
 	active_rail = null
 	rail_balance = 0.0
@@ -1252,6 +1272,7 @@ func respawn_at(value: Transform3D, _reason: StringName = SessionManager.RESPAWN
 	_clear_locomotion_channels()
 	state = State.AIR
 	air_deliberate = false
+	_begin_spawn_settle()
 	air_takeoff_type = SkierAnimationFrame.TakeoffType.NONE
 	air_takeoff_charge = 0.0
 	air_takeoff_upward_speed = 0.0
@@ -1307,11 +1328,50 @@ func _reset_presentation() -> void:
 	# run. Teleports must also discard the previous location's prediction/cache.
 	_landing_prediction_cache_serial = -1
 	_landing_prediction_cache.clear()
+	_sample_reset_contact()
 	animation_frame.reset()
 	_update_animation(0.0, true)
 	if snow_vfx != null:
 		snow_vfx.clear_transient_effects()
 	reset_physics_interpolation()
+
+func _sample_reset_contact() -> void:
+	if not is_inside_tree() or profile == null:
+		return
+	force_update_transform()
+	contact.sample(
+		self,
+		profile.ground_probe_distance,
+		profile.ground_probe_reach,
+		profile.contact_probe_offsets(),
+		profile.ground_probe_origin_height
+	)
+	contact.merge_capsule_floor(is_on_floor(), get_floor_normal(), profile.maximum_ground_angle_degrees)
+
+func _begin_spawn_settle() -> void:
+	_spawn_settle_active = true
+
+func _end_spawn_settle() -> void:
+	_spawn_settle_active = false
+
+func _seat_clearance() -> float:
+	return (global_position - contact.average_hit_position).dot(contact.average_normal) - profile.ground_attach_height
+
+func _apply_spawn_settle_approach(delta: float) -> void:
+	if not _spawn_settle_active or state != State.AIR:
+		return
+	if contact.hit_points.is_empty():
+		return
+	var gap := _seat_clearance()
+	var desired := 0.0 if gap <= 0.0 else minf(profile.seat_approach_speed, gap * maxf(profile.spawn_settle_response, 0.0))
+	velocity = _air_motion_solver.limit_normal_approach(
+		velocity,
+		contact.average_normal,
+		profile.seat_approach_speed,
+		desired,
+		profile.spawn_settle_response,
+		delta
+	)
 
 func set_recovery_frozen(value: bool) -> void:
 	"""Freeze simulation/input while CourseRecovery performs its fade/respawn lifecycle."""
@@ -1358,6 +1418,7 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	global_transform = value
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	state = State.AIR
+	_end_spawn_settle()
 	contact = SkiContactSolver.new()
 	_clear_locomotion_channels()
 	rail_balance_input = 0.0
@@ -1498,6 +1559,7 @@ func telemetry() -> Dictionary:
 		"predicted_landing_time": predicted_landing_time,
 		"predicted_landing_valid": predicted_landing_valid,
 		"landing_feedback_armed": landing_feedback_armed,
+		"spawn_settle_active": _spawn_settle_active,
 		"landing_control_multiplier": landing_control_multiplier,
 		"landing": {
 			"impact_speed": float(landing_context.get("impact_speed", 0.0)),
@@ -1788,6 +1850,7 @@ func _update_animation(delta: float, reset_pose: bool = false) -> void:
 	animation_frame.landing_surface_normal = landing_context.get("surface_normal", contact.average_normal) as Vector3
 	animation_frame.landing_outcome = int(landing_context.get("outcome", 0))
 	animation_frame.landing_event_active = bool(landing_context.get("active", false))
+	animation_frame.spawn_settle_active = _spawn_settle_active
 	animation_frame.grab_pose = trick.grab_pose
 	animation_frame.style_pose = trick.style_pose
 	animation_frame.style_amount = trick_command.style_amount
@@ -1867,7 +1930,7 @@ func _update_animation(delta: float, reset_pose: bool = false) -> void:
 	var upright_warning := 1.0 - smoothstep(profile.recoverable_upright_dot, profile.sketchy_upright_dot, upright_dot)
 	var angular_ratio := angular_velocity.length() / maxf(profile.maximum_angular_speed, 0.01)
 	var angular_warning := smoothstep(profile.bail_angular_ratio * 0.55, profile.bail_angular_ratio, angular_ratio)
-	animation_frame.pre_bail_weight = clampf(maxf(upright_warning, angular_warning) * landing_release, 0.0, 1.0) if state == State.AIR else 0.0
+	animation_frame.pre_bail_weight = clampf(maxf(upright_warning, angular_warning) * landing_release, 0.0, 1.0) if state == State.AIR and not _spawn_settle_active else 0.0
 	var balance_side := signf(angular_velocity.z)
 	if absf(balance_side) < 0.05:
 		balance_side = signf(velocity.dot(global_basis.x))

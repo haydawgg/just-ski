@@ -2,10 +2,6 @@
 
 This file tracks concrete, actionable bugs and missing functionality. Resolved items, validation plans, tuning notes, art direction, and future production work belong in the relevant project docs instead.
 
-## Startup and reset
-
-- **Spawn-to-snow settling can still look abrupt.** The initial airborne hover transitions into skiing shortly after spawn. Unarmed post-spawn seating no longer plays a landing crouch, and pose/IK/camera state is primed before the first frame, but the root still seats onto the support surface as the hover falls.
-
 ## Animation, physics, and bail recovery
 
 - **Grounded tumble choreography still needs a human visual pass.** Bail entry clears locomotion channels, grounded crashes keep a damped tumble with stage-dependent snow alignment, FALL/REST keep minimum secondary motion, and recovery returns through one rate-limited transition with a seeded ground settle. Automated coverage asserts the lifecycle, momentum, and continuity bounds; whether the fall reads convincingly is a presentation judgment.
