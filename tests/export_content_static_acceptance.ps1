@@ -12,37 +12,25 @@ if (-not (Test-Path -LiteralPath $presetPath -PathType Leaf)) {
 	exit 1
 }
 
-$preset = Get-Content -Raw $presetPath
-if ($preset -notmatch '(?m)^export_filter="scenes"\s*$') {
-	$failures.Add("Windows export must use selected production scenes, not every project resource.")
+$preset = (Get-Content -Raw $presetPath) -replace "`r", ""
+if ($preset -notmatch '(?m)^export_filter="all_resources"\s*$') {
+	$failures.Add("Windows export must include the complete production resource graph.")
 }
-foreach ($root in @("res://world/resort.tscn", "res://world/sunset_resort.tscn")) {
-	if ($preset -notmatch [regex]::Escape($root)) {
-		$failures.Add("Windows export is missing production root: $root")
-	}
+var_unused = $null
+$excludeMatch = [regex]::Match($preset, '(?m)^exclude_filter="([^"]*)"\s*$')
+if (-not $excludeMatch.Success) {
+	$failures.Add("Windows export is missing its development-resource exclude filter.")
 }
-if ($preset -match 'res://tests/' -or $preset -match 'res://tools/') {
-	$failures.Add("Windows export preset explicitly includes a development/test resource.")
-}
-
-# Selected-scene exports follow normal preload/resource dependencies. String-only
-# runtime loads are not guaranteed to enter that graph, so flag production code
-# that introduces them for explicit review. Test/tool code is intentionally out
-# of the shipping graph and is excluded from this scan.
-$productionRoots = @("autoload", "audio", "gameplay", "player", "resources", "shaders", "ui", "util", "world")
-$stringLoadPattern = '(?<!pre)load\s*\(\s*["'']res://'
-foreach ($relativeRoot in $productionRoots) {
-	$root = Join-Path $RepoRoot $relativeRoot
-	if (-not (Test-Path -LiteralPath $root -PathType Container)) {
-		continue
-	}
-	foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.gd) {
-		$text = Get-Content -Raw -LiteralPath $file.FullName
-		if ($text -match $stringLoadPattern -or $text -match 'ResourceLoader\.load\s*\(\s*["'']res://') {
-			$relative = $file.FullName.Substring($RepoRoot.Length).TrimStart([char]92, [char]47)
-			$failures.Add("String-only production resource load requires export review: $relative")
+else {
+	$exclude = $excludeMatch.Groups[1].Value
+	foreach ($requiredPattern in @("tests/*", "tools/*")) {
+		if ($exclude -notlike "*$requiredPattern*") {
+			$failures.Add("Windows export does not exclude $requiredPattern")
 		}
 	}
+}
+if ($preset -match '(?m)^export_filter="scenes"\s*$') {
+	$failures.Add("Selected-scene export is unsafe for this project because global class_name dependencies are not all scene dependencies.")
 }
 
 if ($failures.Count -gt 0) {
@@ -50,4 +38,4 @@ if ($failures.Count -gt 0) {
 	exit 1
 }
 
-Write-Output "PASS: Windows export roots are production-only and no string-only production resource loads were found."
+Write-Output "PASS: Windows export includes production resources while excluding tests and tools."
