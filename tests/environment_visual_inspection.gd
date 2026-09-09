@@ -4,6 +4,7 @@ const OUTPUT_DIRECTORY := "res://.godot_user/captures/snow_depth_after"
 const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 const OutputPathGuard := preload("res://util/output_path_guard.gd")
 const VisualEvidence := preload("res://tests/visual_evidence.gd")
+const MOTION_BEHAVIORS := ["carve", "straight", "landing"]
 
 const CAPTURE_FILENAMES: Array[String] = [
 	"gameplay_carve.png",
@@ -34,9 +35,24 @@ var visual_preset := "default"
 var visual_render_scale := 1.0
 var visual_environment := "daytime"
 var visual_seed := 0
+var capture_motion := false
+var motion_behavior := "carve"
+var motion_duration_seconds := 10.0
+var motion_frame_limit := 600
+var motion_capture_targets: Array[int] = []
+var motion_capture_cursor := 0
+var motion_scenario_id := ""
+var motion_samples: Array[Dictionary] = []
+var motion_landing_events: Array[Dictionary] = []
+var capture_recovery := false
+var recovery_scenario_id := "environment.recovery.oob"
+var recovery_triggered := false
+var recovery_capture_finished := false
+var recovery_events: Array[Dictionary] = []
 
 func _ready() -> void:
 	_parse_visual_arguments()
+	_configure_capture_mode()
 	var evidence_directory := evidence_root if not evidence_root.is_empty() else output_directory
 	if not evidence_root.is_empty():
 		output_directory = evidence_root.path_join("compat")
@@ -56,8 +72,17 @@ func _ready() -> void:
 			"render_scale": visual_render_scale,
 			"seed": visual_seed,
 			"renderer": "Forward Plus",
+			"capture_mode": "recovery" if capture_recovery else ("motion" if capture_motion else "canonical"),
+			"motion_behavior": motion_behavior if capture_motion else "",
+			"motion_duration_s": motion_duration_seconds if capture_motion else 0.0,
 		},
 	})
+	if capture_motion:
+		motion_scenario_id = "environment.motion.%s" % motion_behavior
+		evidence.register_scenario(motion_scenario_id, {"capture_mode": "motion", "behavior": motion_behavior})
+	elif capture_recovery:
+		evidence.register_scenario(recovery_scenario_id, {"capture_mode": "recovery", "phase": "oob"})
+	_apply_visual_environment()
 	get_viewport().scaling_3d_scale = visual_render_scale
 	if RuntimeEnvironment.is_headless():
 		capture_failed = true
@@ -67,6 +92,11 @@ func _ready() -> void:
 	var skier := get_node_or_null("Resort/Skier") as SkierController
 	if skier != null:
 		skier.landed.connect(_on_gameplay_landed)
+	var course_recovery := get_node_or_null("Resort/CourseRecovery")
+	if course_recovery != null:
+		course_recovery.connect("recovery_started", Callable(self, "_on_recovery_started"))
+		course_recovery.connect("recovery_respawned", Callable(self, "_on_recovery_respawned"))
+		course_recovery.connect("recovery_completed", Callable(self, "_on_recovery_completed"))
 
 func _parse_visual_arguments() -> void:
 	for argument: String in OS.get_cmdline_user_args():
@@ -88,6 +118,49 @@ func _parse_visual_arguments() -> void:
 			var seed_text := argument.trim_prefix("--visual-seed=")
 			if seed_text.is_valid_int():
 				visual_seed = int(seed_text)
+		elif argument == "--capture-motion":
+			capture_motion = true
+		elif argument == "--capture-recovery":
+			capture_recovery = true
+		elif argument.begins_with("--motion-behavior="):
+			motion_behavior = argument.trim_prefix("--motion-behavior=").to_lower()
+		elif argument.begins_with("--motion-duration="):
+			motion_duration_seconds = OutputPathGuard.parse_finite_float(argument.trim_prefix("--motion-duration="), 10.0, 1.0, 30.0)
+
+func _configure_capture_mode() -> void:
+	if not MOTION_BEHAVIORS.has(motion_behavior):
+		motion_behavior = "carve"
+	if capture_motion and capture_recovery:
+		# Keep the two evidence contracts independently reviewable. A motion run
+		# wins when both flags are supplied, while the recovery run remains an
+		# explicit separate invocation in the PowerShell bundle driver.
+		capture_recovery = false
+	if capture_motion:
+		var capture_rate := fixed_fps if fixed_fps > 0 else Engine.physics_ticks_per_second
+		motion_frame_limit = maxi(1, int(round(motion_duration_seconds * float(capture_rate))))
+		motion_capture_targets = [
+			0,
+			int(round(float(motion_frame_limit - 1) * 0.2)),
+			int(round(float(motion_frame_limit - 1) * 0.4)),
+			int(round(float(motion_frame_limit - 1) * 0.6)),
+			int(round(float(motion_frame_limit - 1) * 0.8)),
+			motion_frame_limit - 1,
+		]
+
+func _apply_visual_environment() -> void:
+	var preset := 0
+	match visual_environment:
+		"golden":
+			preset = 1
+		"sunset":
+			preset = 2
+		_:
+			preset = 0
+	if int(GameSettings.active.get("environment_preset", 0)) == preset:
+		return
+	GameSettings.begin_edit()
+	GameSettings.set_pending("environment_preset", preset)
+	GameSettings.apply_pending()
 
 func _process(delta: float) -> void:
 	if frame_count > 90:
@@ -96,6 +169,12 @@ func _process(delta: float) -> void:
 
 func _physics_process(_delta: float) -> void:
 	frame_count += 1
+	if capture_motion:
+		_step_motion_capture()
+		return
+	if capture_recovery:
+		_step_recovery_capture()
+		return
 	if frame_count == 150:
 		Input.action_press("steer_right", 0.82)
 	if frame_count == 260:
@@ -135,6 +214,178 @@ func _physics_process(_delta: float) -> void:
 			capture_failed = true
 			push_error("ENVIRONMENT_VISUAL_CAPTURE_FAIL: %d required captures are missing" % missing_count)
 		_finish(1 if capture_failed or first_contact_failed else 0)
+
+func _step_motion_capture() -> void:
+	var motion_frame := frame_count - 1
+	_apply_motion_inputs(motion_frame)
+	_record_motion_sample(motion_frame)
+	if motion_capture_cursor < motion_capture_targets.size() and motion_frame == motion_capture_targets[motion_capture_cursor]:
+		var capture_slot := motion_capture_cursor
+		motion_capture_cursor += 1
+		call_deferred("_capture_motion_frame", motion_frame, capture_slot)
+	if motion_frame >= motion_frame_limit - 1:
+		call_deferred("_finish_motion_capture")
+
+func _apply_motion_inputs(motion_frame: int) -> void:
+	if motion_behavior == "straight":
+		return
+	if motion_frame == 75:
+		Input.action_press("steer_right", 0.82)
+	if motion_frame == 190:
+		Input.action_release("steer_right")
+		Input.action_press("steer_left", 1.0)
+	if motion_frame == 285:
+		Input.action_release("steer_left")
+	if motion_behavior == "landing":
+		if motion_frame == 365:
+			Input.action_press("steer_right", 1.0)
+			Input.action_press("brake", 0.88)
+		if motion_frame == 410:
+			Input.action_release("steer_right")
+			Input.action_release("brake")
+			Input.action_press("jump")
+		if motion_frame == 465:
+			Input.action_release("jump")
+
+func _record_motion_sample(motion_frame: int) -> void:
+	var skier := get_node_or_null("Resort/Skier") as SkierController
+	if skier == null:
+		capture_failed = true
+		return
+	var camera := get_node_or_null("Resort/CameraRig") as Node3D
+	var vfx := skier.get_node_or_null("SkiSnowVFX") as SkiSnowVFX
+	var snapshot := skier.animation_controller.debug_snapshot() if skier.animation_controller != null else {}
+	var payload := {
+		"frame_index": motion_frame,
+		"time_s": snappedf(float(motion_frame) / maxf(float(fixed_fps if fixed_fps > 0 else Engine.physics_ticks_per_second), 1.0), 0.001),
+		"behavior": motion_behavior,
+		"state": _state_name(skier.state),
+		"root_position_m": _vector3_array(skier.global_position),
+		"velocity_mps": _vector3_array(skier.velocity),
+		"grounded": skier.contact.grounded,
+		"contact_normal": _vector3_array(skier.contact.average_normal),
+		"skid_amount": skier.skid_amount,
+		"carve_ratio": skier.current_carve_ratio,
+		"edge_amount": skier.edge_amount,
+		"landing_compression": snapshot.get("landing_compression", 0.0),
+		"camera_position_m": _vector3_array(camera.global_position) if camera != null else _vector3_array(Vector3.ZERO),
+		"camera_forward": _vector3_array(-camera.global_transform.basis.z.normalized()) if camera != null else _vector3_array(Vector3.FORWARD),
+	}
+	if vfx != null:
+		payload["vfx"] = vfx.debug_snapshot()
+	motion_samples.append(payload)
+	if evidence != null:
+		evidence.record_sample(motion_scenario_id, payload)
+
+func _capture_motion_frame(motion_frame: int, capture_slot: int) -> void:
+	if _finish_started or RuntimeEnvironment.is_headless():
+		capture_failed = true
+		return
+	RenderingServer.force_draw(true)
+	var viewport_texture := get_viewport().get_texture()
+	var image := viewport_texture.get_image() if viewport_texture != null else null
+	if image == null or image.is_empty():
+		capture_failed = true
+		return
+	image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
+	var filename := "motion_%02d_f%04d.png" % [capture_slot, motion_frame]
+	var metadata := {
+		"artifact_filename": filename,
+		"frame_index": motion_frame,
+		"time_s": snappedf(float(motion_frame) / maxf(float(fixed_fps if fixed_fps > 0 else Engine.physics_ticks_per_second), 1.0), 0.001),
+		"capture_kind": "motion_frame",
+		"behavior": motion_behavior,
+		"view": "gameplay",
+	}
+	if evidence == null or evidence.capture_image(motion_scenario_id, "motion_frame_%02d" % capture_slot, image, metadata).is_empty():
+		capture_failed = true
+
+func _finish_motion_capture() -> void:
+	if _finish_started:
+		return
+	Input.action_release("steer_right")
+	Input.action_release("steer_left")
+	Input.action_release("brake")
+	Input.action_release("jump")
+	var payload := {
+		"schema_version": "visual-evidence-v1",
+		"scenario_id": motion_scenario_id,
+		"capture_kind": "fixed_physics_motion_sweep",
+		"behavior": motion_behavior,
+		"duration_s": motion_duration_seconds,
+		"fixed_fps": fixed_fps if fixed_fps > 0 else Engine.physics_ticks_per_second,
+		"sample_count": motion_samples.size(),
+		"landing_events": motion_landing_events,
+	}
+	if evidence == null or evidence.write_json_artifact(motion_scenario_id, "motion", "motion_trace.json", payload, {"sample_count": motion_samples.size(), "behavior": motion_behavior}).is_empty():
+		capture_failed = true
+	_finish(1 if capture_failed else 0)
+
+func _step_recovery_capture() -> void:
+	var skier := get_node_or_null("Resort/Skier") as SkierController
+	if skier != null and not recovery_triggered and frame_count == 90:
+		recovery_triggered = true
+		skier.velocity = Vector3.ZERO
+		skier.global_position = Vector3(100.0, 2.0, 0.0)
+	if frame_count > 360 and not recovery_capture_finished:
+		capture_failed = true
+		push_error("ENVIRONMENT_RECOVERY_CAPTURE_FAIL: recovery lifecycle did not complete")
+		_finish(1)
+
+func _on_recovery_started(reason: String) -> void:
+	recovery_events.append({"phase": "started", "reason": reason, "frame_index": frame_count})
+	call_deferred("_capture_recovery_phase", "started", reason)
+
+func _on_recovery_respawned(reason: String, _spawn_transform: Transform3D) -> void:
+	recovery_events.append({"phase": "respawned", "reason": reason, "frame_index": frame_count})
+	call_deferred("_capture_recovery_phase", "respawned", reason)
+
+func _on_recovery_completed(reason: String, _spawn_transform: Transform3D) -> void:
+	recovery_events.append({"phase": "completed", "reason": reason, "frame_index": frame_count})
+	call_deferred("_capture_recovery_phase", "completed", reason)
+
+func _capture_recovery_phase(phase: String, reason: String) -> void:
+	if _finish_started or RuntimeEnvironment.is_headless():
+		capture_failed = true
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await _wait_for_capture_render_frame()
+	var skier := get_node_or_null("Resort/Skier") as SkierController
+	var ui := get_node_or_null("Resort/GameUI") as GameUI
+	var camera := get_node_or_null("Resort/CameraRig") as Node3D
+	var overlay_alpha := float(ui.recovery_overlay.color.a) if ui != null and ui.recovery_overlay != null else 0.0
+	var payload := {
+		"phase": phase,
+		"reason": reason,
+		"frame_index": frame_count,
+		"time_s": snappedf(float(frame_count) / maxf(float(fixed_fps if fixed_fps > 0 else Engine.physics_ticks_per_second), 1.0), 0.001),
+		"overlay_visible": ui != null and ui.recovery_overlay != null and ui.recovery_overlay.visible,
+		"overlay_alpha": overlay_alpha,
+		"root_position_m": _vector3_array(skier.global_position) if skier != null else _vector3_array(Vector3.ZERO),
+		"velocity_mps": _vector3_array(skier.velocity) if skier != null else _vector3_array(Vector3.ZERO),
+		"camera_position_m": _vector3_array(camera.global_position) if camera != null else _vector3_array(Vector3.ZERO),
+	}
+	if evidence != null:
+		evidence.record_sample(recovery_scenario_id, payload)
+		var filename := "recovery_%s.png" % phase
+		var viewport_texture := get_viewport().get_texture()
+		var image := viewport_texture.get_image() if viewport_texture != null else null
+		if image == null or image.is_empty():
+			capture_failed = true
+		else:
+			image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
+			var metadata := {"artifact_filename": filename, "phase": phase, "reason": reason, "frame_index": frame_count, "capture_kind": "recovery_phase", "view": "gameplay"}
+			if evidence.capture_image(recovery_scenario_id, "raw_%s" % phase, image, metadata).is_empty():
+				capture_failed = true
+	else:
+		capture_failed = true
+	if phase == "completed":
+		var trace := {"schema_version": "visual-evidence-v1", "scenario_id": recovery_scenario_id, "capture_kind": "course_recovery_lifecycle", "events": recovery_events}
+		if evidence == null or evidence.write_json_artifact(recovery_scenario_id, "recovery", "recovery_trace.json", trace).is_empty():
+			capture_failed = true
+		recovery_capture_finished = true
+		_finish(1 if capture_failed else 0)
 
 func _capture_gameplay_frame(filename: String) -> bool:
 	if _finish_started or RuntimeEnvironment.is_headless():
@@ -234,6 +485,11 @@ func _capture_gameplay_frame(filename: String) -> bool:
 	return capture_ok
 
 func _on_gameplay_landed(result: Dictionary) -> void:
+	if capture_motion:
+		motion_landing_events.append({"frame_index": frame_count, "outcome": result.get("outcome", "unknown"), "impact_severity": result.get("impact_severity", 0.0)})
+		return
+	if capture_recovery:
+		return
 	# Capture the first grounded compression frame, then keep two recovery samples
 	# so the stomp/compression handoff is reviewable.
 	print("ENVIRONMENT_LANDING_CAPTURE outcome=%s severity=%.3f impact=%.3f" % [

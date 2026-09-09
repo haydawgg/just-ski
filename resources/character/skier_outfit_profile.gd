@@ -3,6 +3,9 @@ extends Resource
 
 @export_group("Clothing")
 @export var jacket_color := Color("#e2644f")
+@export var jacket_panel_color := Color("#d87955")
+@export var jacket_trim_color := Color("#f0b43b")
+@export var jacket_detail_color := Color("#263b46")
 @export var pants_color := Color("#132b3d")
 @export var skin_color := Color("#b9795b")
 @export var glove_color := Color("#081521")

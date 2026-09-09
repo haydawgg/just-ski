@@ -402,7 +402,7 @@ def baseline_paths(repo_root: Path, suite: str, baseline_id: str) -> tuple[Path,
     return directory / f"{stem}.png", directory / f"{stem}.json"
 
 
-def validate_baseline_metadata(repo_root: Path, manifest: dict[str, Any]) -> list[str]:
+def validate_baseline_metadata(repo_root: Path, manifest: dict[str, Any], require_present: bool = False) -> list[str]:
     errors: list[str] = []
     checked: set[tuple[str, str]] = set()
     for scenario in manifest.get("scenarios", []):
@@ -416,6 +416,8 @@ def validate_baseline_metadata(repo_root: Path, manifest: dict[str, Any]) -> lis
         checked.add(key)
         image_path, metadata_path = baseline_paths(repo_root, suite, str(baseline_id))
         if not image_path.exists() and not metadata_path.exists():
+            if require_present:
+                errors.append(f"declared baseline is missing: {suite}/{baseline_id}")
             continue
         if image_path.exists() != metadata_path.exists():
             errors.append(f"baseline pair is incomplete: {suite}/{baseline_id}")
@@ -569,16 +571,23 @@ def build_contact_sheets(bundle: Path, manifest: dict[str, Any]) -> None:
         if artifact.get("role") == "analysis" and artifact.get("format") == "png"
     }
     for artifact in manifest.get("artifacts", []):
-        if artifact.get("role") != "raw" or artifact.get("format") != "png":
+        role = str(artifact.get("role", ""))
+        is_motion_frame = role.startswith("motion_frame_")
+        is_recovery_phase = role.startswith("raw_")
+        if (artifact.get("role") != "raw" and not is_motion_frame and not is_recovery_phase) or artifact.get("format") != "png":
             continue
         # Contact sheets are the first Codex review surface. Prefer the clean
         # analysis frame when an adapter supplied one, while retaining the raw
         # user-visible capture as a separate artifact in the report.
-        display_artifact = analysis_by_scenario.get(str(artifact.get("scenario_instance_id")), artifact)
+        display_artifact = artifact if is_motion_frame or is_recovery_phase else analysis_by_scenario.get(str(artifact.get("scenario_instance_id")), artifact)
         suite_manifest = str(artifact.get("suite_manifest", ""))
         suite = suite_manifest.split("/")[1] if suite_manifest.startswith("suites/") and len(suite_manifest.split("/")) > 1 else "all"
         if suite == "all":
             suite = str(artifact.get("scenario_id", "all")).split(".")[0]
+        if is_motion_frame:
+            suite = "motion_%s_%s" % (safe_name(str(artifact.get("scenario_id", "unknown"))), safe_name(str(artifact.get("variant", "unknown"))))
+        elif is_recovery_phase:
+            suite = "recovery_%s_%s" % (safe_name(str(artifact.get("scenario_id", "unknown"))), safe_name(str(artifact.get("variant", "unknown"))))
         scenario = scenario_by_id.get(str(artifact.get("scenario_instance_id")), {})
         state = str(scenario.get("state", artifact.get("context", {}).get("state", "unknown")))
         view = str(scenario.get("view", artifact.get("context", {}).get("view", "unknown")))
@@ -804,6 +813,7 @@ def write_report(bundle: Path, manifest: dict[str, Any], comparisons: list[dict[
 
 def validate_manifest(bundle: Path, manifest: dict[str, Any], catalog: dict[str, Any] | None = None) -> list[str]:
     errors: list[str] = []
+    telemetry_payloads: dict[str, dict[str, Any]] = {}
     required = ["schema_version", "run", "suites", "scenarios", "artifacts", "checks", "review_items", "status"]
     errors.extend(f"root manifest missing {key}" for key in required if key not in manifest)
     if manifest.get("schema_version") != SCHEMA_VERSION:
@@ -862,6 +872,8 @@ def validate_manifest(bundle: Path, manifest: dict[str, Any], catalog: dict[str,
                 payload = json.load(handle)
             if not isinstance(payload, dict):
                 errors.append(f"telemetry must be a JSON object: {telemetry.get('path', '')}")
+            else:
+                telemetry_payloads[str(telemetry.get("scenario_instance_id", telemetry.get("scenario_id", "")))] = payload
         except (OSError, ValueError, json.JSONDecodeError) as error:
             errors.append(f"telemetry cannot be decoded: {telemetry.get('path', '')}: {error}")
     for check in manifest.get("checks", []):
@@ -879,6 +891,28 @@ def validate_manifest(bundle: Path, manifest: dict[str, Any], catalog: dict[str,
         for role in required_roles:
             if str(role) not in available_roles:
                 errors.append(f"scenario {instance_id} is missing required artifact role: {role}")
+        semantic_checks = {str(check) for check in definition.get("semantic_checks", [])} if isinstance(definition, dict) else set()
+        telemetry_payload = telemetry_payloads.get(instance_id, {})
+        samples = telemetry_payload.get("samples", []) if isinstance(telemetry_payload, dict) else []
+        if "finite_telemetry" in semantic_checks:
+            def finite_value(value: Any) -> bool:
+                if isinstance(value, float):
+                    return math.isfinite(value)
+                if isinstance(value, dict):
+                    return all(finite_value(child) for child in value.values())
+                if isinstance(value, list):
+                    return all(finite_value(child) for child in value)
+                return True
+            if not isinstance(samples, list) or not finite_value(samples):
+                errors.append(f"scenario {instance_id} contains non-finite telemetry")
+        if "monotonic_time" in semantic_checks:
+            times = [float(row["time_s"]) for row in samples if isinstance(row, dict) and isinstance(row.get("time_s"), (int, float))]
+            if len(times) != len(samples) or any(later < earlier for earlier, later in zip(times, times[1:])):
+                errors.append(f"scenario {instance_id} telemetry time is not monotonic")
+        recovery_phases = {str(row.get("phase")) for row in samples if isinstance(row, dict)} if isinstance(samples, list) else set()
+        for required_phase, check_name in [("started", "recovery_started"), ("respawned", "recovery_respawned"), ("completed", "recovery_completed")]:
+            if check_name in semantic_checks and required_phase not in recovery_phases:
+                errors.append(f"scenario {instance_id} is missing recovery phase: {required_phase}")
     def walk(value: Any, key: str = "") -> None:
         if isinstance(value, dict):
             for child_key, child_value in value.items():
@@ -911,7 +945,7 @@ def build(args: argparse.Namespace) -> int:
     comparisons = compare_baselines(repo_root, bundle, manifest)
     manifest["comparisons"] = comparisons
     manifest["generated_at_utc"] = datetime.now(timezone.utc).isoformat()
-    structural_errors.extend(validate_baseline_metadata(repo_root, manifest))
+    structural_errors.extend(validate_baseline_metadata(repo_root, manifest, require_present=True))
     structural_errors.extend(enrich_artifacts(bundle, manifest))
     manifest["status"] = determine_status(manifest, comparisons, structural_errors)
     manifest["errors"] = sorted(set([*manifest.get("errors", []), *structural_errors]))
@@ -948,6 +982,8 @@ def validate(args: argparse.Namespace) -> int:
     catalog = load_catalog(Path(args.repo_root).resolve()) if args.repo_root else None
     errors = validate_catalog(catalog) if catalog is not None else []
     errors.extend(validate_manifest(bundle, manifest, catalog))
+    if args.repo_root:
+        errors.extend(validate_baseline_metadata(Path(args.repo_root).resolve(), manifest, require_present=True))
     if errors:
         for error in errors:
             print(f"VISUAL_EVIDENCE_SCHEMA_FAIL: {error}")

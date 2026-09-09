@@ -424,11 +424,6 @@ func _capture_audit_frame(label: String) -> bool:
 		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: viewport image was empty for %s" % label)
 		return false
 	image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
-	var error := image.save_png(output_directory.path_join(label))
-	if error != OK:
-		capture_failed = true
-		push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: could not save %s (%s)" % [label, error_string(error)])
-		return false
 	if evidence != null:
 		var scenario_id := _audit_scenario_id(label)
 		var audit_artifact := evidence.capture_image(scenario_id, "raw", image, {
@@ -445,6 +440,12 @@ func _capture_audit_frame(label: String) -> bool:
 			return false
 		if not _audit_scenario_ids.has(scenario_id):
 			_audit_scenario_ids.append(scenario_id)
+	else:
+		var error := image.save_png(output_directory.path_join(label))
+		if error != OK:
+			capture_failed = true
+			push_error("ANIMATION_PRESENTATION_AUDIT_FAIL: could not save %s (%s)" % [label, error_string(error)])
+			return false
 	capture_count += 1
 	return true
 
@@ -804,11 +805,6 @@ func _capture_review_frame(index: int) -> bool:
 	image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
 	var label: String = GRAB_SHOWCASE_REVIEW_LABELS[index] if grab_showcase_mode else REVIEW_LABELS[index] if index < REVIEW_LABELS.size() else "pose"
 	var filename := "audit_timeline_%02d_%s.png" % [index + 1, label] if presentation_audit_mode else "character_%02d_%s.png" % [index + 1, label] if presentation_capture else "grab_%02d_%s.png" % [index + 1, label] if grab_showcase_mode else "silhouette_%02d.png" % (index + 1)
-	var error := image.save_png(output_directory.path_join(filename))
-	if error != OK:
-		capture_failed = true
-		push_error("SILHOUETTE_INSPECTION_FAIL: could not save %s (%s)" % [filename, error_string(error)])
-		return false
 	if evidence != null:
 		var scenario_id := _timeline_scenario_id(label)
 		var sample_time := REVIEW_TIMES[index] if not grab_showcase_mode and index < REVIEW_TIMES.size() else GRAB_SHOWCASE_REVIEW_TIMES[index] if grab_showcase_mode and index < GRAB_SHOWCASE_REVIEW_TIMES.size() else elapsed
@@ -835,6 +831,12 @@ func _capture_review_frame(index: int) -> bool:
 			"production_skeleton": rig != null,
 			"finite_transforms": skier != null and skier.global_position.is_finite() and skier.global_rotation.is_finite(),
 		})
+	else:
+		var error := image.save_png(output_directory.path_join(filename))
+		if error != OK:
+			capture_failed = true
+			push_error("SILHOUETTE_INSPECTION_FAIL: could not save %s (%s)" % [filename, error_string(error)])
+			return false
 	capture_count += 1
 	return true
 

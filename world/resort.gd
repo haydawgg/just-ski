@@ -444,6 +444,7 @@ func _add_tree_clusters() -> void:
 		Vector4(-43.0, -57.0, 0.78, 31.0), Vector4(-48.0, -64.0, 1.28, -26.0), Vector4(-41.5, -72.0, 1.04, 12.0),
 		Vector4(44.0, -91.0, 0.86, -35.0), Vector4(51.0, -99.0, 1.2, 17.0), Vector4(43.0, -107.0, 0.96, 38.0), Vector4(48.0, -114.0, 0.72, -8.0),
 		Vector4(-44.0, -130.0, 1.22, 25.0), Vector4(-51.0, -138.0, 0.9, -17.0), Vector4(-42.0, -145.0, 1.05, 6.0),
+		Vector4(45.0, -157.0, 0.92, -24.0), Vector4(-48.0, -164.0, 1.08, 18.0), Vector4(47.0, -173.0, 0.82, 36.0), Vector4(-45.0, -181.0, 0.96, -9.0),
 	]
 	var jitter := RandomNumberGenerator.new()
 	jitter.seed = 3817
@@ -479,7 +480,7 @@ func _add_batched_tree(position: Vector3, scale_multiplier: float, yaw_degrees: 
 	root.add_child(collision_root)
 	add_child(root)
 	_configure_environment_collisions(collision_root, definition.asset_class, "park_tree")
-	tree_batch.add_tree(root.transform)
+	tree_batch.add_tree(root.transform, variant)
 	return true
 
 func _add_distant_terrain_skirt() -> void:
