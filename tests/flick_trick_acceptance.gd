@@ -18,6 +18,7 @@ func _ready() -> void:
 	_test_grind_off_axis_release_does_not_defer_takeoff()
 	_test_motion_driven_recognition_and_scoring()
 	_test_live_degrees_are_not_finalized()
+	await _test_pre_rail_spin_is_not_credited_after_grind()
 	if failures.is_empty():
 		print("FLICK_PASS: continuous takeoff intent, held air management, grabs, scoring, and rails passed")
 		get_tree().quit(0)
@@ -462,3 +463,75 @@ func _test_live_degrees_are_not_finalized() -> void:
 	if landed_text[0] != "Left 180":
 		failures.append("Contact result did not use the finalized scored trick: %s" % landed_text[0])
 	tricks.queue_free()
+
+func _test_pre_rail_spin_is_not_credited_after_grind() -> void:
+	var path := Curve3D.new()
+	path.add_point(Vector3(-2.0, 2.0, 0.0))
+	path.add_point(Vector3(8.0, 2.0, 0.0))
+	var rail := GrindRail3D.new()
+	rail.name = "InboundAirRail"
+	rail.path = path
+	add_child(rail)
+	var skier := SkierController.new()
+	skier.set_physics_process(false)
+	add_child(skier)
+	await get_tree().physics_frame
+	var landed_names: Array[String] = []
+	skier.trick.trick_landed.connect(func(text: String, _points: int, _quality: float, _outcome: int) -> void:
+		landed_names.append(text)
+	)
+	var sample_offset := rail.path_length * 0.25
+	skier.global_position = rail.sample_world(sample_offset)
+	skier.velocity = rail.tangent_at(sample_offset) * 12.0
+	skier.state = SkierController.State.AIR
+	var spin_command := TrickCommand.new()
+	spin_command.kind = TrickCommand.Kind.SPIN_LEFT
+	spin_command.committed = true
+	skier.trick.begin_air(false, TrickCommand.Kind.SPIN_LEFT)
+	skier.trick.update_air(Vector3(0.0, -TAU, 0.0), 1.0, spin_command)
+	if "Left" not in skier.trick.live_name() or skier.trick.accumulated_rotation.length() < 1.0:
+		failures.append("Inbound air fixture did not accumulate a scored spin before rail capture")
+	skier._try_capture_rail()
+	if skier.state != SkierController.State.GRIND or skier.active_rail != rail:
+		failures.append("Inbound air did not capture the rail")
+	else:
+		if skier.trick.accumulated_rotation.length() > 0.001 or skier.trick.had_trick_intent:
+			failures.append("Rail capture retained inbound air rotation or trick intent")
+		if "360" in skier.trick.live_name() or "Left" in skier.trick.live_name():
+			failures.append("HUD still showed pre-rail spin after rail capture: %s" % skier.trick.live_name())
+		if not landed_names.is_empty():
+			failures.append("Rail capture scored inbound air instead of closing it: %s" % str(landed_names))
+		skier.trick.update_grind(0.25)
+		skier._exit_rail(false)
+		if skier.state != SkierController.State.AIR:
+			failures.append("Rail exit did not start a fresh outbound air")
+		if skier.trick.accumulated_rotation.length() > 0.001:
+			failures.append("Outbound air inherited pre-rail accumulated rotation")
+		if "360" in skier.trick.live_name() or "Left" in skier.trick.live_name():
+			failures.append("HUD attributed pre-rail spin to post-rail air: %s" % skier.trick.live_name())
+		var grind_only := landed_names.duplicate()
+		skier.trick.land(1.0, false, LandingSolver.Outcome.CLEAN)
+		for landed_name: String in landed_names:
+			if "360" in landed_name or landed_name.begins_with("Left ") or landed_name.begins_with("Right "):
+				failures.append("Post-rail landing credited pre-rail spin: %s" % landed_name)
+		var grind_scored := false
+		for landed_name: String in grind_only:
+			if "50-50" in landed_name:
+				grind_scored = true
+		if not grind_scored:
+			failures.append("Successful grind exit did not score the grind as its own trick")
+		skier.trick.begin_air(false, TrickCommand.Kind.SPIN_LEFT)
+		skier.trick.update_air(Vector3(0.0, -TAU, 0.0), 1.0, spin_command)
+		skier.trick.land(1.0, false, LandingSolver.Outcome.CLEAN)
+		var outbound_spin_scored := false
+		for landed_name: String in landed_names:
+			if "Left 360" in landed_name:
+				outbound_spin_scored = true
+		if not outbound_spin_scored:
+			failures.append("Rotation that happened after leaving the rail was not scored")
+	remove_child(skier)
+	skier.queue_free()
+	remove_child(rail)
+	rail.queue_free()
+	await get_tree().process_frame
+

@@ -27,7 +27,6 @@ func _ready() -> void:
 	await _test_grind_feature_collision_enters_bail()
 	await _test_bounded_rest_and_recovery()
 	await _test_recovery_freeze_ignores_session_input()
-	await _test_pre_rail_spin_is_not_credited_after_grind()
 	await _test_course_recovery_lifecycle_and_scoring()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
@@ -805,77 +804,8 @@ func _test_recovery_freeze_ignores_session_input() -> void:
 	remove_child(skier)
 	skier.queue_free()
 
-func _test_pre_rail_spin_is_not_credited_after_grind() -> void:
-	var path := Curve3D.new()
-	path.add_point(Vector3(-2.0, 2.0, 0.0))
-	path.add_point(Vector3(8.0, 2.0, 0.0))
-	var rail := GrindRail3D.new()
-	rail.name = "InboundAirRail"
-	rail.path = path
-	add_child(rail)
-	var skier := SkierController.new()
-	skier.set_physics_process(false)
-	add_child(skier)
-	await get_tree().physics_frame
-	var landed_names: Array[String] = []
-	skier.trick.trick_landed.connect(func(text: String, _points: int, _quality: float, _outcome: int) -> void:
-		landed_names.append(text)
-	)
-	var sample_offset := rail.path_length * 0.25
-	skier.global_position = rail.sample_world(sample_offset)
-	skier.velocity = rail.tangent_at(sample_offset) * 12.0
-	skier.state = SkierController.State.AIR
-	var spin_command := TrickCommand.new()
-	spin_command.kind = TrickCommand.Kind.SPIN_LEFT
-	spin_command.committed = true
-	skier.trick.begin_air(false, TrickCommand.Kind.SPIN_LEFT)
-	skier.trick.update_air(Vector3(0.0, -TAU, 0.0), 1.0, spin_command)
-	if "Left" not in skier.trick.live_name() or skier.trick.accumulated_rotation.length() < 1.0:
-		failures.append("Inbound air fixture did not accumulate a scored spin before rail capture")
-	skier._try_capture_rail()
-	if skier.state != SkierController.State.GRIND or skier.active_rail != rail:
-		failures.append("Inbound air did not capture the rail")
-	else:
-		if skier.trick.accumulated_rotation.length() > 0.001 or skier.trick.had_trick_intent:
-			failures.append("Rail capture retained inbound air rotation or trick intent")
-		if "360" in skier.trick.live_name() or "Left" in skier.trick.live_name():
-			failures.append("HUD still showed pre-rail spin after rail capture: %s" % skier.trick.live_name())
-		if not landed_names.is_empty():
-			failures.append("Rail capture scored inbound air instead of closing it: %s" % str(landed_names))
-		skier.trick.update_grind(0.25)
-		skier._exit_rail(false)
-		if skier.state != SkierController.State.AIR:
-			failures.append("Rail exit did not start a fresh outbound air")
-		if skier.trick.accumulated_rotation.length() > 0.001:
-			failures.append("Outbound air inherited pre-rail accumulated rotation")
-		if "360" in skier.trick.live_name() or "Left" in skier.trick.live_name():
-			failures.append("HUD attributed pre-rail spin to post-rail air: %s" % skier.trick.live_name())
-		var grind_only := landed_names.duplicate()
-		skier.trick.land(1.0, false, LandingSolver.Outcome.CLEAN)
-		for landed_name: String in landed_names:
-			if "360" in landed_name or landed_name.begins_with("Left ") or landed_name.begins_with("Right "):
-				failures.append("Post-rail landing credited pre-rail spin: %s" % landed_name)
-		var grind_scored := false
-		for landed_name: String in grind_only:
-			if "50-50" in landed_name:
-				grind_scored = true
-		if not grind_scored:
-			failures.append("Successful grind exit did not score the grind as its own trick")
-		skier.trick.begin_air(false, TrickCommand.Kind.SPIN_LEFT)
-		skier.trick.update_air(Vector3(0.0, -TAU, 0.0), 1.0, spin_command)
-		skier.trick.land(1.0, false, LandingSolver.Outcome.CLEAN)
-		var outbound_spin_scored := false
-		for landed_name: String in landed_names:
-			if "Left 360" in landed_name:
-				outbound_spin_scored = true
-		if not outbound_spin_scored:
-			failures.append("Rotation that happened after leaving the rail was not scored")
-	remove_child(skier)
-	skier.queue_free()
-	remove_child(rail)
-	rail.queue_free()
-
 func _test_course_recovery_lifecycle_and_scoring() -> void:
+	await get_tree().process_frame
 	var skier := SkierController.new()
 	skier.set_physics_process(false)
 	add_child(skier)
@@ -895,7 +825,10 @@ func _test_course_recovery_lifecycle_and_scoring() -> void:
 	for _frame: int in 8:
 		await get_tree().physics_frame
 	if started[0] != 1 or completed[0] != 1 or recovery.recovery_count != 1:
-		failures.append("Course recovery did not emit exactly one start/completion lifecycle")
+		failures.append(
+			"Course recovery did not emit exactly one start/completion lifecycle (started=%s completed=%s count=%s)"
+			% [started[0], completed[0], recovery.recovery_count]
+		)
 	if recovery.recovery_in_progress or skier.recovery_frozen:
 		failures.append("Course recovery remained frozen after completion")
 	if skier.global_position.distance_to(SessionManager.default_spawn.origin) > 0.05:
