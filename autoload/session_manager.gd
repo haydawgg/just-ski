@@ -3,7 +3,11 @@ extends Node
 const PROGRESS_PATH := "user://progress.cfg"
 
 signal marker_changed(position: Vector3)
-signal respawn_requested(transform: Transform3D)
+signal respawn_requested(transform: Transform3D, reason: StringName)
+
+const RESPAWN_SESSION := &"session"
+const RESPAWN_SUMMIT_RESTART := &"summit_restart"
+const RESPAWN_COURSE_RECOVERY := &"course_recovery"
 
 var default_spawn := Transform3D(Basis.IDENTITY, Vector3(0.0, 98.0, 138.0))
 var marker := Transform3D.IDENTITY
@@ -24,10 +28,13 @@ func set_marker(value: Transform3D) -> void:
 	marker_changed.emit(value.origin)
 
 func request_respawn() -> void:
-	respawn_requested.emit(marker if has_marker else default_spawn)
+	respawn_requested.emit(marker if has_marker else default_spawn, RESPAWN_SESSION)
 
-func request_respawn_to(value: Transform3D) -> void:
-	respawn_requested.emit(value)
+func request_respawn_to(value: Transform3D, reason: StringName = RESPAWN_COURSE_RECOVERY) -> void:
+	respawn_requested.emit(value, reason)
+
+func request_summit_restart() -> void:
+	respawn_requested.emit(default_spawn, RESPAWN_SUMMIT_RESTART)
 
 func clear_marker() -> void:
 	has_marker = false

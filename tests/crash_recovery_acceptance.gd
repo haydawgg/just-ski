@@ -26,6 +26,7 @@ func _ready() -> void:
 	await _test_airborne_contact_normal_refresh()
 	await _test_grind_feature_collision_enters_bail()
 	await _test_bounded_rest_and_recovery()
+	await _test_recovery_freeze_ignores_session_input()
 	await _test_course_recovery_lifecycle_and_scoring()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
@@ -772,7 +773,39 @@ func _test_grind_feature_collision_enters_bail() -> void:
 	remove_child(rail)
 	rail.queue_free()
 
+func _test_recovery_freeze_ignores_session_input() -> void:
+	var skier := SkierController.new()
+	skier.set_physics_process(false)
+	add_child(skier)
+	await get_tree().physics_frame
+	SessionManager.clear_marker()
+	var spawn := Transform3D(Basis.IDENTITY, Vector3(0.0, 6.0, 0.0))
+	SessionManager.set_default_spawn(spawn)
+	var stay_put := Vector3(5.0, 4.0, 5.0)
+	skier.global_position = stay_put
+	var count_before := int(skier.telemetry().respawn_count)
+	skier.set_recovery_frozen(true)
+	Input.action_press("respawn")
+	skier._physics_process(1.0 / 60.0)
+	Input.action_release("respawn")
+	if int(skier.telemetry().respawn_count) != count_before:
+		failures.append("Recovery freeze still honored a respawn input")
+	if skier.global_position.distance_to(stay_put) > 0.05:
+		failures.append("Recovery freeze respawn input moved the skier")
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	Input.action_press("set_marker")
+	skier._physics_process(1.0 / 60.0)
+	Input.action_release("set_marker")
+	if SessionManager.has_marker:
+		failures.append("Recovery freeze still saved a marker")
+		SessionManager.clear_marker()
+	skier.set_recovery_frozen(false)
+	remove_child(skier)
+	skier.queue_free()
+
 func _test_course_recovery_lifecycle_and_scoring() -> void:
+	await get_tree().process_frame
 	var skier := SkierController.new()
 	skier.set_physics_process(false)
 	add_child(skier)
@@ -792,7 +825,10 @@ func _test_course_recovery_lifecycle_and_scoring() -> void:
 	for _frame: int in 8:
 		await get_tree().physics_frame
 	if started[0] != 1 or completed[0] != 1 or recovery.recovery_count != 1:
-		failures.append("Course recovery did not emit exactly one start/completion lifecycle")
+		failures.append(
+			"Course recovery did not emit exactly one start/completion lifecycle (started=%s completed=%s count=%s)"
+			% [started[0], completed[0], recovery.recovery_count]
+		)
 	if recovery.recovery_in_progress or skier.recovery_frozen:
 		failures.append("Course recovery remained frozen after completion")
 	if skier.global_position.distance_to(SessionManager.default_spawn.origin) > 0.05:

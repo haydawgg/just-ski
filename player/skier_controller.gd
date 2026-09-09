@@ -166,15 +166,18 @@ func _physics_process(delta: float) -> void:
 	_landing_prediction_cache_serial = -1
 	_landing_prediction_cache.clear()
 	_input_sampler.sample_into(input_frame)
-	if input_frame.respawn_pressed:
-		SessionManager.request_respawn()
-	if input_frame.marker_pressed and state == State.GROUND and contact.grounded:
-		SessionManager.set_marker(_marker_transform())
 	if recovery_frozen:
+		# Course recovery owns respawn/marker during the fade. Honoring those
+		# actions here can teleport mid-fade, save an out-of-bounds marker, or
+		# race the recovery spawn.
 		if scoring != null:
 			scoring.step(delta, 0.0)
 		telemetry_updated.emit(telemetry())
 		return
+	if input_frame.respawn_pressed:
+		SessionManager.request_respawn()
+	if input_frame.marker_pressed and state == State.GROUND and contact.grounded:
+		SessionManager.set_marker(_marker_transform())
 	var velocity_before_motion := velocity
 	var state_before_motion := state
 	last_collision_diagnostics.clear()
@@ -710,17 +713,10 @@ func _enter_air(
 	takeoff_kind: int = TrickCommand.Kind.NONE,
 	normalized_charge: float = 0.0,
 	takeoff_normal: Vector3 = Vector3.ZERO,
-	inherited_angular_velocity: Vector3 = Vector3.ZERO,
-	retain_trick_history: bool = false
+	inherited_angular_velocity: Vector3 = Vector3.ZERO
 ) -> void:
 	if state == State.AIR:
 		return
-	var retained_rotation := trick.accumulated_rotation
-	var retained_intent := trick.had_trick_intent
-	var retained_dominant_kind := trick.dominant_kind
-	var retained_axis_weights := trick.rotation_axis_weights
-	var retained_axis := trick.committed_axis_local
-	var retained_active_kind := active_trick_kind
 	air_reference_up = takeoff_normal.normalized() if takeoff_normal.length_squared() > 0.01 else contact.last_normal.normalized()
 	if air_reference_up.length_squared() < 0.01:
 		air_reference_up = Vector3.UP
@@ -732,9 +728,10 @@ func _enter_air(
 	landing_feedback_armed = true
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	_clear_landing_orientation_settle()
-	angular_velocity = inherited_angular_velocity.limit_length(profile.maximum_angular_speed) if retain_trick_history else Vector3.ZERO
-	if not retain_trick_history:
-		trick_rotation_state.reset()
+	# Rail exits may inherit body angular velocity without keeping inbound
+	# trick history. Scoring/HUD rotation always starts from this takeoff.
+	angular_velocity = inherited_angular_velocity.limit_length(profile.maximum_angular_speed)
+	trick_rotation_state.reset()
 	air_time = 0.0
 	active_trick_kind = takeoff_kind
 	trick.begin_air(
@@ -743,13 +740,6 @@ func _enter_air(
 		takeoff_kind != TrickCommand.Kind.NONE,
 		trick_command.rotation_axis_local
 	)
-	if retain_trick_history:
-		trick.accumulated_rotation = retained_rotation
-		trick.had_trick_intent = retained_intent
-		trick.dominant_kind = retained_dominant_kind
-		trick.rotation_axis_weights = retained_axis_weights
-		trick.committed_axis_local = retained_axis
-		active_trick_kind = retained_active_kind
 	state_changed.emit("Air")
 
 func _handle_landing() -> void:
@@ -961,11 +951,24 @@ func _try_capture_rail() -> void:
 			0.0,
 			1.0
 		)
+		_close_inbound_air_trick()
 		state = State.GRIND
 		rail_pose = 0
 		motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 		animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_ENTER, rail_entry_severity, lateral_bias)
 		state_changed.emit("Grind")
+
+func _close_inbound_air_trick() -> void:
+	# Rail capture interrupts air. The inbound rotation is not a landing and
+	# must not ride through the grind into post-rail scoring or HUD credit.
+	trick.reset()
+	trick_rotation_state.reset()
+	active_trick_kind = TrickCommand.Kind.NONE
+	trick_phase = TrickCommand.PresentationPhase.NEUTRAL
+	grab_amount = 0.0
+	grab_tweak = Vector2.ZERO
+	if scoring != null:
+		scoring.pending_feature_kind = ""
 
 func _rail_distance_to_end() -> float:
 	if active_rail == null:
@@ -1000,7 +1003,7 @@ func _exit_rail(pop_off: bool) -> void:
 	active_rail = null
 	rail_balance = 0.0
 	rail_capture_blend_remaining = 0.0
-	_enter_air(TrickCommand.Kind.POP if pop_off else TrickCommand.Kind.NONE, 0.0, Vector3.ZERO, angular_velocity, true)
+	_enter_air(TrickCommand.Kind.POP if pop_off else TrickCommand.Kind.NONE, 0.0, Vector3.ZERO, angular_velocity)
 	air_deliberate = pop_off
 
 func _slip_off_rail() -> void:
@@ -1026,7 +1029,7 @@ func _slip_off_rail() -> void:
 	recent_rail_detach_time = 1.0
 	recent_rail_detach_balance = failed_balance
 	scoring.reset_link()
-	_enter_air(TrickCommand.Kind.NONE, 0.0, Vector3.ZERO, inherited_angular, true)
+	_enter_air(TrickCommand.Kind.NONE, 0.0, Vector3.ZERO, inherited_angular)
 
 func enter_crash(context: CrashContext) -> bool:
 	if state == State.BAIL or context == null or not context.active:
@@ -1238,7 +1241,7 @@ func _recover_from_bail(delta: float = 1.0 / 60.0) -> void:
 	_clear_crash_state()
 	state_changed.emit("Ground")
 
-func respawn_at(value: Transform3D) -> void:
+func respawn_at(value: Transform3D, _reason: StringName = SessionManager.RESPAWN_SESSION) -> void:
 	var was_finished := scoring != null and scoring.finished
 	respawn_count += 1
 	active_rail = null
@@ -1525,6 +1528,8 @@ func telemetry() -> Dictionary:
 			"left_trigger": input_frame.left_trigger,
 			"right_trigger": input_frame.right_trigger,
 			"grab": TrickController.GRAB_NAMES[trick.grab_pose],
+			"grab_qualified": trick.grab_qualified,
+			"live_grab": trick.live_grab_name,
 			"style": TrickController.STYLE_NAMES[trick.style_pose],
 			"trick_text": trick.live_name() if trick != null else "",
 			"yaw_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.y)))) if trick != null else 0,
