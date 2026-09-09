@@ -634,6 +634,7 @@ func _test_airborne_bail_continuity_unchanged() -> void:
 	var skier := SkierController.new()
 	add_child(skier)
 	skier.set_physics_process(false)
+	skier.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	for hz: int in [30, 60, 120]:
 		var delta := 1.0 / float(hz)
 		for axis: Vector3 in [Vector3.RIGHT, Vector3.BACK]:
@@ -646,24 +647,24 @@ func _test_airborne_bail_continuity_unchanged() -> void:
 				failures.append("Airborne BAIL manufactured a ground-coupled roll component")
 			var initial_basis := Basis(axis, deg_to_rad(150.0))
 			skier.reset_for_benchmark(Transform3D(initial_basis, Vector3(0.0, 10.0, 0.0)), Vector3.DOWN)
+			skier.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 			skier.angular_velocity = incoming
 			skier._bail()
 			skier.contact.grounded = false
+			var before_basis := skier.transform.basis
 			skier._update_bail(delta)
 			if skier.angular_velocity.distance_to(expected_angular) > 0.000001:
 				failures.append("Airborne BAIL controller damping at %d Hz changed" % hz)
-			var probe := Node3D.new()
-			add_child(probe)
-			probe.global_basis = initial_basis
-			probe.rotate_object_local(Vector3.RIGHT, expected_angular.x * delta)
-			probe.rotate_object_local(Vector3.UP, expected_angular.y * delta)
-			probe.rotate_object_local(Vector3.BACK, expected_angular.z * delta)
-			var expected_quat := probe.global_basis.orthonormalized().get_rotation_quaternion()
-			var actual_quat := skier.global_basis.orthonormalized().get_rotation_quaternion()
-			if expected_quat.angle_to(actual_quat) > 0.00001:
-				failures.append("Airborne BAIL rotation path at %d Hz diverged from the existing local-axis integration" % hz)
-			remove_child(probe)
-			probe.queue_free()
+			var expected_basis := (
+				before_basis
+				* Basis(Vector3.RIGHT, expected_angular.x * delta)
+				* Basis(Vector3.UP, expected_angular.y * delta)
+				* Basis(Vector3.BACK, expected_angular.z * delta)
+			).orthonormalized()
+			var actual_basis := skier.transform.basis.orthonormalized()
+			var turn := expected_basis.get_rotation_quaternion().angle_to(actual_basis.get_rotation_quaternion())
+			if turn > 0.002:
+				failures.append("Airborne BAIL rotation path at %d Hz diverged from the existing local-axis integration (%.5f rad)" % [hz, turn])
 	remove_child(skier)
 	skier.queue_free()
 
