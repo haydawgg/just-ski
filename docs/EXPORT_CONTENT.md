@@ -1,12 +1,20 @@
 # Export Content Boundary
 
-The Windows release preset exports the two production resort scenes and their transitive Godot resource dependencies. Test scenes, diagnostics, capture fixtures, and historical documentation are intentionally outside the shipped resource graph.
+The Windows release preset exports the complete Godot resource graph and explicitly excludes development-only resource trees. This is deliberate: the project uses global `class_name` types that are resolved through Godot's script-class registry rather than appearing as direct scene dependencies, so a selected-scene export can omit required production scripts.
 
-## Production roots
+## Shipped resource boundary
 
-- `res://world/resort.tscn`
-- `res://world/sunset_resort.tscn`
+The preset uses `export_filter="all_resources"` with these exclusions:
 
-Any production resource loaded only through a runtime string path must either become a normal scene/resource dependency or be added explicitly to the export preset. Avoid introducing untracked string-only production loads.
+- `tests/*` — acceptance scenes, diagnostics, capture fixtures, benchmark resources, and test-only assets.
+- `tools/*` — editor/baking utilities that are not part of the playable runtime.
 
-Before distribution, build the Windows preset from a clean checkout, launch the exported executable with the documented smoke test, and inspect the resulting artifact size. A successful source/runtime quality gate is not a substitute for an export smoke test.
+Runtime code, gameplay data, production assets, shaders, UI, autoloads, and both resort variants remain in the production pack. Markdown documentation and other non-resource files are not added unless an include filter explicitly requests them.
+
+Do not replace this with a selected-scene export unless the project first removes or explicitly accounts for global-class dependencies. Do not remove a development exclusion without reviewing the exported pack.
+
+## Validation
+
+CI exports `SummitSessions.pck` from the committed Windows preset and launches that exact pack with `--main-pack`. The smoke check must reject script, shader, engine, or acceptance errors even when Godot returns exit code 0. It also records the pack byte size so unexpected growth is visible.
+
+Before distribution, additionally build the full Windows executable with the matching Godot 4.7.2 export templates and run the documented executable smoke test from a clean checkout.
