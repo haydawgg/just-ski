@@ -11,7 +11,7 @@
 - **License:** CC0, as stated by the upstream asset page and repository
 - **Upstream file:** `male_base_mesh.glb`
 - **Project file:** `assets/characters/skier/skier_body.glb`
-- **Recorded SHA-256:** `A72B5F867AAC549CB69BB5D400267E375A23134E4B92EA2650D6D51D4F0C9C77`
+- **Recorded SHA-256:** `08071618F05CB13F43259E81E5B38662FE5373135F8E08A87A5CAE0802A3C0EA`
 
 ## Project processing
 
@@ -27,7 +27,8 @@ Processing is performed in this order:
      - `Outfit_Skin`
      - `Outfit_Gloves`
      - `Outfit_BootUnderlay`;
-   - keeps the existing vertex attributes, joints, weights, skeleton nodes, inverse bind matrices, and authored animation data intact.
+   - clips triangles at the hem and collar, adding interpolated seam vertices with normalized skin weights;
+   - preserves existing vertices, skeleton nodes, inverse bind matrices, and authored animation data.
 
 2. `tools/character/build_skier_clothing.py`
    - appends skinned clothing shells for the jacket, pants, and gloves regions;
@@ -49,6 +50,8 @@ Copy-Item pristine/male_base_mesh.glb assets/characters/skier/skier_body.glb -Fo
 py tools/character/rebuild_skier_body_materials.py
 py tools/character/build_skier_clothing.py
 ```
+
+An existing processed body can be re-tailored offline with `py tools/character/rebuild_skier_body_materials.py --from-processed`, followed by `py tools/character/build_skier_clothing.py`. This extracts the base surfaces before rebuilding their clothing shells.
 
 After replacing the GLB, re-run the editor import so `.godot/imported`
 regenerates (the cache is git-ignored and must never be hand-edited), then

@@ -4,14 +4,17 @@ extends Node
 # restrained, distance-sensitive, and provides height cue without being a blob.
 
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 
 var skier: SkierController
+var resort: Node3D
 var viewport: SubViewport
 var results: Array[Dictionary] = []
+var _finish_started := false
 
 func _ready() -> void:
 	# Build a minimal resort to get a skier with contact shadow
-	var resort := load("res://world/resort.tscn").instantiate() as Node3D
+	resort = load("res://world/resort.tscn").instantiate() as Node3D
 	add_child(resort)
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -20,7 +23,7 @@ func _ready() -> void:
 		skier = resort.find_children("*", "SkierController", true, false).front() as SkierController
 	if skier == null:
 		push_error("CONTACT_SHADOW_FAIL: skier not found")
-		get_tree().quit(1)
+		_finish(1)
 		return
 	# SubViewport for image capture (shares main world)
 	viewport = SubViewport.new()
@@ -44,7 +47,7 @@ func _ready() -> void:
 
 func _run_height_sweep() -> void:
 	if skier == null:
-		get_tree().quit(1)
+		_finish(1)
 		return
 	var n := ParkLayout.snow_normal()
 	var base_pos := ParkLayout.snow_at(0.0, 30.0) + n * 0.9
@@ -61,7 +64,8 @@ func _run_height_sweep() -> void:
 		# Force shadow update
 		skier._update_contact_shadow(0.016)
 		await get_tree().process_frame
-		await RenderingServer.frame_post_draw
+		if not RuntimeEnvironment.is_headless():
+			await RenderingServer.frame_post_draw
 		var shadow := skier.get_node_or_null("ContactShadow") as MeshInstance3D
 		var visible := shadow != null and shadow.visible
 		var alpha := 0.0
@@ -90,7 +94,7 @@ func _evaluate() -> void:
 	print("CONTACT_SHADOW_DIAG_START")
 	if results.size() < 4:
 		push_error("CONTACT_SHADOW_FAIL: insufficient samples")
-		get_tree().quit(1)
+		_finish(1)
 		return
 	var ground := results[0]
 	var low := results[1]
@@ -121,16 +125,42 @@ func _evaluate() -> void:
 				break
 	if reasons.is_empty():
 		print("CONTACT_SHADOW_PASS: ground alpha %.3f high alpha %.3f sep %.1f->%.1f" % [ground.alpha, high.alpha, ground.screen_sep, high.screen_sep])
-		# Save viewport image for review
-		var tex := viewport.get_texture() if viewport != null else null
-		if tex != null:
-			var img := tex.get_image()
-			if img != null and not img.is_empty():
-				img.convert(Image.FORMAT_RGBA8)
-				img.save_png("user://contact_shadow_capture.png")
-				print("CONTACT_SHADOW_IMAGE_SAVED: user://contact_shadow_capture.png")
-		get_tree().quit(0)
+		if RuntimeEnvironment.is_headless():
+			print("CONTACT_SHADOW_IMAGE_SKIP: geometry-only headless renderer")
+		else:
+			# Save viewport image for review and retain a real pixel validation on GPU.
+			var tex := viewport.get_texture() if viewport != null else null
+			var img := tex.get_image() if tex != null else null
+			if img == null or img.is_empty():
+				push_error("CONTACT_SHADOW_FAIL: GPU viewport image was empty")
+				_finish(1)
+				return
+			img.convert(Image.FORMAT_RGBA8)
+			var save_error := img.save_png("user://contact_shadow_capture.png")
+			if save_error != OK:
+				push_error("CONTACT_SHADOW_FAIL: could not save GPU viewport image")
+				_finish(1)
+				return
+			print("CONTACT_SHADOW_IMAGE_SAVED: user://contact_shadow_capture.png")
+		_finish(0)
 	else:
 		for r in reasons:
 			push_error("CONTACT_SHADOW_FAIL: " + r)
-		get_tree().quit(1)
+		_finish(1)
+
+func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)

@@ -1,9 +1,11 @@
 extends Node3D
 
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 const STEP := 1.0 / 60.0
 const AUDIT_RATES: Array[int] = [30, 60, 120]
 const GRAB_LIBRARY := preload("res://resources/animation/default_grab_animation_library.tres")
 var failures: Array[String] = []
+var _finish_started := false
 
 func _ready() -> void:
 	call_deferred("_run")
@@ -100,7 +102,24 @@ func _run() -> void:
 	else:
 		for failure: String in failures:
 			push_error("PRESENTATION_QUALITY_FAIL: " + failure)
-	get_tree().quit(0 if failures.is_empty() else 1)
+	_finish(0 if failures.is_empty() else 1)
+
+func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)
 
 func _test_flip_rhythm(rig: SkierAnimationController) -> void:
 	for kind: int in [TrickCommand.Kind.FRONTFLIP, TrickCommand.Kind.BACKFLIP]:
@@ -194,7 +213,7 @@ func _test_grab_transition_matrix() -> void:
 		add_child(test_rig)
 		var adapter := test_rig.rig_adapter as SkeletonSkierRig
 		var max_reach_error := 0.0
-		var maximum_hold_final_error := 0.0
+		var maximum_maintained_error := 0.0
 		var max_pole_offset := 0.0
 		var max_boot_binding_error := 0.0
 		var maximum_joint_step := 0.0
@@ -217,6 +236,9 @@ func _test_grab_transition_matrix() -> void:
 			var peak_contact_weight := 0.0
 			var hold_reach_error := 0.0
 			var contact_seen := false
+			var pose_min_pole_clearance := INF
+			var pose_poles_outward := true
+			var pole_telemetry_seen := false
 			var previous_rotations: Array[Quaternion] = [
 				test_rig.pelvis.quaternion,
 				test_rig.chest.quaternion,
@@ -247,27 +269,33 @@ func _test_grab_transition_matrix() -> void:
 					test_rig.apply_frame(frame, delta)
 					var snapshot := test_rig.debug_snapshot()
 					var adapter_snapshot := adapter.grab_debug_snapshot()
-					var current_hold_error := 0.0
 					if phase in [1, 2] and frame.grab_amount > 0.1:
 						if grab_hand == 1 or grab_hand == 3:
 							var left_error := float(adapter_snapshot.get("left_reach_error", 0.0))
 							if phase == 2:
-								current_hold_error = maxf(current_hold_error, left_error)
-								hold_reach_error = maxf(hold_reach_error, left_error)
+								if contact_seen:
+									hold_reach_error = maxf(hold_reach_error, left_error)
 								max_reach_error = maxf(max_reach_error, left_error)
 						if grab_hand == 2 or grab_hand == 3:
 							var right_error := float(adapter_snapshot.get("right_reach_error", 0.0))
 							if phase == 2:
-								current_hold_error = maxf(current_hold_error, right_error)
-								hold_reach_error = maxf(hold_reach_error, right_error)
+								if contact_seen:
+									hold_reach_error = maxf(hold_reach_error, right_error)
 								max_reach_error = maxf(max_reach_error, right_error)
 						if phase == 2 and str(adapter_snapshot.get("solver", "")) == "CONTACT":
 							contact_seen = true
+					# Input HOLD includes the end of reach. Once acquired, every
+					# remaining sample must keep contact; late final-only success fails.
+					if phase == 2 and tick == int(0.25 * hz):
+						_check(contact_seen, "grab %d took over 250ms to acquire contact at %d Hz" % [pose, hz])
 					peak_pose_weight = maxf(peak_pose_weight, float(snapshot.get("grab_pose_weight", 0.0)))
 					peak_contact_weight = maxf(peak_contact_weight, float(snapshot.get("grab_contact_weight", 0.0)))
 					var attachment := test_rig.equipment_attachment_snapshot()
 					if bool(attachment.get("valid", false)):
+						pole_telemetry_seen = true
 						max_pole_offset = maxf(max_pole_offset, maxf(float(attachment.get("left_pole_hand_offset_m", 0.0)), float(attachment.get("right_pole_hand_offset_m", 0.0))))
+						pose_min_pole_clearance = minf(pose_min_pole_clearance, float(attachment.get("pole_knee_clearance_m", 0.0)))
+						pose_poles_outward = pose_poles_outward and bool(attachment.get("poles_outward", false))
 						max_boot_binding_error = maxf(max_boot_binding_error, maxf(float(attachment.get("left_boot_binding_position_error", 0.0)), float(attachment.get("right_boot_binding_position_error", 0.0))))
 					var landmarks := adapter.landmarks()
 					for landmark_name: String in landmarks:
@@ -294,13 +322,15 @@ func _test_grab_transition_matrix() -> void:
 					# future threshold failures identify the affected solver values.
 					if adapter_snapshot.is_empty():
 						_check(false, "grab audit lost production adapter telemetry at %d Hz" % hz)
-					if phase == 2:
-						hold_reach_error = current_hold_error
 			_check(peak_pose_weight > 0.55, "grab %d never reached a readable pose weight at %d Hz" % [pose, hz])
 			_check(peak_contact_weight > 0.12, "grab %d never established contact weight at %d Hz" % [pose, hz])
 			_check(contact_seen, "grab %d never reached production CONTACT during HOLD at %d Hz" % [pose, hz])
-			_check(hold_reach_error <= 0.1205, "grab %d finished HOLD outside the 0.12m reach envelope at %d Hz: %.3fm" % [pose, hz, hold_reach_error])
-			maximum_hold_final_error = maxf(maximum_hold_final_error, hold_reach_error)
+			_check(hold_reach_error <= 0.1205, "grab %d left the 0.12m reach envelope after acquiring contact at %d Hz: %.3fm" % [pose, hz, hold_reach_error])
+			_check(pole_telemetry_seen, "grab %d did not expose pole clearance telemetry at %d Hz" % [pose, hz])
+			_check(pose_min_pole_clearance >= 0.10, "grab %d pole-to-knee clearance fell below 0.10m at %d Hz: %.3fm" % [pose, hz, pose_min_pole_clearance])
+			_check(pose_poles_outward, "grab %d poles did not remain outward at %d Hz" % [pose, hz])
+			print("PRESENTATION_POLE_AUDIT hz=%d pose=%d clearance=%.3f outward=%s" % [hz, pose, pose_min_pole_clearance, str(pose_poles_outward)])
+			maximum_maintained_error = maxf(maximum_maintained_error, hold_reach_error)
 			print("PRESENTATION_GRAB_AUDIT hz=%d pose=%d name=%s peak_pose=%.3f peak_contact=%.3f" % [hz, pose, TrickController.GRAB_NAMES[pose], peak_pose_weight, peak_contact_weight])
 			# A clean landing handoff after each grab makes release/recovery a
 			# measured transition rather than an isolated held-pose check.
@@ -330,8 +360,8 @@ func _test_grab_transition_matrix() -> void:
 		var normalized_joint_rate := maximum_joint_step / maxf(delta, 0.0001)
 		var allowed_joint_step := 0.30 * delta / STEP
 		_check(maximum_joint_step < allowed_joint_step, "grab transition exceeded the 60 Hz continuity rate at %d Hz: %.3f > %.3f (%s)" % [hz, maximum_joint_step, allowed_joint_step, maximum_joint_step_label])
-		print("PRESENTATION_GRAB_RATE hz=%d poses=%d hold_final=%.3f hold_peak=%.3f pole=%.3f boot=%.3f joint_step=%.3f joint_rate=%.3f (%s)" % [hz, pose_ids.size(), maximum_hold_final_error, max_reach_error, max_pole_offset, max_boot_binding_error, maximum_joint_step, normalized_joint_rate, maximum_joint_step_label])
-		rate_results.append({"hz": hz, "reach": maximum_hold_final_error, "pole": max_pole_offset, "boot": max_boot_binding_error, "joint_step": maximum_joint_step, "joint_rate": normalized_joint_rate})
+		print("PRESENTATION_GRAB_RATE hz=%d poses=%d hold_maintained=%.3f hold_peak=%.3f pole=%.3f boot=%.3f joint_step=%.3f joint_rate=%.3f (%s)" % [hz, pose_ids.size(), maximum_maintained_error, max_reach_error, max_pole_offset, max_boot_binding_error, maximum_joint_step, normalized_joint_rate, maximum_joint_step_label])
+		rate_results.append({"hz": hz, "reach": maximum_maintained_error, "pole": max_pole_offset, "boot": max_boot_binding_error, "joint_step": maximum_joint_step, "joint_rate": normalized_joint_rate})
 		test_rig.queue_free()
 	if rate_results.size() == AUDIT_RATES.size():
 		var reference := rate_results[-1]
@@ -365,4 +395,7 @@ func _test_style_pose_matrix() -> void:
 		print("PRESENTATION_STYLE pose=%d name=%s weight=%.3f phase=%s" % [style, TrickController.STYLE_NAMES[style], float(snapshot.get("style_pose_weight", 0.0)), str(snapshot.get("style_phase", ""))])
 		_check(float(snapshot.get("style_pose_weight", 0.0)) > 0.55, "style pose %s never reached a readable weight" % TrickController.STYLE_NAMES[style])
 		_check(str(snapshot.get("style_phase", "")) != "Idle", "style pose %s never entered its presentation phase" % TrickController.STYLE_NAMES[style])
+		var attachment := test_rig.equipment_attachment_snapshot()
+		_check(float(attachment.get("pole_knee_clearance_m", 0.0)) >= 0.10, "style pose %s pole-to-knee clearance fell below 0.10m: %.3fm" % [TrickController.STYLE_NAMES[style], float(attachment.get("pole_knee_clearance_m", 0.0))])
+		_check(bool(attachment.get("poles_outward", false)), "style pose %s poles did not point outward" % TrickController.STYLE_NAMES[style])
 		test_rig.queue_free()

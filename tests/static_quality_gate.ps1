@@ -16,7 +16,8 @@ $checks = @(
 	"tests/world_authoring_static_acceptance.ps1",
 	"tests/release_static_acceptance.ps1",
 	"tests/performance_compare_acceptance.ps1",
-	"tests/ci_static_acceptance.ps1"
+	"tests/ci_static_acceptance.ps1",
+	"tests/visual_evidence_static_acceptance.ps1"
 )
 $failures = [System.Collections.Generic.List[string]]::new()
 $shell = (Get-Command pwsh -ErrorAction SilentlyContinue).Path

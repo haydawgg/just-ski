@@ -1,8 +1,10 @@
 extends Node
 
 const ResortModule := preload("res://world/resort.gd")
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 
 var frame_count := 0
+var _finish_started := false
 @onready var resort: Node3D = $Resort
 
 func _physics_process(_delta: float) -> void:
@@ -10,6 +12,11 @@ func _physics_process(_delta: float) -> void:
 	if frame_count < 360:
 		return
 	var failures: Array[String] = []
+	if RuntimeEnvironment.is_headless():
+		if resort.get_node_or_null("PlayerProbe") != null:
+			failures.append("Headless resort created a reflection probe")
+		if resort.get_node_or_null("HighHaze") != null:
+			failures.append("Headless resort created a haze presentation node")
 	var world_environment := resort.get("environment") as WorldEnvironment
 	var sun := resort.get("sun") as DirectionalLight3D
 	if world_environment == null or world_environment.environment == null:
@@ -202,13 +209,28 @@ func _physics_process(_delta: float) -> void:
 				failures.append("Surface-velocity bail scrape did not activate")
 	if failures.is_empty():
 		print("ENVIRONMENT_VISUAL_PASS: minimal route flags, readable snow, layered scenery, and state-specific snow contact feedback")
-		AudioManager.shutdown_audio()
-		get_tree().quit(0)
+		_finish(0)
 	else:
 		for failure: String in failures:
 			push_error("ENVIRONMENT_VISUAL_FAIL: " + failure)
-		AudioManager.shutdown_audio()
-		get_tree().quit(1)
+		_finish(1)
+
+func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)
 
 func _validate_lower_run_hub_dressing(failures: Array[String]) -> void:
 	var catalog := resort.get("environment_asset_catalog") as EnvironmentAssetCatalog

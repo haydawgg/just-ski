@@ -14,19 +14,19 @@ class SnowMaterialInstance extends ShaderMaterial:
 	var surface_kind: int
 	var groom_direction_world_xz: Vector2
 	var feature_emphasis: float
-	var render_unshaded: bool
+	var render_shadow_safe: bool
 
-	func _init(kind: int, groom_direction: Vector2, emphasis: float, unshaded: bool = false) -> void:
+	func _init(kind: int, groom_direction: Vector2, emphasis: float, shadow_safe: bool = false) -> void:
 		surface_kind = kind
 		groom_direction_world_xz = groom_direction.normalized() if groom_direction.length_squared() > 0.0001 else Vector2(0.0, -1.0)
 		feature_emphasis = clampf(emphasis, 0.0, 1.0)
-		render_unshaded = unshaded
+		render_shadow_safe = shadow_safe
 		GameSettings.settings_applied.connect(_apply_quality)
 		_apply_quality()
 
 	func _apply_quality() -> void:
 		var premium := int(GameSettings.active.get("snow_quality", 1)) == 1
-		shader = SnowMaterial.SUMMIT_SHADER if render_unshaded else (SnowMaterial.PREMIUM_SHADER if premium else SnowMaterial.FAST_SHADER)
+		shader = SnowMaterial.SUMMIT_SHADER if render_shadow_safe else (SnowMaterial.PREMIUM_SHADER if premium else SnowMaterial.FAST_SHADER)
 		set_shader_parameter("snow_albedo_texture", SnowMaterial.ALBEDO_TEXTURE)
 		set_shader_parameter("snow_detail_texture", SnowMaterial.DETAIL_TEXTURE)
 		set_shader_parameter("texture_world_size", 1.35)
@@ -86,7 +86,7 @@ class SnowMaterialInstance extends ShaderMaterial:
 				set_shader_parameter("shadow_tint", SnowMaterial.PRESENTATION.groomed_shadow_tint)
 				set_shader_parameter("roughness_base", SnowMaterial.PRESENTATION.groomed_roughness)
 				set_shader_parameter("albedo_texture_strength", 0.055)
-				set_shader_parameter("normal_strength", 0.17)
+				set_shader_parameter("normal_strength", 0.38)
 				set_shader_parameter("roughness_texture_strength", 0.38)
 				set_shader_parameter("macro_tint_amount", SnowMaterial.PRESENTATION.groomed_medium_variation)
 				set_shader_parameter("far_macro_tint_amount", SnowMaterial.PRESENTATION.groomed_broad_variation)
@@ -94,7 +94,7 @@ class SnowMaterialInstance extends ShaderMaterial:
 				set_shader_parameter("slope_contrast_strength", 0.045)
 				set_shader_parameter("form_contrast_strength", SnowMaterial.PRESENTATION.groomed_form_contrast)
 				set_shader_parameter("wind_crust_amount", 0.012)
-				set_shader_parameter("corduroy_amount", 0.018)
+				set_shader_parameter("corduroy_amount", 0.08)
 				set_shader_parameter("corduroy_frequency", 1.8)
 				if premium:
 					set_shader_parameter("sparkle_amount", 0.025)
@@ -120,5 +120,5 @@ class SnowMaterialInstance extends ShaderMaterial:
 					set_shader_parameter("sparkle_density", 0.992)
 					set_shader_parameter("subsurface_strength", 0.14)
 
-static func create(kind: Kind = Kind.POWDER, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), feature_emphasis: float = 0.0, unshaded: bool = false) -> ShaderMaterial:
-	return SnowMaterialInstance.new(kind, groom_direction_world_xz, feature_emphasis, unshaded)
+static func create(kind: Kind = Kind.POWDER, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), feature_emphasis: float = 0.0, shadow_safe: bool = false) -> ShaderMaterial:
+	return SnowMaterialInstance.new(kind, groom_direction_world_xz, feature_emphasis, shadow_safe)

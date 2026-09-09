@@ -258,31 +258,22 @@ static func _add_ridge(parent: Node3D, profile: SummitEnvironmentProfile, spec: 
 	rock_material.set_shader_parameter("haze_color", Color("#b4c2ca"))
 	rock_material.set_shader_parameter("haze_start_distance", 170.0)
 	rock_material.set_shader_parameter("haze_end_distance", 620.0)
-	rock_material.set_shader_parameter("facet_value_range", 0.04)
+	rock_material.set_shader_parameter("facet_value_range", 0.12)
+	rock_material.set_shader_parameter("mountain_height", float(spec.height))
 	mountain.material_override = rock_material
 	mountain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mountain.visibility_range_end = maxf(profile.backdrop_lod_end_m, 300.0)
 	mountain.visibility_range_end_margin = 48.0
 	mountain.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	root.add_child(mountain)
-	var cap := MeshInstance3D.new()
-	cap.name = "SnowCap"
-	cap.mesh = _create_ridge_mesh(float(spec.radius) * 0.46, float(spec.height) * 0.38, int(spec.seed) + 997)
-	cap.position.y = float(spec.height) * 0.33
-	cap.material_override = SnowSurface.create(SnowSurface.Kind.POWDER)
-	cap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	cap.visibility_range_end = maxf(profile.backdrop_lod_end_m, 300.0)
-	cap.visibility_range_end_margin = 48.0
-	cap.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
-	root.add_child(cap)
 	parent.add_child(root)
 
 static func _create_ridge_mesh(radius: float, height: float, seed: int) -> ArrayMesh:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
-	var segments := 10 + absi(seed) % 3
-	var ring_heights := [-height * 0.55, -height * 0.12, height * 0.12, height * 0.38, height * 0.68, height]
-	var ring_scales := [1.18, 1.08, 0.9, 0.64, 0.34, 0.035]
+	var segments := 32
+	var ring_heights := [-height * 0.55, -height * 0.2, 0.0, height * 0.16, height * 0.32, height * 0.48, height * 0.64, height * 0.8, height * 0.93, height]
+	var ring_scales := [1.32, 1.16, 1.0, 0.89, 0.73, 0.60, 0.44, 0.28, 0.13, 0.0]
 	var ring_points: Array[PackedVector3Array] = []
 	var peak_offset := Vector2(rng.randf_range(-0.14, 0.14), rng.randf_range(-0.12, 0.12)) * radius
 	for ring_index: int in range(ring_heights.size()):
@@ -290,9 +281,11 @@ static func _create_ridge_mesh(radius: float, height: float, seed: int) -> Array
 		var center_offset := peak_offset * (float(ring_index) / float(ring_heights.size() - 1))
 		for segment: int in range(segments):
 			var angle := TAU * float(segment) / float(segments)
-			var irregularity := rng.randf_range(0.82, 1.18)
+			var ridge := sin(angle * 5.0 + float(seed)) * 0.12 + sin(angle * 9.0 + 0.4) * 0.07
+			var irregularity := 1.0 + ridge + rng.randf_range(-0.035, 0.035)
 			var ring_radius := radius * float(ring_scales[ring_index]) * irregularity
-			points.append(Vector3(cos(angle) * ring_radius + center_offset.x, float(ring_heights[ring_index]), sin(angle) * ring_radius + center_offset.y))
+			var ring_y := float(ring_heights[ring_index]) + sin(angle * 3.0 + seed) * height * 0.08 * sin(float(ring_index) / 9.0 * PI)
+			points.append(Vector3(cos(angle) * ring_radius * 1.3 + center_offset.x, ring_y, sin(angle) * ring_radius * 0.78 + center_offset.y))
 		ring_points.append(points)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)

@@ -41,10 +41,18 @@ func build_now() -> void:
 		_add_box(lod0, "ChairSeat", Vector3(1.0, 0.12, 0.34), Vector3(0.0, 4.95, z), chair_material, 0.0, 160.0)
 		_add_box(lod0, "ChairBack", Vector3(1.0, 0.78, 0.12), Vector3(0.0, 5.34, z + 0.1), chair_dark, 0.0, 160.0)
 		_add_box(lod0, "ChairHanger", Vector3(0.07, 3.55, 0.07), Vector3(0.0, 7.0, z), cable_material, 0.0, 160.0)
+		_add_box(lod0, "ChairSafetyBar", Vector3(1.02, 0.045, 0.045), Vector3(0.0, 5.48, z - 0.33), metal, 0.0, 160.0)
+		for side: float in [-1.0, 1.0]:
+			_add_box(lod0, "ChairSideFrame", Vector3(0.045, 0.045, 0.48), Vector3(side * 0.49, 5.48, z - 0.1), metal, 0.0, 160.0)
 	_add_box(lod1, "TowerLowNear", Vector3(1.8, 9.0, 0.5), Vector3(0.0, 4.5, -SPAN_M * 0.5), metal, 110.0, 340.0)
 	_add_box(lod1, "TowerLowFar", Vector3(1.8, 9.0, 0.5), Vector3(0.0, 4.5, SPAN_M * 0.5), metal, 110.0, 340.0)
 	_add_cylinder(lod1, "CableLow", 0.05, 0.05, SPAN_M, Vector3(0.0, 9.05, 0.0), cable_material, 5, 110.0, 340.0, Vector3(90.0, 0.0, 0.0))
-	_add_box(lod1, "ChairsLow", Vector3(1.0, 0.8, 36.0), Vector3(0.0, 5.2, 0.0), chair_dark, 110.0, 340.0)
+	# Keep the three seats separated in the distance; a single 36m box looked
+	# like a floating wall as the detailed chairs faded out.
+	for index: int in 3:
+		var z := lerpf(-16.0, 16.0, float(index) / 2.0)
+		_add_box(lod1, "ChairLow", Vector3(1.0, 0.8, 0.34), Vector3(0.0, 5.2, z), chair_dark, 110.0, 340.0)
+		_add_box(lod1, "HangerLow", Vector3(0.07, 3.55, 0.07), Vector3(0.0, 7.0, z), cable_material, 110.0, 340.0)
 
 func _add_box(parent: Node3D, node_name: String, size: Vector3, position: Vector3, material: Material, begin: float, end: float) -> void:
 	var mesh_instance := MeshInstance3D.new()

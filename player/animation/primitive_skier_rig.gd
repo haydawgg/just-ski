@@ -32,7 +32,7 @@ func _build_meshes() -> void:
 	var lens := SkierEquipment.material(outfit_profile.goggle_lens_color, outfit_profile.lens_roughness, outfit_profile.lens_metallic, outfit_profile.lens_specular)
 	var frame := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18, outfit_profile.hardgoods_specular)
 	var helmet := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
-	var pole := SkierEquipment.material(outfit_profile.pole_color, outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
+	var pole := SkierEquipment.material(outfit_profile.pole_color.darkened(0.16), outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
 	# Pelvis shell covers the ±0.27m hip joints; the torso is an oval that
 	# fits inside its own pelvis width and the shoulder block depth instead
 	# of a barrel protruding ~14cm front and back.

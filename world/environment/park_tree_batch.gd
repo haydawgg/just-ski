@@ -32,17 +32,17 @@ func commit() -> void:
 	# A compact six-part silhouette avoids drawing overlapping per-tree LODs for
 	# a batch that spans the length of the course.
 	_add_component("Trunks", _cylinder(0.24, 0.32, 3.0, 6, bark), Vector3(0.0, 1.5, 0.0), 0.0, lod.y, true)
-	_add_component("LowerCanopies", _cylinder(0.12, 1.50, 2.4, 7, needle_dark), Vector3(0.0, 2.5, 0.0), 0.0, lod.y, true)
-	_add_component("LowerSnow", _cylinder(0.05, 1.02, 0.38, 7, snow), Vector3(0.0, 3.48, 0.0), 0.0, lod.y, true)
-	_add_component("MiddleCanopies", _cylinder(0.10, 1.18, 2.1, 7, needle_mid), Vector3(0.0, 3.7, 0.0), 0.0, lod.y, true)
-	_add_component("UpperCanopies", _cylinder(0.04, 0.82, 1.8, 7, needle_light), Vector3(0.0, 4.85, 0.0), 0.0, lod.y, true)
-	_add_component("UpperSnow", _cylinder(0.02, 0.56, 0.32, 7, snow), Vector3(0.0, 5.60, 0.0), 0.0, lod.y, true)
+	_add_component("LowerCanopies", _fir_mesh(1.50, 2.4, 2, needle_dark), Vector3(0.0, 2.5, 0.0), 0.0, lod.y, true)
+	_add_component("LowerSnow", _fir_mesh(1.02, 0.4, 1, snow), Vector3(0.0, 3.48, 0.0), 0.0, lod.y, true)
+	_add_component("MiddleCanopies", _fir_mesh(1.18, 2.1, 2, needle_mid), Vector3(0.0, 3.7, 0.0), 0.0, lod.y, true)
+	_add_component("UpperCanopies", _fir_mesh(0.82, 1.8, 2, needle_light), Vector3(0.0, 4.85, 0.0), 0.0, lod.y, true)
+	_add_component("UpperSnow", _fir_mesh(0.56, 0.34, 1, snow), Vector3(0.0, 5.60, 0.0), 0.0, lod.y, true)
 	# The far representation is intentionally simple and shadow-free. It uses
 	# the catalog's near/far overlap and cull horizon, avoiding the old fixed
 	# 230m range for every quality tier.
 	_add_component("FarTrunks", _cylinder(0.24, 0.30, 3.0, 5, bark), Vector3(0.0, 1.5, 0.0), lod.x, lod.z, false)
-	_add_component("FarCanopies", _cylinder(0.06, 1.34, 4.4, 6, needle_mid), Vector3(0.0, 3.65, 0.0), lod.x, lod.z, false)
-	_add_component("FarSnow", _cylinder(0.03, 0.84, 0.36, 6, snow), Vector3(0.0, 5.52, 0.0), lod.x, lod.z, false)
+	_add_component("FarCanopies", _fir_mesh(1.40, 4.4, 4, needle_mid), Vector3(0.0, 3.65, 0.0), lod.x, lod.z, false)
+	_add_component("FarSnow", _fir_mesh(0.78, 0.4, 1, snow), Vector3(0.0, 5.52, 0.0), lod.x, lod.z, false)
 	_placements.clear()
 
 func _add_component(label: String, mesh: Mesh, local_position: Vector3, range_begin: float, range_end: float, casts_shadow: bool) -> void:
@@ -89,3 +89,29 @@ func _material(color: Color, roughness: float) -> StandardMaterial3D:
 	material.albedo_color = color
 	material.roughness = roughness
 	return material
+
+func _fir_mesh(radius: float, height: float, tiers: int, material: Material) -> ArrayMesh:
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for tier: int in tiers:
+		var fraction := float(tier) / float(tiers)
+		var tier_radius := radius * (1.0 - fraction * 0.72)
+		var bottom := -height * 0.5 + height * fraction
+		var tip := Vector3(0.0, bottom + height / tiers * 1.5, 0.0)
+		for branch: int in 16:
+			var angle := TAU * branch / 16.0 + tier * 0.37
+			var next_angle := TAU * (branch + 1) / 16.0 + tier * 0.37
+			var length_a := tier_radius * (1.0 if branch % 2 == 0 else 0.78)
+			var length_b := tier_radius * (0.78 if branch % 2 == 0 else 1.0)
+			var a := Vector3(cos(angle) * length_a, bottom + sin(angle * 3.0) * height * 0.025, sin(angle) * length_a)
+			var b := Vector3(cos(next_angle) * length_b, bottom + sin(next_angle * 3.0) * height * 0.025, sin(next_angle) * length_b)
+			surface.add_vertex(a)
+			surface.add_vertex(b)
+			surface.add_vertex(tip)
+			surface.add_vertex(b)
+			surface.add_vertex(a)
+			surface.add_vertex(Vector3(0.0, bottom + 0.08, 0.0))
+	surface.generate_normals()
+	var mesh := surface.commit()
+	mesh.surface_set_material(0, material)
+	return mesh

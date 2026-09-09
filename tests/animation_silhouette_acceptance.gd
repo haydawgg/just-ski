@@ -1,8 +1,10 @@
 extends Node
 
 const STEP := 1.0 / 60.0
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 
 var failures: Array[String] = []
+var _finish_started := false
 
 func _ready() -> void:
 	_test_ground_stance_and_carve_loading()
@@ -19,11 +21,28 @@ func _ready() -> void:
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
 		print("ANIMATION_SILHOUETTE_PASS: ground loading, pole direction, deterministic air/spin shapes, delayed landing readiness, and gameplay-distance grab separation passed")
-		get_tree().quit(0)
+		_finish(0)
 		return
 	for failure: String in failures:
 		push_error("ANIMATION_SILHOUETTE_FAIL: " + failure)
-	get_tree().quit(1)
+	_finish(1)
+
+func _finish(exit_code: int) -> void:
+	if _finish_started:
+		return
+	_finish_started = true
+	set_process(false)
+	set_physics_process(false)
+	AudioManager.shutdown_audio()
+	for child: Node in get_children():
+		if is_instance_valid(child):
+			child.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not RuntimeEnvironment.is_headless():
+		await RenderingServer.frame_post_draw
+		await get_tree().process_frame
+	get_tree().quit(exit_code)
 
 func _test_ground_stance_and_carve_loading() -> void:
 	var rig := SkierAnimationController.new()
@@ -86,6 +105,14 @@ func _test_gameplay_distance_pole_direction() -> void:
 			failures.append("Ground poles remained too vertical at gameplay distance (left %.1f°, right %.1f°)" % [left_vertical_deviation, right_vertical_deviation])
 		if separation < 12.0:
 			failures.append("Ground poles remained visually parallel during a carve (%.1f° separation)" % separation)
+		var lateral := rig.global_basis.orthonormalized().x
+		var world_left := ((landmarks.left_pole_tip as Vector3) - (landmarks.left_hand as Vector3)).normalized()
+		var world_right := ((landmarks.right_pole_tip as Vector3) - (landmarks.right_hand as Vector3)).normalized()
+		if world_left.dot(lateral) > -0.05 or world_right.dot(lateral) < 0.05:
+			failures.append("Ground poles crossed inward toward the legs (lateral %.3f/%.3f)" % [world_left.dot(lateral), world_right.dot(lateral)])
+	var ground_attachment := rig.equipment_attachment_snapshot()
+	if bool(ground_attachment.get("valid", false)):
+		_assert_pole_quality("Ground carve", ground_attachment)
 	remove_child(camera)
 	camera.free()
 	remove_child(rig)
@@ -295,13 +322,16 @@ func _test_grabs_separate_from_straight_air_at_gameplay_distance() -> void:
 	for pose: int in range(TrickController.GrabPose.SAFETY_LEFT, TrickController.GrabPose.DOUBLE + 1):
 		var grabbed := _sample_projected_pose(pose)
 		_assert_projected_separation("Grab pose %d" % pose, straight, grabbed)
+		_assert_pole_quality("Grab pose %d" % pose, grabbed)
 	for pose: int in range(TrickController.StylePose.SPREAD_EAGLE, TrickController.StylePose.SHIFTY_RIGHT + 1):
 		var styled := _sample_projected_style(pose)
 		_assert_projected_separation("Style pose %d" % pose, straight, styled)
+		_assert_pole_quality("Style pose %d" % pose, styled)
 	var spin := _sample_projected_pose(TrickController.GrabPose.NONE, true)
 	for pose: int in range(TrickController.GrabPose.SAFETY_LEFT, TrickController.GrabPose.DOUBLE + 1):
 		var spinning_grab := _sample_projected_pose(pose, true)
 		_assert_projected_separation("Spinning grab pose %d" % pose, spin, spinning_grab)
+		_assert_pole_quality("Spinning grab pose %d" % pose, spinning_grab)
 
 func _sample_projected_pose(grab_pose: int, spinning: bool = false) -> Dictionary:
 	var frame := _air_frame()
@@ -341,7 +371,7 @@ func _sample_actual_gameplay_camera(frame: SkierAnimationFrame, event: int = -1,
 		skier.animation_controller.trigger(event, event_strength, 0.0)
 	for _index: int in step_count:
 		skier.animation_controller.apply_frame(frame, STEP)
-		camera_rig._physics_process(STEP)
+		camera_rig.step_manual(STEP)
 	var animation_snapshot := skier.animation_controller.debug_snapshot()
 	var world := (animation_snapshot.canonical_landmarks as Dictionary).duplicate()
 	var rig_adapter := skier.animation_controller.rig_adapter
@@ -356,11 +386,24 @@ func _sample_actual_gameplay_camera(frame: SkierAnimationFrame, event: int = -1,
 	var ski_center_y := ((projected.left_ski_tail as Vector2).y + (projected.right_ski_tail as Vector2).y) * 0.5
 	projected["body_height"] = maxf(1.0, absf((projected.head as Vector2).y - ski_center_y))
 	projected["camera_state"] = camera_rig.debug_snapshot().state
+	var attachment := animation_snapshot.get("equipment_attachment", {}) as Dictionary
+	projected["pole_knee_clearance_m"] = attachment.get("pole_knee_clearance_m", -1.0)
+	projected["poles_outward"] = attachment.get("poles_outward", false)
+	projected["left_pole_outward_dot"] = attachment.get("left_pole_outward_dot", 0.0)
+	projected["right_pole_outward_dot"] = attachment.get("right_pole_outward_dot", 0.0)
 	remove_child(camera_rig)
 	camera_rig.free()
 	remove_child(skier)
 	skier.free()
 	return projected
+
+func _assert_pole_quality(label: String, sample: Dictionary) -> void:
+	var clearance := float(sample.get("pole_knee_clearance_m", -1.0))
+	print("ANIMATION_POLE_AUDIT %s clearance=%.3f outward=%s dots=(%.3f,%.3f)" % [label, clearance, str(sample.get("poles_outward", false)), float(sample.get("left_pole_outward_dot", 0.0)), float(sample.get("right_pole_outward_dot", 0.0))])
+	if clearance < 0.10:
+		failures.append("%s pole-to-knee clearance fell below 0.10m (%.3fm)" % [label, clearance])
+	if not bool(sample.get("poles_outward", false)):
+		failures.append("%s poles did not point outward from the skier" % label)
 
 func _test_ground_vocabulary_through_gameplay_camera() -> void:
 	var neutral := _sample_actual_gameplay_camera(_ground_frame())
@@ -392,6 +435,7 @@ func _test_ground_vocabulary_through_gameplay_camera() -> void:
 	switch_frame.switch_stance = true
 	var switch_pose := _sample_actual_gameplay_camera(switch_frame)
 	_assert_projected_separation("Switch skiing", neutral, switch_pose)
+	_assert_pole_quality("Switch skiing", switch_pose)
 
 func _test_rotation_rail_and_stomp_vocabulary_through_gameplay_camera() -> void:
 	var front_frame := _rotation_frame(TrickCommand.Kind.FRONTFLIP, Vector3(4.8, 0.0, 0.0), Vector3(PI, 0.0, 0.0))

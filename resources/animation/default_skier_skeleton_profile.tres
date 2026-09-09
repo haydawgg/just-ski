@@ -36,7 +36,7 @@ hand_wrist_corrections = {
 &"left": Vector3(0, 0, 0),
 &"right": Vector3(0, 0, 0)
 }
-upper_spine_reach_assist = 0.3
+upper_spine_reach_assist = 0.2
 upper_spine_reach_limit = 0.5
 clavicle_reach_assist = 1.0
 clavicle_reach_limit = 0.9

@@ -579,21 +579,31 @@ func debug_snapshot() -> Dictionary:
 		"pre_bail_weight": _pre_bail_weight,
 		"pre_bail_side": _pre_bail_side,
 		"state_transition_weight": _secondary_motion_result.state_transition_weight,
+		"equipment_attachment": equipment_attachment_snapshot(),
 	}
 
 func equipment_attachment_snapshot() -> Dictionary:
 	"""Return release/impact equipment attachment telemetry for crash QA."""
-	if left_ski == null or right_ski == null or left_pole == null or right_pole == null or left_hand == null or right_hand == null:
-		return {"valid": false, "ski_separation_m": 0.0, "left_pole_hand_offset_m": 0.0, "right_pole_hand_offset_m": 0.0}
+	if left_ski == null or right_ski == null or left_pole == null or right_pole == null or left_hand == null or right_hand == null or left_pole_tip == null or right_pole_tip == null:
+		return {"valid": false, "ski_separation_m": 0.0, "left_pole_hand_offset_m": 0.0, "right_pole_hand_offset_m": 0.0, "left_pole_knee_clearance_m": 0.0, "right_pole_knee_clearance_m": 0.0}
 	var ski_separation := left_ski.global_position.distance_to(right_ski.global_position)
 	var left_pole_offset := left_pole.global_position.distance_to(left_hand.global_position)
 	var right_pole_offset := right_pole.global_position.distance_to(right_hand.global_position)
+	var pole_clearance: Dictionary = rig_adapter.pole_clearance_snapshot() if rig_adapter != null and rig_adapter.has_method("pole_clearance_snapshot") else {}
+	var left_pole_clearance := float(pole_clearance.get("left_pole_knee_clearance_m", _minimum_pole_knee_clearance(left_hand.global_position, left_pole_tip.global_position)))
+	var right_pole_clearance := float(pole_clearance.get("right_pole_knee_clearance_m", _minimum_pole_knee_clearance(right_hand.global_position, right_pole_tip.global_position)))
 	var valid := is_finite(ski_separation) and is_finite(left_pole_offset) and is_finite(right_pole_offset)
 	return {
 		"valid": valid,
 		"ski_separation_m": ski_separation,
 		"left_pole_hand_offset_m": left_pole_offset,
 		"right_pole_hand_offset_m": right_pole_offset,
+		"left_pole_knee_clearance_m": left_pole_clearance,
+		"right_pole_knee_clearance_m": right_pole_clearance,
+		"pole_knee_clearance_m": minf(left_pole_clearance, right_pole_clearance),
+		"left_pole_outward_dot": pole_clearance.get("left_pole_outward_dot", 0.0),
+		"right_pole_outward_dot": pole_clearance.get("right_pole_outward_dot", 0.0),
+		"poles_outward": bool(pole_clearance.get("poles_outward", _poles_outward())),
 		"ski_separation_in_range": ski_separation >= 0.18 and ski_separation <= 2.5,
 		"poles_attached": left_pole_offset <= 1.6 and right_pole_offset <= 1.6,
 		"left_boot_binding_position_error": _binding_position_error(left_ski, left_boot, _left_binding_rest),
@@ -601,6 +611,26 @@ func equipment_attachment_snapshot() -> Dictionary:
 		"left_boot_binding_angular_error": _binding_angular_error(left_ski, left_boot, _left_binding_rest),
 		"right_boot_binding_angular_error": _binding_angular_error(right_ski, right_boot, _right_binding_rest),
 	}
+
+func _minimum_pole_knee_clearance(start: Vector3, end: Vector3) -> float:
+	return minf(
+		_point_to_segment_distance(left_knee.global_position, start, end),
+		_point_to_segment_distance(right_knee.global_position, start, end)
+	)
+
+func _point_to_segment_distance(point: Vector3, start: Vector3, end: Vector3) -> float:
+	var segment := end - start
+	var length_squared := segment.length_squared()
+	if length_squared <= 0.000001:
+		return point.distance_to(start)
+	var t := clampf((point - start).dot(segment) / length_squared, 0.0, 1.0)
+	return point.distance_to(start.lerp(end, t))
+
+func _poles_outward() -> bool:
+	var lateral := global_basis.x.normalized()
+	var left_direction := (left_pole_tip.global_position - left_hand.global_position).normalized()
+	var right_direction := (right_pole_tip.global_position - right_hand.global_position).normalized()
+	return left_direction.dot(lateral) <= -0.02 and right_direction.dot(lateral) >= 0.02
 
 func _pose_owner_for_frame(frame: SkierAnimationFrame) -> String:
 	match frame.locomotion_state:
@@ -2921,8 +2951,12 @@ func _apply_secondary_motion(frame: SkierAnimationFrame) -> void:
 		var right_arm_roll := 0.2 - _arm_carve * 0.16
 		var landing_trail := _landing_pole_lag + _landing_compression * 0.18
 		var carve_split := absf(_pole_carve) * profile.carve_pole_split
-		_add_rotation(left_pole, Vector3(-arm_chain_pitch - speed_trail - landing_trail + asymmetry, -_pole_carve * profile.pole_turn_lag - carve_split - _landing_lateral_bias * landing_trail * 0.35, -left_arm_roll + profile.ground_pole_outward - asymmetry - _landing_arm_open * 0.2))
-		_add_rotation(right_pole, Vector3(-arm_chain_pitch - speed_trail - landing_trail - asymmetry, -_pole_carve * profile.pole_turn_lag + carve_split - _landing_lateral_bias * landing_trail * 0.35, -right_arm_roll - profile.ground_pole_outward + asymmetry + _landing_arm_open * 0.2))
+		# The pole shaft is authored along local -Y. A positive Z roll tilts that
+		# shaft toward +X, so the left pole needs the negative roll and the right
+		# pole the positive roll to stay outside the legs instead of crossing under
+		# the pelvis during a neutral stance or carve.
+		_add_rotation(left_pole, Vector3(-arm_chain_pitch - speed_trail - landing_trail + asymmetry, -_pole_carve * profile.pole_turn_lag - carve_split - _landing_lateral_bias * landing_trail * 0.35, -left_arm_roll - profile.ground_pole_outward - asymmetry - _landing_arm_open * 0.2))
+		_add_rotation(right_pole, Vector3(-arm_chain_pitch - speed_trail - landing_trail - asymmetry, -_pole_carve * profile.pole_turn_lag + carve_split - _landing_lateral_bias * landing_trail * 0.35, -right_arm_roll + profile.ground_pole_outward + asymmetry + _landing_arm_open * 0.2))
 	elif frame.locomotion_state == STATE_AIR:
 		var rotation_follow := _spin_compactness
 		var takeoff_lag := _air_takeoff_weight * 0.16

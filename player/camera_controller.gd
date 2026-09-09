@@ -233,6 +233,7 @@ var _performance_profile_composition_evaluations := 0
 var _performance_profile_landmark_samples := 0
 var _framing_solver := CameraFramingSolverModule.new()
 var _collision_solver := CameraCollisionSolverModule.new()
+var _manual_step_configured := false
 
 func _ready() -> void:
 	_camera_sphere = SphereShape3D.new()
@@ -253,6 +254,23 @@ func _ready() -> void:
 	camera.fov = base_fov
 	camera.near = 0.08
 	add_child(camera)
+	if process_mode == Node.PROCESS_MODE_DISABLED:
+		_configure_manual_interpolation()
+
+func _configure_manual_interpolation() -> void:
+	if _manual_step_configured:
+		return
+	_manual_step_configured = true
+	# Capture/acceptance fixtures intentionally drive the rig from a render
+	# callback. Disable interpolation for that mode so Camera3D does not warn
+	# when its transform is updated outside the physics callback.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	if camera != null:
+		camera.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+
+func step_manual(delta: float) -> void:
+	_configure_manual_interpolation()
+	_physics_process(delta)
 
 func set_target(value: CharacterBody3D) -> void:
 	target = value

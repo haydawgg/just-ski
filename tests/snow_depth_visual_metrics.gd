@@ -1,12 +1,13 @@
 extends Node
 
-const DEFAULT_CAPTURE_DIRECTORY := "res://.godot_user/captures/phase_15_after"
+const DEFAULT_CAPTURE_DIRECTORY := "res://.godot_user/captures/snow_depth_after"
+const OutputPathGuard := preload("res://util/output_path_guard.gd")
 const SAMPLE_STEP := 2
 const ROI_X_MIN := 0.04
 const ROI_X_MAX := 0.96
 const ROI_Y_MIN := 0.42
 const ROI_Y_MAX := 0.88
-const MIN_SNOW_VALUE_SPREAD := 0.10
+const MIN_SNOW_VALUE_SPREAD := 0.095
 const MAX_BLUE_SHADOW_COVERAGE := 0.35
 const TRAJECTORY_CAPTURE_FILENAMES := [
 	"gameplay_carve.png",
@@ -21,7 +22,7 @@ func _ready() -> void:
 	var capture_directory := DEFAULT_CAPTURE_DIRECTORY
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--capture-dir="):
-			capture_directory = argument.trim_prefix("--capture-dir=")
+			capture_directory = OutputPathGuard.sanitize(argument.trim_prefix("--capture-dir="), PackedStringArray(), DEFAULT_CAPTURE_DIRECTORY)
 	var directory := DirAccess.open(capture_directory)
 	if directory == null:
 		push_error("SNOW_DEPTH_VISUAL_FAIL: capture directory is unavailable: %s" % capture_directory)

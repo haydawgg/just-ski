@@ -4,6 +4,8 @@ extends SkierRigAdapter
 const TRANSLATED_JOINTS := [&"pelvis", &"chest", &"left_shoulder", &"right_shoulder"]
 const DEFAULT_BODY_PATH := "res://assets/characters/skier/skier_body.glb"
 const DEFAULT_OUTFIT := preload("res://resources/character/default_skier_outfit_profile.tres")
+const MIN_POLE_KNEE_CLEARANCE := 0.10
+const POLE_SHAFT_LENGTH := 1.185
 const MAX_HELPER_TURN := PI
 
 @export var outfit_profile: SkierOutfitProfile = DEFAULT_OUTFIT
@@ -165,6 +167,8 @@ func sync_pose(_delta: float, grab_requests: Array[SkierGrabReachRequest] = []) 
 			parent_neutral = _neutral_world[semantic] as Quaternion
 	skeleton.force_update_all_bone_transforms()
 	_sync_equipment_pose()
+	# Reach must target this tick's ski pose, including its BoneAttachment.
+	_refresh_bone_attachments()
 	_apply_grab_reach(grab_requests)
 	# BoneAttachment3D normally refreshes during the scene's notification pass.
 	# Gameplay and capture callers can sample immediately after apply_frame,
@@ -411,6 +415,7 @@ func _apply_grab_reach(requests: Array[SkierGrabReachRequest]) -> void:
 	var head_index := int(bone_indices[&"head"])
 	var head_before := _bone_world_index(head_index).basis.orthonormalized().get_rotation_quaternion()
 	_apply_upper_spine_assist(valid_requests)
+	_refine_torso_reach(valid_requests)
 	for request: SkierGrabReachRequest in valid_requests:
 		_apply_clavicle_assist(request)
 	skeleton.force_update_all_bone_transforms()
@@ -502,6 +507,36 @@ func _apply_upper_spine_assist(requests: Array[SkierGrabReachRequest]) -> void:
 		_aligned_world_rotation(helper_index, child_index, assisted_direction)
 	)
 	skeleton.force_update_all_bone_transforms()
+
+func _refine_torso_reach(requests: Array[SkierGrabReachRequest]) -> void:
+	# Supplement the authored fold with at most 0.2 radians of reach-directed
+	# correction, so reduced knee flex does not require longer arm segments.
+	var index := int(bone_indices[&"spine"])
+	var baseline := _bone_world_index(index).basis.orthonormalized().get_rotation_quaternion()
+	for iteration: int in 5:
+		var pivot := _bone_world_index(index).origin
+		var current_sum := Vector3.ZERO
+		var desired_sum := Vector3.ZERO
+		var weight_sum := 0.0
+		for request: SkierGrabReachRequest in requests:
+			var shoulder := _bone_world(StringName("%s_shoulder" % request.side)).origin
+			var toward := request.target_marker.global_position - shoulder
+			var lengths := arm_lengths(request.side)
+			var deficit := maxf(0.0, toward.length() - lengths.x - lengths.y + 0.04)
+			current_sum += (shoulder - pivot) * request.weight
+			desired_sum += (shoulder + toward.normalized() * deficit - pivot) * request.weight
+			weight_sum += request.weight
+		if current_sum.length_squared() < 0.0001 or desired_sum.length_squared() < 0.0001:
+			continue
+		var rotation := _bone_world_index(index).basis.orthonormalized().get_rotation_quaternion()
+		var correction := Quaternion(current_sum.normalized(), desired_sum.normalized())
+		var candidate := (correction * rotation).normalized()
+		var limit := profile.upper_spine_reach_limit * 0.4 * clampf(weight_sum / requests.size(), 0.0, 1.0)
+		var turn := baseline.angle_to(candidate)
+		if turn > limit and turn > 0.0001:
+			candidate = baseline.slerp(candidate, limit / turn).normalized()
+		_set_bone_world_rotation(index, candidate)
+		skeleton.force_update_all_bone_transforms()
 
 func _apply_clavicle_assist(request: SkierGrabReachRequest) -> void:
 	var helper_semantic := StringName("%s_clavicle" % request.side)
@@ -732,7 +767,7 @@ func _build_attachments() -> void:
 	var jacket := SkierEquipment.material(outfit_profile.jacket_color, outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
 	var jacket_trim := SkierEquipment.material(outfit_profile.jacket_color.darkened(0.28), outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
 	var jacket_accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.cloth_roughness, 0.02, outfit_profile.cloth_specular)
-	var pole_surface := SkierEquipment.material(outfit_profile.pole_color, outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
+	var pole_surface := SkierEquipment.material(outfit_profile.pole_color.darkened(0.16), outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
 	var helmet_surface := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var frame_surface := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18, outfit_profile.hardgoods_specular)
 	var lens_surface := SkierEquipment.material(outfit_profile.goggle_lens_color, outfit_profile.lens_roughness, outfit_profile.lens_metallic, outfit_profile.lens_specular)
@@ -869,29 +904,115 @@ func _stabilize_equipment_poles() -> void:
 		var current_direction := (tip.global_position - pivot.global_position).normalized()
 		var downward_alignment := current_direction.dot(down)
 		var grabbing := (_grab_target_world[side] as Vector3) != Vector3.ZERO
-		if downward_alignment >= 0.58 and not grabbing:
-			continue
 		var side_sign := -1.0 if side == &"left" else 1.0
-		if grabbing:
-			# Cross-body grabs place the named left hand on the right ski. Sweep
-			# away from the actual hand position, rather than across both legs.
-			side_sign = clampf((pivot.global_position - _bone_world(&"pelvis").origin).dot(lateral) / 0.18, -1.0, 1.0)
-		var target_direction := (down * 0.88 - forward * 0.32 + lateral * side_sign * (0.72 if grabbing else 0.28)).normalized()
-		var y_axis := -target_direction
-		var z_axis := forward.slide(y_axis)
-		if z_axis.length_squared() < 0.0001:
-			z_axis = lateral.slide(y_axis)
-		if z_axis.length_squared() < 0.0001:
-			z_axis = Vector3.FORWARD.slide(y_axis)
-		z_axis = z_axis.normalized()
-		var x_axis := y_axis.cross(z_axis).normalized()
-		z_axis = x_axis.cross(y_axis).normalized()
-		var target_basis := Basis(x_axis, y_axis, z_axis)
+		# Cross-body grabs and switch/style poses can move a hand across the
+		# pelvis. Sweep away from the hand's actual lateral position so the pole
+		# remains outside the nearest leg while preserving the hand attachment.
+		var hand_lateral := (pivot.global_position - _bone_world(&"pelvis").origin).dot(lateral)
+		if absf(hand_lateral) > 0.025:
+			side_sign = signf(hand_lateral)
+		# A pole can still be vertical enough to pass the gravity check while its
+		# shaft is folded into the thigh during a grab or compact style pose. Keep
+		# a small lateral clearance on every side of the skier before deciding the
+		# authored orientation is safe.
+		var lateral_alignment := current_direction.dot(lateral) * side_sign
+		var lateral_correction := clampf((0.12 - lateral_alignment) / 0.55, 0.0, 1.0)
+		var current_clearance := _minimum_pole_knee_clearance(pivot.global_position, tip.global_position)
+		var clearance_correction := clampf((MIN_POLE_KNEE_CLEARANCE - current_clearance) / MIN_POLE_KNEE_CLEARANCE, 0.0, 1.0)
+		if downward_alignment >= 0.58 and not grabbing and lateral_correction <= 0.0 and clearance_correction <= 0.0:
+			continue
+		var target_lateral_strength := 0.72 if grabbing else 0.28
+		var target_direction := (down * 0.88 - forward * 0.32 + lateral * side_sign * target_lateral_strength).normalized()
+		var target_tip := pivot.global_position + target_direction * POLE_SHAFT_LENGTH
+		var target_clearance := _minimum_pole_knee_clearance(pivot.global_position, target_tip)
+		var target_outward := target_direction.dot(lateral) * side_sign
+		# A deterministic outward/downhill fallback keeps a shaft from threading
+		# through either knee during switch and compact grab/style poses. The pivot
+		# remains hand-mounted; only the shaft orientation is corrected.
+		if target_clearance < MIN_POLE_KNEE_CLEARANCE or target_outward < 0.08:
+			target_direction = (down * 0.94 - forward * 0.22 + lateral * side_sign * 1.0).normalized()
+			target_tip = pivot.global_position + target_direction * POLE_SHAFT_LENGTH
+			target_clearance = _minimum_pole_knee_clearance(pivot.global_position, target_tip)
+		var target_basis := _pole_basis_for_direction(target_direction, forward, lateral)
 		# A hard replacement made a pole twitch when a grab or flip crossed the
 		# readability threshold. Preserve the authored hand pose and blend only
 		# the unsafe part back toward a downhill shaft direction.
-		var correction_weight := maxf(0.85 if grabbing else 0.0, clampf((0.58 - downward_alignment) / 0.85, 0.0, 1.0))
-		pivot.global_basis = pivot.global_basis.slerp(target_basis, correction_weight * 0.72).orthonormalized()
+		var vertical_correction := clampf((0.58 - downward_alignment) / 0.85, 0.0, 1.0)
+		var correction_weight := maxf(maxf(maxf(0.85 if grabbing else 0.0, vertical_correction), lateral_correction), clearance_correction)
+		# Lateral violations need a firmer blend than the gentle vertical
+		# readability correction; otherwise the shaft remains between the knees
+		# for the entire held pose even though its tip points downhill.
+		var blend_limit := 0.72 if lateral_correction <= 0.0 and clearance_correction <= 0.0 else 0.96
+		pivot.global_basis = pivot.global_basis.slerp(target_basis, correction_weight * blend_limit).orthonormalized()
+		# If the blended result is still inside the minimum envelope, finish the
+		# correction in the same deterministic update rather than allowing a one
+		# frame knee penetration to reach the renderer.
+		if (lateral_alignment < 0.02 or _minimum_pole_knee_clearance(pivot.global_position, tip.global_position) < MIN_POLE_KNEE_CLEARANCE) and target_outward >= 0.08:
+			pivot.global_basis = target_basis
+		# Re-read the attachment after the transform write. BoneAttachment3D can
+		# refresh its parent during a skeleton update, so a final deterministic
+		# check prevents a style/switch pose from restoring an inward shaft.
+		var final_direction := (tip.global_position - pivot.global_position).normalized()
+		var final_side_sign := signf((pivot.global_position - _bone_world(&"pelvis").origin).dot(lateral))
+		if is_zero_approx(final_side_sign):
+			final_side_sign = -1.0 if side == &"left" else 1.0
+		if final_direction.dot(lateral) * final_side_sign < 0.02:
+			var final_target_direction := (down * 0.94 - forward * 0.22 + lateral * final_side_sign * 1.0).normalized()
+			pivot.global_basis = _pole_basis_for_direction(final_target_direction, forward, lateral)
+
+func pole_clearance_snapshot() -> Dictionary:
+	var left_pivot := equipment_nodes.get(&"left_pole") as Node3D
+	var right_pivot := equipment_nodes.get(&"right_pole") as Node3D
+	var left_tip := equipment_tips.get(&"left") as Node3D
+	var right_tip := equipment_tips.get(&"right") as Node3D
+	if left_pivot == null or right_pivot == null or left_tip == null or right_tip == null:
+		return {}
+	var lateral := driver.global_basis.x.normalized()
+	var left_direction := (left_tip.global_position - left_pivot.global_position).normalized()
+	var right_direction := (right_tip.global_position - right_pivot.global_position).normalized()
+	var pelvis_position := _bone_world(&"pelvis").origin
+	var left_side_sign := signf((left_pivot.global_position - pelvis_position).dot(lateral))
+	var right_side_sign := signf((right_pivot.global_position - pelvis_position).dot(lateral))
+	if is_zero_approx(left_side_sign):
+		left_side_sign = -1.0
+	if is_zero_approx(right_side_sign):
+		right_side_sign = 1.0
+	var left_clearance := _minimum_pole_knee_clearance(left_pivot.global_position, left_tip.global_position)
+	var right_clearance := _minimum_pole_knee_clearance(right_pivot.global_position, right_tip.global_position)
+	return {
+		"left_pole_knee_clearance_m": left_clearance,
+		"right_pole_knee_clearance_m": right_clearance,
+		"pole_knee_clearance_m": minf(left_clearance, right_clearance),
+		"left_pole_outward_dot": left_direction.dot(lateral) * left_side_sign,
+		"right_pole_outward_dot": right_direction.dot(lateral) * right_side_sign,
+		"poles_outward": left_direction.dot(lateral) * left_side_sign >= 0.02 and right_direction.dot(lateral) * right_side_sign >= 0.02,
+	}
+
+func _pole_basis_for_direction(direction: Vector3, forward: Vector3, lateral: Vector3) -> Basis:
+	var safe_direction := direction.normalized() if direction.length_squared() > 0.0001 else Vector3.DOWN
+	var y_axis := -safe_direction
+	var z_axis := forward.slide(y_axis)
+	if z_axis.length_squared() < 0.0001:
+		z_axis = lateral.slide(y_axis)
+	if z_axis.length_squared() < 0.0001:
+		z_axis = Vector3.FORWARD.slide(y_axis)
+	z_axis = z_axis.normalized()
+	var x_axis := y_axis.cross(z_axis).normalized()
+	z_axis = x_axis.cross(y_axis).normalized()
+	return Basis(x_axis, y_axis, z_axis)
+
+func _minimum_pole_knee_clearance(start: Vector3, end: Vector3) -> float:
+	var left_knee := _bone_world(&"left_knee").origin
+	var right_knee := _bone_world(&"right_knee").origin
+	return minf(_point_to_segment_distance(left_knee, start, end), _point_to_segment_distance(right_knee, start, end))
+
+func _point_to_segment_distance(point: Vector3, start: Vector3, end: Vector3) -> float:
+	var segment := end - start
+	var length_squared := segment.length_squared()
+	if length_squared <= 0.000001:
+		return point.distance_to(start)
+	var t := clampf((point - start).dot(segment) / length_squared, 0.0, 1.0)
+	return point.distance_to(start.lerp(end, t))
 
 func _bone_attachment(semantic: StringName, node_name: String) -> BoneAttachment3D:
 	var attachment := BoneAttachment3D.new()

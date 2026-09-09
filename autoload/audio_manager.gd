@@ -1,6 +1,7 @@
 extends Node
 
 const AudioMixSolverModule := preload("res://audio/audio_mix_solver.gd")
+const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 const MAX_GENERATED_FRAMES_PER_PROCESS := 1024
 const MIN_RAIL_RUMBLE_SPEED := 4.0
 
@@ -41,7 +42,7 @@ func _ready() -> void:
 	# creating an AudioStreamGeneratorPlayback in that mode: the engine keeps a
 	# short-lived playback reference in the audio server until the process exits,
 	# which otherwise reports a false ObjectDB leak for fast tests.
-	_headless_audio = OS.has_feature("headless") or DisplayServer.get_name().to_lower() == "headless"
+	_headless_audio = RuntimeEnvironment.is_headless()
 	if _headless_audio:
 		return
 	_ensure_bus("Music")
