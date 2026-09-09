@@ -125,7 +125,7 @@ Kinks, slide stance, authored drift bias, and the initial capture offset can inc
 
 ## Root, ski, and boot ownership
 
-The `CharacterBody3D` remains the only root-motion owner. Terrain/rail contact produces authoritative ski targets without allowing animation to rewrite the root. Each boot has a calibrated ski-local binding transform; the presentation system converts a ski target to a boot target and uses bounded pelvis compensation plus specialized two-bone leg IK to reach it. In unconstrained air and bail stages the relationship reverses: the evaluated boot pose drives the rigid boot/ski assembly, and contact IK is reduced or disabled.
+The `CharacterBody3D` remains the only root-motion owner. Terrain/rail contact produces authoritative ski targets without allowing animation to rewrite the root. Each boot has a calibrated ski-local binding transform; the presentation system converts a ski target to a boot target and uses bounded pelvis compensation plus specialized two-bone leg IK to reach it. In unconstrained air and bail stages the relationship reverses: the evaluated boot pose drives the rigid boot/ski assembly, and contact IK is reduced or disabled. Immediately before touchdown, presentation-only AIR preview IK may reach toward the cached predicted landing plane without writing gameplay transforms, contact, scoring, or trick state.
 
 ## Course geometry
 

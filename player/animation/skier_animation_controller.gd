@@ -282,6 +282,9 @@ var _right_leg_ik_debug: Dictionary = {}
 var _has_evaluated_frame := false
 var _left_boot_target_world := Transform3D.IDENTITY
 var _right_boot_target_world := Transform3D.IDENTITY
+var _air_preview_targets_valid := false
+var _air_preview_ik_weight := 0.0
+var _air_preview_obstruction := 1.0
 
 func _ready() -> void:
 	if profile != null:
@@ -556,6 +559,9 @@ func debug_snapshot() -> Dictionary:
 		"rail_balance": _rail_balance_last,
 		"rail_phase": _rail_phase_name,
 		"leg_ik_weight": _leg_ik_weight,
+		"air_preview_targets_valid": _air_preview_targets_valid,
+		"air_preview_ik_weight": _air_preview_ik_weight,
+		"air_preview_obstruction": _air_preview_obstruction,
 		"pelvis_ik_correction": _pelvis_ik_correction,
 		"left_leg_reach_ratio": float(_left_leg_ik_debug.get("reach_ratio", 0.0)),
 		"right_leg_reach_ratio": float(_right_leg_ik_debug.get("reach_ratio", 0.0)),
@@ -749,7 +755,13 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 	if _grab_definition == null or _grab_pose_weight <= 0.01:
 		left_ski.rotation = Vector3.ZERO
 		right_ski.rotation = Vector3.ZERO
+	var left_ski_target := frame.left_ski_target_world
+	var right_ski_target := frame.right_ski_target_world
+	var targets_valid := frame.left_ski_target_valid and frame.right_ski_target_valid
 	var target_weight := 0.0
+	_air_preview_targets_valid = false
+	_air_preview_ik_weight = 0.0
+	_air_preview_obstruction = 1.0
 	if frame.locomotion_state == STATE_GROUND:
 		target_weight = profile.ground_leg_ik_weight
 	elif frame.locomotion_state == STATE_GRIND:
@@ -758,9 +770,21 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 		var start := clampf(profile.crash_recovery_ik_start, 0.0, 0.95)
 		var progress := _crash_stage_progress_for_frame(frame, _crash_stage_time(frame))
 		target_weight = profile.ground_leg_ik_weight * smoothstep(start, 1.0, progress)
+	elif frame.locomotion_state == STATE_AIR:
+		var preview := _resolve_air_preview_targets(frame)
+		_air_preview_targets_valid = bool(preview.valid)
+		if _air_preview_targets_valid:
+			left_ski_target = preview.left
+			right_ski_target = preview.right
+			targets_valid = true
+			target_weight = float(preview.weight)
+			_air_preview_ik_weight = target_weight
+			_air_preview_obstruction = float(preview.obstruction)
+		else:
+			targets_valid = false
+			target_weight = 0.0
 	else:
-		target_weight = profile.air_leg_ik_weight if frame.locomotion_state == STATE_AIR else profile.bail_leg_ik_weight
-	var targets_valid := frame.left_ski_target_valid and frame.right_ski_target_valid
+		target_weight = profile.bail_leg_ik_weight
 	if not targets_valid:
 		target_weight = 0.0
 	_leg_ik_weight = _damp(_leg_ik_weight, target_weight, profile.leg_ik_weight_response, delta)
@@ -773,17 +797,17 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 		return
 	var target_blend := 1.0 - exp(-profile.leg_ik_weight_response * delta)
 	if not _ski_targets_initialized:
-		_left_ski_target_smoothed = frame.left_ski_target_world
-		_right_ski_target_smoothed = frame.right_ski_target_world
+		_left_ski_target_smoothed = left_ski_target
+		_right_ski_target_smoothed = right_ski_target
 		_ski_targets_initialized = true
 	else:
 		# Contacts travel with the physics root. Filter changes in the support
 		# relative to that root, otherwise speed turns the filter into ski drag.
 		var root_motion := global_transform * _ski_target_reference.affine_inverse()
-		_left_ski_target_smoothed = _advect_ski_contact(_left_ski_target_smoothed, root_motion, frame.left_ski_target_world.basis.y)
-		_right_ski_target_smoothed = _advect_ski_contact(_right_ski_target_smoothed, root_motion, frame.right_ski_target_world.basis.y)
-		_left_ski_target_smoothed = _left_ski_target_smoothed.interpolate_with(frame.left_ski_target_world, target_blend)
-		_right_ski_target_smoothed = _right_ski_target_smoothed.interpolate_with(frame.right_ski_target_world, target_blend)
+		_left_ski_target_smoothed = _advect_ski_contact(_left_ski_target_smoothed, root_motion, left_ski_target.basis.y)
+		_right_ski_target_smoothed = _advect_ski_contact(_right_ski_target_smoothed, root_motion, right_ski_target.basis.y)
+		_left_ski_target_smoothed = _left_ski_target_smoothed.interpolate_with(left_ski_target, target_blend)
+		_right_ski_target_smoothed = _right_ski_target_smoothed.interpolate_with(right_ski_target, target_blend)
 	_ski_target_reference = global_transform
 	var left_contact_pose := _left_ski_target_smoothed
 	var right_contact_pose := _right_ski_target_smoothed
@@ -840,6 +864,77 @@ func _advect_ski_contact(previous: Transform3D, root_motion: Transform3D, normal
 	var support_up := normal.normalized()
 	moved.origin -= support_up * (moved.origin - previous.origin).dot(support_up)
 	return moved
+
+func _resolve_air_preview_targets(frame: SkierAnimationFrame) -> Dictionary:
+	var empty := {
+		"valid": false,
+		"left": Transform3D.IDENTITY,
+		"right": Transform3D.IDENTITY,
+		"weight": 0.0,
+		"obstruction": 1.0,
+	}
+	var preview: Dictionary = LandingPoseLayer.air_preview_targets(
+		frame,
+		profile,
+		profile.leg_ik_min_stance_width,
+		global_position,
+		global_basis
+	)
+	if not bool(preview.valid):
+		return empty
+	var left: Transform3D = preview.left
+	var right: Transform3D = preview.right
+	if not _preview_reach_feasible(left, right):
+		return empty
+	var obstruction := _preview_obstruction_scale(left.origin, right.origin)
+	var extension := LandingPoseLayer.air_extension_scale(
+		frame.left_ground_distance,
+		frame.right_ground_distance,
+		frame.seat_distance
+	)
+	var weight := LandingPoseLayer.preview_ik_weight(
+		profile.air_preview_leg_ik_weight,
+		_landing_anticipation,
+		extension,
+		obstruction
+	)
+	return {
+		"valid": true,
+		"left": left,
+		"right": right,
+		"weight": weight,
+		"obstruction": obstruction,
+	}
+
+func _preview_obstruction_scale(left_target: Vector3, right_target: Vector3) -> float:
+	if not is_inside_tree():
+		return 1.0
+	var space := get_world_3d().direct_space_state
+	var exclude: Array = []
+	var body := get_parent()
+	if body is CollisionObject3D:
+		exclude.append((body as CollisionObject3D).get_rid())
+	var left_scale := SkiConstrainedLegIK.feature_obstruction_scale(space, left_hip.global_position, left_target, exclude)
+	var right_scale := SkiConstrainedLegIK.feature_obstruction_scale(space, right_hip.global_position, right_target, exclude)
+	return minf(left_scale, right_scale)
+
+func _preview_reach_feasible(left_ski_target: Transform3D, right_ski_target: Transform3D) -> bool:
+	var left_boot := left_ski_target * _left_binding_rest
+	var right_boot := right_ski_target * _right_binding_rest
+	return _leg_reach_feasible(left_hip, left_knee, left_boot.origin) and _leg_reach_feasible(right_hip, right_knee, right_boot.origin)
+
+func _leg_reach_feasible(hip: Node3D, knee: Node3D, boot_target: Vector3) -> bool:
+	if hip == null or knee == null or not boot_target.is_finite():
+		return false
+	var thigh_length := maxf(knee.position.length(), 0.001)
+	var shin_length := 0.49
+	if hip == left_hip and left_boot != null:
+		shin_length = maxf(left_boot.position.length(), 0.001)
+	elif hip == right_hip and right_boot != null:
+		shin_length = maxf(right_boot.position.length(), 0.001)
+	var maximum := maxf(thigh_length + shin_length - 0.012, 0.02) * profile.leg_ik_max_reach_ratio
+	var reach := hip.global_position.distance_to(boot_target)
+	return reach <= maximum + profile.leg_ik_pelvis_translation_limit
 
 func _apply_bounded_pelvis_compensation(left_target: Vector3, right_target: Vector3, delta: float, weight: float) -> void:
 	var correction := Vector3.ZERO
@@ -3345,6 +3440,9 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_transition_progress = 1.0
 	_has_evaluated_frame = false
 	_leg_ik_weight = 0.0
+	_air_preview_targets_valid = false
+	_air_preview_ik_weight = 0.0
+	_air_preview_obstruction = 1.0
 	_pelvis_ik_correction = Vector3.ZERO
 	_ski_targets_initialized = false
 	_left_boot_target_world = Transform3D.IDENTITY

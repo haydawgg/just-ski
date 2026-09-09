@@ -1,6 +1,9 @@
 class_name SkiConstrainedLegIK
 extends RefCounted
 
+const FEATURE_MASK := 4
+const CONTACT_LIFT := 0.04
+
 var _last_poles: Dictionary = {}
 var _last_rotations: Dictionary = {}
 
@@ -22,6 +25,104 @@ static func separate_boot_targets(left_target: Vector3, right_target: Vector3, p
 		return [left_target, right_target]
 	var push := (min_stance - separation) * 0.5
 	return [left_target - lateral * push, right_target + lateral * push]
+
+## Shared ski-contact frame used by ground probes, rail stance, spawn, and AIR
+## predicted-surface preview. Degenerate heading/normal fall back without
+## producing a non-finite basis.
+static func contact_transform(contact_point: Vector3, forward: Vector3, normal: Vector3, lift: float = CONTACT_LIFT) -> Transform3D:
+	var up := normal.normalized() if normal.is_finite() and normal.length_squared() > 0.001 else Vector3.UP
+	var planar_forward := forward.slide(up) if forward.is_finite() else Vector3.ZERO
+	if planar_forward.length_squared() < 0.001:
+		planar_forward = Vector3.FORWARD.slide(up)
+	if planar_forward.length_squared() < 0.001:
+		planar_forward = Vector3.RIGHT.slide(up)
+	if planar_forward.length_squared() < 0.001:
+		planar_forward = Vector3.RIGHT
+	var origin := contact_point if contact_point.is_finite() else Vector3.ZERO
+	var basis := Basis.looking_at(planar_forward.normalized(), up).orthonormalized()
+	if not is_finite_basis(basis):
+		basis = Basis.IDENTITY
+	return Transform3D(basis, origin + up * lift)
+
+static func project_onto_plane(point: Vector3, plane_point: Vector3, plane_normal: Vector3) -> Vector3:
+	var up := plane_normal.normalized() if plane_normal.is_finite() and plane_normal.length_squared() > 0.0001 else Vector3.UP
+	var source := point if point.is_finite() else Vector3.ZERO
+	var plane_origin := plane_point if plane_point.is_finite() else Vector3.ZERO
+	return source - up * (source - plane_origin).dot(up)
+
+## Left/right ski transforms on a support plane. Stance is applied along the
+## plane-right axis derived from the projected forward so left/right cannot swap.
+static func stance_ski_targets(
+	origin: Vector3,
+	forward: Vector3,
+	normal: Vector3,
+	half_stance: float,
+	lift: float = CONTACT_LIFT
+) -> Dictionary:
+	var empty := {
+		"valid": false,
+		"left": Transform3D.IDENTITY,
+		"right": Transform3D.IDENTITY,
+		"forward": Vector3.FORWARD,
+		"up": Vector3.UP,
+		"lateral": Vector3.RIGHT,
+		"basis": Basis.IDENTITY,
+	}
+	if not origin.is_finite() or not is_finite(half_stance):
+		return empty
+	var sample := contact_transform(origin, forward, normal, 0.0)
+	if not is_finite_transform(sample):
+		return empty
+	var up: Vector3 = sample.basis.y.normalized()
+	var planar_forward: Vector3 = -sample.basis.z
+	var lateral: Vector3 = sample.basis.x
+	if lateral.length_squared() < 0.0001 or not lateral.is_finite():
+		return empty
+	lateral = lateral.normalized()
+	var width := maxf(half_stance, 0.0)
+	var left := contact_transform(origin - lateral * width, planar_forward, up, lift)
+	var right := contact_transform(origin + lateral * width, planar_forward, up, lift)
+	if not is_finite_transform(left) or not is_finite_transform(right):
+		return empty
+	return {
+		"valid": true,
+		"left": left,
+		"right": right,
+		"forward": planar_forward,
+		"up": up,
+		"lateral": lateral,
+		"basis": sample.basis,
+	}
+
+## Cheap feature veto for presentation reach. A solid park-feature collider
+## between the visual ski and the predicted snow plane disables preview IK.
+## This is not a landing-prediction query and does not solve ski-feature contact.
+static func feature_obstruction_scale(
+	space: PhysicsDirectSpaceState3D,
+	from: Vector3,
+	to: Vector3,
+	exclude: Array = []
+) -> float:
+	if space == null or not from.is_finite() or not to.is_finite():
+		return 1.0
+	if from.distance_squared_to(to) <= 0.0001:
+		return 1.0
+	var query := PhysicsRayQueryParameters3D.create(from, to, FEATURE_MASK)
+	var blocked: Array[RID] = []
+	for item: Variant in exclude:
+		if item is RID:
+			blocked.append(item)
+	query.exclude = blocked
+	var hit := space.intersect_ray(query)
+	if hit.is_empty():
+		return 1.0
+	return 0.0
+
+static func is_finite_basis(value: Basis) -> bool:
+	return value.x.is_finite() and value.y.is_finite() and value.z.is_finite()
+
+static func is_finite_transform(value: Transform3D) -> bool:
+	return value.origin.is_finite() and is_finite_basis(value.basis)
 
 func solve_leg(
 	hip: Node3D,
@@ -102,7 +203,7 @@ func solve_leg(
 		joint.quaternion = before.slerp(target, blend).normalized()
 		solved.append(joint.quaternion)
 	_last_rotations[side] = solved
-	result.valid = _finite_transform(boot.global_transform)
+	result.valid = is_finite_transform(boot.global_transform)
 	result.reach_ratio = target_distance / maximum_reach
 	result.knee_correction = knee_correction
 	result.infeasibility = clampf(infeasibility, 0.0, 1.0)
@@ -121,15 +222,3 @@ func _clamp_local_euler(node: Node3D, minimum: Vector3, maximum: Vector3) -> voi
 		clampf(value.y, minimum.y, maximum.y),
 		clampf(value.z, minimum.z, maximum.z)
 	)
-
-func _finite_transform(value: Transform3D) -> bool:
-	var values := [
-		value.origin.x, value.origin.y, value.origin.z,
-		value.basis.x.x, value.basis.x.y, value.basis.x.z,
-		value.basis.y.x, value.basis.y.y, value.basis.y.z,
-		value.basis.z.x, value.basis.z.y, value.basis.z.z,
-	]
-	for item: float in values:
-		if not is_finite(item):
-			return false
-	return true

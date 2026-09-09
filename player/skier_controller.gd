@@ -1976,24 +1976,16 @@ func _populate_animation_ski_targets() -> void:
 		ski_forward_target = -global_basis.z
 	if rail_pose != 0:
 		ski_forward_target = ski_forward_target.rotated(up, signf(float(rail_pose)) * PI * 0.5)
-	var lateral := ski_forward_target.cross(up).normalized()
-	if lateral.length_squared() < 0.001:
-		lateral = global_basis.x
-	var half_stance := 0.2
-	animation_frame.left_ski_target_world = _ski_contact_transform(animation_frame.rail_contact_point - lateral * half_stance, ski_forward_target, up)
-	animation_frame.right_ski_target_world = _ski_contact_transform(animation_frame.rail_contact_point + lateral * half_stance, ski_forward_target, up)
+	var stance: Dictionary = SkiConstrainedLegIK.stance_ski_targets(animation_frame.rail_contact_point, ski_forward_target, up, 0.2)
+	if not bool(stance.valid):
+		return
+	animation_frame.left_ski_target_world = stance.left
+	animation_frame.right_ski_target_world = stance.right
 	animation_frame.left_ski_target_valid = true
 	animation_frame.right_ski_target_valid = true
 
 func _ski_contact_transform(contact_point: Vector3, forward: Vector3, normal: Vector3) -> Transform3D:
-	var up := normal.normalized() if normal.length_squared() > 0.001 else Vector3.UP
-	var planar_forward := forward.slide(up)
-	if planar_forward.length_squared() < 0.001:
-		planar_forward = Vector3.FORWARD.slide(up)
-	if planar_forward.length_squared() < 0.001:
-		planar_forward = Vector3.RIGHT
-	var basis := Basis.looking_at(planar_forward.normalized(), up).orthonormalized()
-	return Transform3D(basis, contact_point + up * 0.04)
+	return SkiConstrainedLegIK.contact_transform(contact_point, forward, normal)
 
 func _predict_landing_time() -> float:
 	return float(_predict_landing().time)

@@ -336,6 +336,8 @@ extends Resource
 @export_range(0.0, 1.0) var ground_leg_ik_weight: float = 1.0
 @export_range(0.0, 1.0) var rail_leg_ik_weight: float = 0.94
 @export_range(0.0, 1.0) var air_leg_ik_weight: float = 0.0
+@export_range(0.0, 1.0) var air_preview_leg_ik_weight: float = 0.82
+@export var air_preview_stance_half_width: float = 0.22
 @export_range(0.0, 1.0) var bail_leg_ik_weight: float = 0.0
 @export var leg_ik_weight_response: float = 12.0
 @export var leg_ik_max_angular_rate: float = 8.0

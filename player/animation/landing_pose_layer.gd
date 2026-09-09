@@ -93,6 +93,100 @@ func readiness_targets(frame: SkierAnimationFrame, profile: SkierAnimationProfil
 func ready_for_values(valid: bool, anticipation: float, readiness: float, profile: SkierAnimationProfile) -> bool:
 	return valid and anticipation >= profile.ready_anticipation_threshold and readiness >= profile.ready_readiness_threshold
 
+## Existing landing anticipation/alignment envelope. Preview IK may only
+## synthesize targets inside this window.
+static func preview_window(profile: SkierAnimationProfile) -> float:
+	return maxf(maxf(profile.landing_anticipation_time, profile.landing_alignment_start), 0.05)
+
+static func preview_window_active(frame: SkierAnimationFrame, profile: SkierAnimationProfile) -> bool:
+	if frame.locomotion_state != 1 or frame.spawn_settle_active:
+		return false
+	if not frame.predicted_landing_valid or not is_finite(frame.predicted_landing_time) or frame.predicted_landing_time < 0.0:
+		return false
+	return frame.predicted_landing_time <= preview_window(profile)
+
+static func preview_ik_weight(
+	preview_weight: float,
+	landing_anticipation: float,
+	extension_clearance: float,
+	obstruction_scale: float = 1.0
+) -> float:
+	return (
+		clampf(preview_weight, 0.0, 1.0)
+		* clampf(landing_anticipation, 0.0, 1.0)
+		* clampf(extension_clearance, 0.0, 1.0)
+		* clampf(obstruction_scale, 0.0, 1.0)
+	)
+
+## Presentation-only predicted-surface ski targets. The predicted point and
+## normal define the landing plane; the current body is projected onto that
+## plane so legs reach the upcoming surface rather than a distant impact point.
+static func air_preview_targets(
+	frame: SkierAnimationFrame,
+	profile: SkierAnimationProfile,
+	min_stance: float,
+	body_origin: Vector3,
+	body_basis: Basis = Basis.IDENTITY
+) -> Dictionary:
+	var empty := {
+		"valid": false,
+		"left": Transform3D.IDENTITY,
+		"right": Transform3D.IDENTITY,
+		"forward": Vector3.FORWARD,
+		"up": Vector3.UP,
+		"origin": Vector3.ZERO,
+	}
+	if not preview_window_active(frame, profile):
+		return empty
+	var landing_normal := frame.predicted_landing_normal
+	if not landing_normal.is_finite() or landing_normal.length_squared() <= 0.000001:
+		return empty
+	landing_normal = landing_normal.normalized()
+	if not frame.predicted_landing_point.is_finite() or not body_origin.is_finite():
+		return empty
+	var heading := _preview_heading(frame, landing_normal, body_basis)
+	var origin := SkiConstrainedLegIK.project_onto_plane(body_origin, frame.predicted_landing_point, landing_normal)
+	var half_stance := maxf(profile.air_preview_stance_half_width, min_stance * 0.5)
+	var stance: Dictionary = SkiConstrainedLegIK.stance_ski_targets(origin, heading, landing_normal, half_stance)
+	if not bool(stance.valid):
+		return empty
+	var left: Transform3D = stance.left
+	var right: Transform3D = stance.right
+	var separated: Array = SkiConstrainedLegIK.separate_boot_targets(
+		left.origin,
+		right.origin,
+		stance.basis as Basis,
+		min_stance
+	)
+	left.origin = separated[0]
+	right.origin = separated[1]
+	if (right.origin - left.origin).dot(stance.lateral as Vector3) < min_stance - 0.0001:
+		return empty
+	if not SkiConstrainedLegIK.is_finite_transform(left) or not SkiConstrainedLegIK.is_finite_transform(right):
+		return empty
+	return {
+		"valid": true,
+		"left": left,
+		"right": right,
+		"forward": stance.forward,
+		"up": stance.up,
+		"origin": origin,
+	}
+
+static func _preview_heading(frame: SkierAnimationFrame, landing_normal: Vector3, body_basis: Basis) -> Vector3:
+	var ski_forward := frame.ski_forward if frame.ski_forward_valid and frame.ski_forward.is_finite() else Vector3.ZERO
+	var travel := frame.velocity_heading if frame.velocity_heading.is_finite() else Vector3.ZERO
+	var heading := ski_forward.slide(landing_normal)
+	if heading.length_squared() < 0.0001:
+		heading = travel.slide(landing_normal)
+	if heading.length_squared() < 0.0001:
+		heading = (-body_basis.z).slide(landing_normal) if body_basis.z.is_finite() else Vector3.ZERO
+	if heading.length_squared() < 0.0001:
+		heading = Vector3.FORWARD.slide(landing_normal)
+	if heading.length_squared() < 0.0001:
+		heading = Vector3.RIGHT
+	return heading.normalized()
+
 ## Restraint for airborne landing anticipation leg extension. The reach is
 ## time-driven, but the rendered skis must not punch through the support
 ## surface before the authoritative touchdown seats the body. Probe distances
