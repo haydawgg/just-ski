@@ -11,8 +11,14 @@ release URL and checksum-verified by `.github/workflows/quality.yml`.
 ## Windows export
 
 `export_presets.cfg` contains the maintained `Windows Desktop` preset and
-exports to `builds/windows/SummitSessions.exe`. Install the matching 4.7.2
-official export templates, then run from the repository root:
+exports to `builds/windows/SummitSessions.exe`. The preset exports the daytime
+and sunset production resort scenes plus their transitive Godot resource
+dependencies instead of packaging every repository resource. The production
+resource boundary and string-load rule are documented in
+`docs/EXPORT_CONTENT.md`.
+
+Install the matching 4.7.2 official export templates, then run from the
+repository root:
 
 ```powershell
 $godot = $env:GODOT_PATH
@@ -29,8 +35,12 @@ smoke-test the exported executable:
 ```
 
 An exported build should reach its main scene and exit without script,
-shader, or asset-loading errors. Project-authored code and content are
-licensed under the repository-root `LICENSE` (MIT). Distribute that file with
-the source or export documentation. The CC0/OFL external assets are documented
-separately in `docs/ASSET_SOURCES.md` and retain their own notices and license
-files. New binary assets must also follow `docs/ASSET_POLICY.md`.
+shader, or asset-loading errors. Record the artifact size as part of release
+validation; an unexpected size increase can indicate that development-only
+resources entered the production dependency graph.
+
+Project-authored code and content are licensed under the repository-root
+`LICENSE` (MIT). Distribute that file with the source or export documentation.
+The CC0/OFL external assets are documented separately in
+`docs/ASSET_SOURCES.md` and retain their own notices and license files. New
+binary assets must also follow `docs/ASSET_POLICY.md`.
