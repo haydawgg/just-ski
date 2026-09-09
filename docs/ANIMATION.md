@@ -26,7 +26,8 @@ normal smoothing. Player and camera reset physics interpolation after a teleport
 The camera runtime stability suite compares startup and post-crash reset body
 landmarks, ski/pole transforms, and camera framing before any movement, and
 checks that grab input/release state is cleared. Spawn settling does not add a
-separate AIR ski IK path; predicted-surface targeting remains a later phase.
+separate AIR ski IK path. Predicted-surface targeting uses the shared ski-contact
+helper from the existing AIR preview IK path rather than a spawn-only solver.
 
 ## Rig architecture
 
@@ -143,6 +144,8 @@ Landing animation has two separate responsibilities:
 
 Before contact, the skier can begin aligning skis, spotting, opening the arms, and extending the legs. A continuous presentation-only readiness envelope evaluates time-to-contact, surface orientation, vertical motion, and rotational residual. It does not replace the active trick phase or decide the gameplay landing result; the evaluated trick pose remains visible until contact starts the handoff. Anticipation leg extension is restrained by probe clearance near the seat (`LandingPoseLayer.air_extension_scale`), so the rendered skis cannot punch through the snow before the authoritative touchdown seats the body.
 
+Inside that same anticipation/alignment window, AIR preview IK synthesizes left/right ski targets from the already-cached landing prediction. The predicted point and normal define the landing plane; the current body is projected onto that plane, ski forward is preserved after projection, and the existing target smoother, minimum-stance separation, pelvis compensation, and reach/infeasibility safeguards consume those targets. A dedicated `air_preview_leg_ik_weight` scales with landing anticipation and extension clearance so the pose strengthens toward touchdown without a magnetic snap. Ordinary `air_leg_ik_weight` stays disabled. A cheap feature-obstruction ray can reduce or disable the preview if a solid park feature sits between the visual ski and the predicted snow plane; true ski-feature contact remains out of scope. Invalid prediction, window, normal, stance, or reach leaves AIR on the existing FK/trick pose. Preview IK never writes the gameplay root, velocity, contact, scoring, or trick state.
+
 After contact, clean, sketchy, and hard landing events drive different compression and recovery responses. Clean landings may trigger a short stomp layer. Failed landings hand off to the bail presentation instead of also playing a successful landing reaction. Impact compression is preserved, then a two-stage release holds the crouch while balance-driven wobble and arm/pole/head secondaries decay, then extends the legs toward idle after a profile-owned hold. Stage B is gated by presentation age, not a wobble epsilon. Wobble age-decay, soft/hard stabilization hold, compression recovery, and failsafe time stay in the animation profile so landings absorb, stabilize, and stand up within the existing 0.10–0.22 s compression, 0.22–0.55 s ordinary recovery, and 3.0 s pathological bounds. The landing animation and orientation suites guard the sequence.
 
 ## Rails
@@ -155,7 +158,7 @@ The layer moves through `APPROACH`, `CONTACT`, `COMPRESSION`, `GRIND`, and `RELE
 
 Gameplay owns the root. Ground/rail contact owns ski targets; free-air and bail presentation own the boot pose and derive each ski from its fixed binding transform. A state transition captures the final evaluated pose, including procedural layers and constraints, before the receiving owner begins.
 
-The canonical pose controller routes authored ski intent through hips, knees, and boots, then keeps ski-local rotation neutral. A specialized analytic two-bone solve moves each hip-knee-boot chain toward contact-owned boot targets. Stable knee hints, bilateral pelvis compensation, reach and crossing checks, correction-rate limits, and state-dependent weights prevent inverted knees or stretched legs. Crossed targets are additionally hard-separated to the minimum stance (`SkiConstrainedLegIK.separate_boot_targets`) before the solve, so X-shaped ski configurations cannot form. Skiing IK releases in air/bail and returns progressively during rail contact and recovery.
+The canonical pose controller routes authored ski intent through hips, knees, and boots, then keeps ski-local rotation neutral. A specialized analytic two-bone solve moves each hip-knee-boot chain toward contact-owned boot targets. Stable knee hints, bilateral pelvis compensation, reach and crossing checks, correction-rate limits, and state-dependent weights prevent inverted knees or stretched legs. Crossed targets are additionally hard-separated to the minimum stance (`SkiConstrainedLegIK.separate_boot_targets`) before the solve, so X-shaped ski configurations cannot form. Skiing IK releases in free air and bail, except for the dedicated AIR predicted-surface preview inside the landing anticipation window, and returns progressively during rail contact and recovery.
 
 ```text
 physics/gameplay root

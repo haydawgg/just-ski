@@ -278,6 +278,36 @@ func _test_contact_and_extension_contracts() -> void:
 	var ordered: Array = SkiConstrainedLegIK.separate_boot_targets(Vector3(-0.3, 0.0, 0.0), Vector3(0.3, 0.0, 0.0), Basis.IDENTITY, 0.16)
 	if (ordered[0] as Vector3).distance_to(Vector3(-0.3, 0.0, 0.0)) > 0.001 or (ordered[1] as Vector3).distance_to(Vector3(0.3, 0.0, 0.0)) > 0.001:
 		failures.append("Boot stance separation moved an already valid stance")
+	var degenerate := SkiConstrainedLegIK.contact_transform(Vector3.ZERO, Vector3.UP, Vector3.UP)
+	if not SkiConstrainedLegIK.is_finite_transform(degenerate):
+		failures.append("Shared ski-contact helper produced a non-finite degenerate heading frame")
+	var slope_normal := Vector3(0.0, 0.8, 0.6).normalized()
+	var stance: Dictionary = SkiConstrainedLegIK.stance_ski_targets(Vector3.ZERO, Vector3.FORWARD, slope_normal, 0.22)
+	if not bool(stance.valid):
+		failures.append("Shared stance helper rejected a sloped landing frame")
+	elif absf((stance.forward as Vector3).dot(slope_normal)) > 0.02:
+		failures.append("Shared stance helper did not keep ski forward tangent to the support plane")
+	var profile := ANIMATION_PROFILE
+	var preview_frame := SkierAnimationFrame.new()
+	preview_frame.locomotion_state = 1
+	preview_frame.predicted_landing_valid = true
+	preview_frame.predicted_landing_time = 0.12
+	preview_frame.predicted_landing_point = Vector3.ZERO
+	preview_frame.predicted_landing_normal = Vector3.UP
+	preview_frame.ski_forward = Vector3.FORWARD
+	preview_frame.ski_forward_valid = true
+	preview_frame.velocity_heading = Vector3.FORWARD
+	if not LandingPoseLayer.preview_window_active(preview_frame, profile):
+		failures.append("Landing preview window rejected a valid near-contact prediction")
+	preview_frame.predicted_landing_time = profile.landing_anticipation_time + 0.2
+	if LandingPoseLayer.preview_window_active(preview_frame, profile):
+		failures.append("Landing preview window accepted a prediction outside anticipation")
+	if absf(LandingPoseLayer.preview_ik_weight(0.8, 0.5, 0.5, 1.0) - 0.2) > 0.0001:
+		failures.append("AIR preview weight is not preview × anticipation × extension clearance")
+	if LandingPoseLayer.preview_ik_weight(1.0, 1.0, 1.0, 0.0) != 0.0:
+		failures.append("AIR preview weight ignored a feature-obstruction veto")
+	if SkiConstrainedLegIK.feature_obstruction_scale(null, Vector3.UP, Vector3.DOWN) != 1.0:
+		failures.append("Feature obstruction veto did not no-op without a physics space")
 	# Contact spray must ramp toward demand instead of switching on/off in one
 	# frame, while still responding within a few physics ticks.
 	var first_step := SkiSnowVFX.smooth_emitter_ratio(0.0, 0.68, 1.0 / 60.0)

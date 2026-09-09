@@ -9,7 +9,7 @@ This file tracks concrete, actionable bugs and missing functionality. Resolved i
 
 ## Trick scoring and contact state
 
-- **Airborne skis do not IK-anticipate the predicted surface.** Terrain probes and capsule touchdown end airborne state within 0.05 m of the seat, touchdown freezes the shared trick-rotation snapshot used by display, scoring, and landing validity, and anticipation leg extension is restrained near the seat. The rendered skis are still FK-posed in AIR, so exact pre-touchdown surface agreement still needs a human visual pass.
+- **Airborne ski landing-plane agreement still needs a human visual pass.** AIR preview IK now matches the cached predicted landing plane inside the existing anticipation window, with a dedicated preview weight, extension clearance, stance separation, reach safeguards, and a cheap feature-obstruction veto. Automated coverage asserts window validity, plane tangency, stance, ownership isolation, one prediction evaluation per physics step, AIR-to-GROUND handoff, and 30/60/120 Hz determinism. Whether the preparation reads as a smooth pre-touchdown settle remains a presentation judgment.
 - **Grab recognition is proximity-based by design.** Initial contact now requires a 0.14 m hand-to-ski reach with pose, airtime, hold-time, and scoring gates behind it. Whether 0.14 m reads as convincing contact still needs a human camera pass.
 
 ## Ski and pole IK
