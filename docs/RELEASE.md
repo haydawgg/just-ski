@@ -11,10 +11,11 @@ release URL and checksum-verified by `.github/workflows/quality.yml`.
 ## Windows export
 
 `export_presets.cfg` contains the maintained `Windows Desktop` preset and
-exports to `builds/windows/SummitSessions.exe`. The preset exports the daytime
-and sunset production resort scenes plus their transitive Godot resource
-dependencies instead of packaging every repository resource. The production
-resource boundary and string-load rule are documented in
+exports to `builds/windows/SummitSessions.exe`. The preset includes the full
+production Godot resource graph while excluding the development-only `tests/`
+and `tools/` resource trees. This is intentional because global `class_name`
+dependencies are not reliably represented by a selected-scene dependency
+closure. The production resource boundary is documented in
 `docs/EXPORT_CONTENT.md`.
 
 Install the matching 4.7.2 official export templates, then run from the
@@ -34,10 +35,15 @@ smoke-test the exported executable:
 & .\builds\windows\SummitSessions.exe --headless --quit-after 120
 ```
 
+CI also exports the committed preset as a standalone PCK and launches that
+exact pack with `--main-pack`. This catches missing resource/class dependencies
+without requiring the large platform export-template archive on every pull
+request. The release executable smoke remains required before distribution.
+
 An exported build should reach its main scene and exit without script,
 shader, or asset-loading errors. Record the artifact size as part of release
 validation; an unexpected size increase can indicate that development-only
-resources entered the production dependency graph.
+resources entered the production package.
 
 Project-authored code and content are licensed under the repository-root `LICENSE` (MIT). Distribute that file with the source or export documentation.
 The CC0/OFL external assets are documented separately in
