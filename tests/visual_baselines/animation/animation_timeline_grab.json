@@ -1,0 +1,25 @@
+{
+  "baseline_id": "animation.timeline.grab",
+  "compatibility": {
+    "capture_height": 720,
+    "capture_width": 1280,
+    "environment": "daytime",
+    "fixed_fps": 60,
+    "godot_version": "4.7.2-stable (official)",
+    "gpu": "NVIDIA GeForce RTX 4050 Laptop GPU",
+    "preset": "high",
+    "render_scale": 1.0,
+    "renderer": "Forward Plus",
+    "video_adapter": "NVIDIA GeForce RTX 4050 Laptop GPU"
+  },
+  "schema_version": "visual-evidence-v1",
+  "source_run_id": "visual_20260909_143903_407_6074f6e",
+  "source_scenario_id": "animation.timeline.grab",
+  "source_sha256": "95edd668ef1a573bb8228179662b58fb1acf82929cb66e9d9e1925ed72c44b1a",
+  "suite": "animation",
+  "thresholds": {
+    "changed_fraction": 0.1,
+    "mean_abs_delta": 0.03,
+    "pixel_tolerance": 8
+  }
+}
