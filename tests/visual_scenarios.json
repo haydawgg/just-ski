@@ -462,6 +462,382 @@
       ]
     },
     {
+      "id": "environment.motion.carve",
+      "suite": "environment",
+      "label": "Ten-second carve motion sweep",
+      "state": "MOTION_SWEEP",
+      "phase": "carve",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "motion_carve",
+      "required_artifacts": [
+        "motion",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the skier remain readable throughout the carve sweep?",
+        "Do contact, tracks, spray, and camera motion agree over time?"
+      ],
+      "capture_timing": {
+        "trigger": "fixed_physics_sweep",
+        "duration_s": 10,
+        "key": "motion_carve"
+      },
+      "semantic_checks": [
+        "finite_telemetry",
+        "monotonic_time"
+      ]
+    },
+    {
+      "id": "environment.motion.straight",
+      "suite": "environment",
+      "label": "Ten-second straight motion sweep",
+      "state": "MOTION_SWEEP",
+      "phase": "straight",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "motion_straight",
+      "required_artifacts": [
+        "motion",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the downhill camera preserve a stable route read without visual drift?",
+        "Does the snow surface retain form at gameplay speed?"
+      ],
+      "capture_timing": {
+        "trigger": "fixed_physics_sweep",
+        "duration_s": 10,
+        "key": "motion_straight"
+      },
+      "semantic_checks": [
+        "finite_telemetry",
+        "monotonic_time"
+      ]
+    },
+    {
+      "id": "environment.motion.landing",
+      "suite": "environment",
+      "label": "Ten-second landing motion sweep",
+      "state": "MOTION_SWEEP",
+      "phase": "landing",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "motion_landing",
+      "required_artifacts": [
+        "motion",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does takeoff, airtime, contact, and compression read as one connected motion?",
+        "Does landing spray remain bounded and subordinate to the skier silhouette?"
+      ],
+      "capture_timing": {
+        "trigger": "fixed_physics_sweep",
+        "duration_s": 10,
+        "key": "motion_landing"
+      },
+      "semantic_checks": [
+        "finite_telemetry",
+        "monotonic_time"
+      ]
+    },
+    {
+      "id": "environment.recovery.oob",
+      "suite": "environment",
+      "label": "Out-of-bounds recovery lifecycle",
+      "state": "RECOVERY",
+      "phase": "out_of_bounds",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "recovery_oob",
+      "required_artifacts": [
+        "raw_started",
+        "raw_respawned",
+        "raw_completed",
+        "recovery",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the recovery fade clearly communicate the return without leaving a stale skier or camera frame?",
+        "Does the completed phase return to a stable, readable summit state?"
+      ],
+      "capture_timing": {
+        "trigger": "course_recovery_signals",
+        "phases": [
+          "started",
+          "respawned",
+          "completed"
+        ],
+        "key": "recovery_oob"
+      },
+      "semantic_checks": [
+        "recovery_started",
+        "recovery_respawned",
+        "recovery_completed",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.approach",
+      "suite": "environment",
+      "label": "Ramp texture tabletop approach",
+      "state": "RAMP_TEXTURE",
+      "phase": "approach",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_approach",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Is the tabletop snow texture readable before the skier reaches the lip?",
+        "Does the ramp separate from the adjacent piste without looking like a hard-surface panel?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_approach"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.lip",
+      "suite": "environment",
+      "label": "Ramp texture lip",
+      "state": "RAMP_TEXTURE",
+      "phase": "lip",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_lip",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the triplanar snow detail stay coherent across the upward lip?",
+        "Is the lip relief visible without noisy striping or texture popping?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_lip"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.deck",
+      "suite": "environment",
+      "label": "Ramp texture deck and knuckle",
+      "state": "RAMP_TEXTURE",
+      "phase": "deck_knuckle",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_deck",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the deck texture describe the rounded knuckle and not a flat slab?",
+        "Does the feature material remain believable as packed snow?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_deck"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.landing",
+      "suite": "environment",
+      "label": "Ramp texture landing",
+      "state": "RAMP_TEXTURE",
+      "phase": "landing",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_landing",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the landing texture remain readable through the taper back into the piste?",
+        "Is the surface transition continuous with no visible seam?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_landing"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.roller",
+      "suite": "environment",
+      "label": "Ramp texture roller",
+      "state": "RAMP_TEXTURE",
+      "phase": "roller",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_roller",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the smaller roller still carry the same authored feature material language?",
+        "Is its rounded form readable at the gameplay camera distance?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_roller"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.berm",
+      "suite": "environment",
+      "label": "Ramp texture berm",
+      "state": "RAMP_TEXTURE",
+      "phase": "berm",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_berm",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the angled berm retain coherent triplanar texture across its bank?",
+        "Is the bank distinct from the piste without becoming visually heavy?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_berm"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.side_hit",
+      "suite": "environment",
+      "label": "Ramp texture side hit",
+      "state": "RAMP_TEXTURE",
+      "phase": "side_hit",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_side_hit",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the rotated side-hit keep the texture aligned without UV stretching?",
+        "Does its surface read as a snow feature at the same gameplay scale as the tabletop?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_side_hit"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
       "id": "animation.timeline.ground",
       "suite": "animation",
       "label": "Ground stance",

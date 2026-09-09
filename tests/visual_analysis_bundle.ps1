@@ -11,6 +11,12 @@ param(
 	[int]$GpuIndex = -1,
 	[int]$TimeoutSeconds = 180,
 	[string[]]$AnimationAuditRates = @("30", "60", "120"),
+	[string[]]$Environments = @(),
+	[double[]]$RenderScales = @(),
+	[int]$MotionDurationSeconds = 10,
+	[switch]$IncludeMotion,
+	[switch]$IncludeRecovery,
+	[switch]$SkipAnimationAudit,
 	[switch]$UpdateBaselines,
 	[switch]$AllowDirtyBaseline,
 	[switch]$ValidateOnly
@@ -93,7 +99,13 @@ function Invoke-CapturedProcess {
 
 function Get-ProjectPath {
 	param([string]$Path)
-	$relative = [System.IO.Path]::GetRelativePath($RepoRoot, [System.IO.Path]::GetFullPath($Path)).Replace([char]92, [char]47)
+	# Windows PowerShell/.NET Framework does not expose Path.GetRelativePath;
+	# URI-relative paths keep the bundle runnable on both supported hosts.
+	$rootPath = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd([char]92, [char]47) + [char]92
+	$candidatePath = [System.IO.Path]::GetFullPath($Path)
+	$rootUri = New-Object System.Uri($rootPath)
+	$candidateUri = New-Object System.Uri($candidatePath)
+	$relative = [System.Uri]::UnescapeDataString($rootUri.MakeRelativeUri($candidateUri).ToString()).Replace([char]92, [char]47)
 	return "res://$relative"
 }
 
@@ -220,6 +232,7 @@ if ($Preset -lt 0 -or $Preset -gt 3) { throw "Preset must be 0 (Low), 1 (Medium)
 if ($RenderScale -lt 0.5 -or $RenderScale -gt 1.5) { throw "RenderScale must be between 0.5 and 1.5." }
 if ($FixedFps -lt 0 -or $FixedFps -gt 240) { throw "FixedFps must be between 0 and 240." }
 if ($TimeoutSeconds -lt 1) { throw "TimeoutSeconds must be positive." }
+if ($MotionDurationSeconds -lt 1 -or $MotionDurationSeconds -gt 30) { throw "MotionDurationSeconds must be between 1 and 30." }
 
 # PowerShell's -File binder treats a comma-delimited array differently across
 # hosts. Normalize both `30,60,120` and `30 60 120` before validation.
@@ -239,6 +252,30 @@ foreach ($rate in $AnimationAuditRates) {
 	$rateValue = [int]$rate
 	if ($rateValue -lt 1 -or $rateValue -gt 240) { throw "Animation audit rates must be between 1 and 240." }
 }
+
+$normalizedEnvironments = [System.Collections.Generic.List[string]]::new()
+foreach ($environmentToken in @($Environments)) {
+	foreach ($environmentPart in ([string]$environmentToken -split ',')) {
+		if ([string]::IsNullOrWhiteSpace($environmentPart)) { continue }
+		$environmentName = $environmentPart.Trim().ToLowerInvariant()
+		if ($environmentName -notin @("daytime", "golden", "sunset")) { throw "Environment '$environmentName' must be daytime, golden, or sunset." }
+		if (-not $normalizedEnvironments.Contains($environmentName)) { [void]$normalizedEnvironments.Add($environmentName) }
+	}
+}
+$matrixEnvironments = if ($normalizedEnvironments.Count -gt 0) { $normalizedEnvironments.ToArray() } else { @("daytime") }
+$normalizedRenderScales = [System.Collections.Generic.List[double]]::new()
+foreach ($scaleToken in @($RenderScales)) {
+	foreach ($scalePart in ([string]$scaleToken -split ',')) {
+		if ([string]::IsNullOrWhiteSpace($scalePart)) { continue }
+		$parsedScale = 0.0
+		if (-not [double]::TryParse($scalePart.Trim(), [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsedScale)) {
+			throw "Render scale '$scalePart' is not numeric."
+		}
+		if ($parsedScale -lt 0.5 -or $parsedScale -gt 1.5) { throw "Render scales must be between 0.5 and 1.5." }
+		if (-not $normalizedRenderScales.Contains($parsedScale)) { [void]$normalizedRenderScales.Add($parsedScale) }
+	}
+}
+$matrixRenderScales = if ($normalizedRenderScales.Count -gt 0) { $normalizedRenderScales.ToArray() } else { @($RenderScale) }
 
 $catalogPath = Join-Path $RepoRoot "tests\visual_scenarios.json"
 $catalog = Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json
@@ -276,7 +313,13 @@ $branch = (& git -C $RepoRoot branch --show-current 2>$null).Trim()
 $statusText = (& git -C $RepoRoot status --porcelain --untracked-files=normal 2>$null | Out-String).Trim()
 $dirty = -not [string]::IsNullOrWhiteSpace($statusText)
 $shortCommit = if ($commit.Length -ge 12) { $commit.Substring(0, 12) } else { $commit }
-$expectedScenarioIds = @($catalog.scenarios | Where-Object { $Suite -eq "all" -or $_.suite -eq $Suite } | ForEach-Object { [string]$_.id })
+$expectedScenarioIds = @($catalog.scenarios | Where-Object {
+	$suiteMatches = $Suite -eq "all" -or $_.suite -eq $Suite
+	$scenarioId = [string]$_.id
+	$optionalMotion = $scenarioId.StartsWith("environment.motion.", [System.StringComparison]::OrdinalIgnoreCase)
+	$optionalRecovery = $scenarioId.StartsWith("environment.recovery.", [System.StringComparison]::OrdinalIgnoreCase)
+	$suiteMatches -and ((-not $optionalMotion -and -not $optionalRecovery) -or ($optionalMotion -and $IncludeMotion.IsPresent) -or ($optionalRecovery -and $IncludeRecovery.IsPresent))
+} | ForEach-Object { [string]$_.id })
 $presetNames = @("low", "medium", "high", "ultra")
 $presetName = $presetNames[$Preset]
 $commandText = [string]$MyInvocation.Line
@@ -317,6 +360,12 @@ $runContext = [ordered]@{
 	expected_scenarios = $expectedScenarioIds
 	bundle_root = $BundlePath
 	baseline_policy = "curated baselines only; visual diffs are advisory"
+	skip_animation_audit = $SkipAnimationAudit.IsPresent
+	environment_matrix = $matrixEnvironments
+	render_scale_matrix = $matrixRenderScales
+	motion_duration_s = $MotionDurationSeconds
+	include_motion = $IncludeMotion.IsPresent
+	include_recovery = $IncludeRecovery.IsPresent
 }
 [System.IO.File]::WriteAllText((Join-Path $BundlePath "run_context.json"), ($runContext | ConvertTo-Json -Depth 30))
 
@@ -334,7 +383,9 @@ function Invoke-VisualCapture {
 		[string]$Scene,
 		[int]$CaptureFps,
 		[string[]]$UserArguments,
-		[string]$EnvironmentName = "daytime"
+		[string]$EnvironmentName = "daytime",
+		[double]$CaptureRenderScale = $RenderScale,
+		[string]$CapturePreset = $presetName
 	)
 	$variantRoot = Join-Path (Join-Path $BundlePath "suites") (Join-Path (Get-SafeLabel $SuiteName) (Get-SafeLabel $VariantName))
 	New-Item -ItemType Directory -Path (Join-Path $variantRoot "logs") -Force | Out-Null
@@ -351,8 +402,8 @@ function Invoke-VisualCapture {
 		"--fixed-fps=$CaptureFps",
 		"--clean-capture",
 		"--skip-player-probe",
-		"--visual-preset=$presetName",
-		("--visual-render-scale=" + $RenderScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)),
+		"--visual-preset=$CapturePreset",
+		("--visual-render-scale=" + $CaptureRenderScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)),
 		"--visual-environment=$EnvironmentName",
 		"--visual-seed=0"
 	)
@@ -371,8 +422,8 @@ function Invoke-VisualCapture {
 	$context = @{
 		scene = $Scene
 		environment = $EnvironmentName
-		preset = $presetName
-		render_scale = $RenderScale
+		preset = $CapturePreset
+		render_scale = $CaptureRenderScale
 		fixed_fps = $CaptureFps
 		resolution = @(1280, 720)
 	}
@@ -424,14 +475,42 @@ if ($Suite -eq "all" -or $Suite -eq "environment") {
 	$ok = Invoke-VisualCapture -SuiteName "environment" -VariantName "canonical_60" -Scene "res://tests/environment_visual_inspection.tscn" -CaptureFps $FixedFps -EnvironmentName "daytime" -UserArguments @()
 	$metricOk = Invoke-VisualMetric -SuiteName "environment" -VariantName "canonical_60" -Scene "res://tests/snow_depth_visual_metrics.tscn" -ArgumentName "--capture-dir" -ArgumentValue (Get-ProjectPath (Join-Path (Join-Path (Join-Path $BundlePath "suites") "environment") "canonical_60\compat")) -CheckId "environment.snow_depth.metric"
 	if (-not $ok -or -not $metricOk) { $captureFailed = $true }
+	$rampScaleLabel = $RenderScale.ToString("0.##", [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', 'p')
+	$rampVariant = "ramp_texture_daytime_{0}" -f $rampScaleLabel
+	$rampOk = Invoke-VisualCapture -SuiteName "environment" -VariantName $rampVariant -Scene "res://tests/ramp_surface_visual_inspection.tscn" -CaptureFps $FixedFps -EnvironmentName "daytime" -CaptureRenderScale $RenderScale -CapturePreset $presetName -UserArguments @()
+	if (-not $rampOk) { $captureFailed = $true }
+	if ($IncludeMotion.IsPresent) {
+		foreach ($environmentName in $matrixEnvironments) {
+			foreach ($captureScale in $matrixRenderScales) {
+				$scaleLabel = $captureScale.ToString("0.##", [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', 'p')
+				foreach ($behavior in @("carve", "straight", "landing")) {
+					$motionVariant = "motion_{0}_{1}_{2}" -f (Get-SafeLabel $environmentName), $scaleLabel, $behavior
+					$motionArguments = @(
+						"--capture-motion",
+						"--motion-behavior=$behavior",
+						"--motion-duration=$MotionDurationSeconds"
+					)
+					$motionOk = Invoke-VisualCapture -SuiteName "environment" -VariantName $motionVariant -Scene "res://tests/environment_visual_inspection.tscn" -CaptureFps $FixedFps -EnvironmentName $environmentName -CaptureRenderScale $captureScale -CapturePreset $presetName -UserArguments $motionArguments
+					if (-not $motionOk) { $captureFailed = $true }
+				}
+			}
+		}
+	}
+	if ($IncludeRecovery.IsPresent) {
+		$recoveryVariant = "recovery_daytime_{0}" -f $RenderScale.ToString("0.##", [System.Globalization.CultureInfo]::InvariantCulture).Replace('.', 'p')
+		$recoveryOk = Invoke-VisualCapture -SuiteName "environment" -VariantName $recoveryVariant -Scene "res://tests/environment_visual_inspection.tscn" -CaptureFps $FixedFps -EnvironmentName "daytime" -UserArguments @("--capture-recovery")
+		if (-not $recoveryOk) { $captureFailed = $true }
+	}
 }
 
 if ($Suite -eq "all" -or $Suite -eq "animation") {
 	$ok = Invoke-VisualCapture -SuiteName "animation" -VariantName "canonical_60" -Scene "res://tests/animation_silhouette_inspection.tscn" -CaptureFps 60 -EnvironmentName "daytime" -UserArguments @("--capture-character-presentation")
 	if (-not $ok) { $captureFailed = $true }
-	foreach ($rate in $AnimationAuditRates) {
-		$auditOk = Invoke-VisualCapture -SuiteName "animation" -VariantName ("audit_{0}" -f $rate) -Scene "res://tests/animation_silhouette_inspection.tscn" -CaptureFps $rate -EnvironmentName "daytime" -UserArguments @("--capture-animation-presentation-audit", "--audit-fps=$rate")
-		if (-not $auditOk) { $captureFailed = $true }
+	if (-not $SkipAnimationAudit) {
+		foreach ($rate in $AnimationAuditRates) {
+			$auditOk = Invoke-VisualCapture -SuiteName "animation" -VariantName ("audit_{0}" -f $rate) -Scene "res://tests/animation_silhouette_inspection.tscn" -CaptureFps $rate -EnvironmentName "daytime" -UserArguments @("--capture-animation-presentation-audit", "--audit-fps=$rate")
+			if (-not $auditOk) { $captureFailed = $true }
+		}
 	}
 }
 

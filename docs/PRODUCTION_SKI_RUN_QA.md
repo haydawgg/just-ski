@@ -16,8 +16,11 @@ Use this checklist when changing or replacing scenes in the environment asset ca
 - [x] `summit_environment_acceptance.tscn` validates deterministic heightfield samples, preserved `MainSnowFace` collision, authored ridge meshes, and collider-free summit decorations.
 - [x] `sunset_visual_quality_gate.ps1` runs the Vulkan sunset trajectory capture and focused near-black-region metric; it remains separate from the headless runtime checks.
 - [x] `environment_visual_quality_gate.ps1` clears and refreshes `res://.godot_user/captures/snow_depth_after`, requires all nine PNG/JSON pairs, checks the GPU process exit/logs, and runs the snow-depth metric against the fresh capture set.
+- [x] `ramp_surface_visual_quality_gate.ps1` captures the tabletop approach/lip/deck/landing plus roller, berm, and side-hit surfaces at the gameplay camera in Day and Sunset, with `PARK_FEATURE` material telemetry and no automatic baseline update.
 - [x] `visual_evidence_acceptance.tscn` and `visual_evidence_static_acceptance.ps1` validate the Codex evidence schema, deterministic ordering, structured telemetry, artifact hashes, dimensions, path containment, and malformed-fixture cases without a GPU.
 - [x] `visual_analysis_bundle.ps1` is the canonical local GPU workflow for maintained environment, animation, and sunset evidence.
+- [x] `visual_analysis_bundle.ps1 -IncludeMotion` can sweep Day/Golden/Sunset at the requested render scales with fixed-rate motion telemetry and contact sheets.
+- [x] `visual_analysis_bundle.ps1 -IncludeRecovery` captures the out-of-bounds fade, respawn, camera reset, and completed lifecycle as reviewable phase artifacts.
 
 ## Human visual pass
 
@@ -29,7 +32,10 @@ Use this checklist when changing or replacing scenes in the environment asset ca
 - [ ] Confirm fade-out → respawn → camera reset → fade-in occurs once, combo/link clears, and total score remains unchanged.
 - [ ] Install Godot 4.7.2 export templates, create the platform release export used for the target build, and smoke-test that exported build with the same route.
 - [ ] Compare the daytime and sunset scenes at near, mid, and horizon distances; tune glare, shadow density, and snow readability on the target display.
+- [ ] Review the seven ramp-surface shots in Day and Sunset; confirm the Snow 02 texture remains readable through the approach, rotated lip/deck/landing, roller, berm, and side hit, with no visible UV-dependent tiling or pop against adjacent piste.
 - [ ] Review the bundle report's environment landing subject crops and sunset capture on the target display; confirm the shadow-safe summit surface retains shoulder/form readability while the rest of the scene keeps the intended GI/shadow balance.
+- [ ] Review the motion-sweep contact sheets at each target environment/render-scale pair; confirm carve, straight, and landing sweeps remain readable for the full ten seconds.
+- [ ] Review the recovery phase captures; confirm the notice, fade, respawn, and completed frame communicate one clean transition at the target display refresh rate.
 
 The environment gate also records landing telemetry for first contact, impact,
 compression, recovery, and final landing. Confirm `vfx_mode="landing"` and an

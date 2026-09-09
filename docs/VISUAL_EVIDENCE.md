@@ -21,6 +21,16 @@ Useful variants:
 
 # Explicitly update curated baselines after reviewing a clean reference run.
 .\tests\visual_analysis_bundle.ps1 -UpdateBaselines
+
+# Capture ten-second Day/Golden/Sunset motion sweeps at High 1.0/0.8/0.65.
+.\tests\visual_analysis_bundle.ps1 -Suite environment -IncludeMotion -Environments daytime,golden,sunset -RenderScales 1.0,0.8,0.65 -MotionDurationSeconds 10
+
+# Capture the out-of-bounds fade → respawn → completed recovery sequence.
+.\tests\visual_analysis_bundle.ps1 -Suite environment -IncludeRecovery
+
+# Capture the close-range park-snow role review on the reference GPU.
+.\tests\ramp_surface_visual_quality_gate.ps1 -EnvironmentName daytime
+.\tests\ramp_surface_visual_quality_gate.ps1 -EnvironmentName sunset
 ```
 
 The command prints absolute `CODEX_VISUAL_MANIFEST`, `CODEX_VISUAL_REPORT`, and `CODEX_VISUAL_STATUS` values. Open `visual_report.md` first; it links to contact sheets, subject crops, telemetry summaries, raw captures, and any baseline overlays or heatmaps.
@@ -69,7 +79,9 @@ Adapters describe what was observed. The session owns paths, JSON normalization,
 
 1. Contact sheets grouped by suite, state, and view.
 2. Failed or missing semantic/evidence checks.
-3. Subject crops for skier, snow, landing, and feature readability.
+3. Subject crops for skier, snow, landing, and feature readability. For the
+   focused ramp run, review the seven raw gameplay-camera shots in order:
+   approach, lip, deck/knuckle, landing, roller, berm, and side hit.
 4. Baseline overlays and heatmaps marked `review_required`.
 5. `telemetry/timeline_summary.json` before opening large raw traces.
 
@@ -89,7 +101,7 @@ Contact sheets and subject crops prefer the clean `analysis` artifact when an ad
 
 Curated baselines live under `tests/visual_baselines/` and are created only by the explicit `-UpdateBaselines` command. The command refuses a dirty worktree unless `-AllowDirtyBaseline` is supplied. The initial dirty worktree is not authoritative baseline evidence.
 
-The intended curated set is five environment trajectory frames, the 18 canonical animation presentation frames at the reference rate, and one sunset capture. Animation audit-rate/profile matrices remain in run bundles for review. Every baseline has a sidecar JSON file containing compatibility identity, thresholds, source run, and source hash.
+The intended curated set is five environment trajectory frames, the 18 canonical animation presentation frames at the reference rate, and one sunset capture. Animation audit-rate/profile matrices, environment motion sweeps, recovery lifecycle captures, and the close-range ramp role shots remain in run bundles for review until a human review explicitly selects a baseline. Every baseline has a sidecar JSON file containing compatibility identity, thresholds, source run, and source hash. Matrix captures record fixed-rate per-frame telemetry and generate one motion contact sheet per behavior/variant. Do not seed or overwrite an existing baseline automatically from the ramp run.
 
 ## CI boundary
 

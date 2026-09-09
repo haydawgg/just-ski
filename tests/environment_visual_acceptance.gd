@@ -73,6 +73,13 @@ func _physics_process(_delta: float) -> void:
 	var profiled_feature_meshes := 0
 	var profiled_feature_colliders := 0
 	var minimum_feature_texture_weight := INF
+	var minimum_feature_normal_strength := INF
+	var minimum_feature_roughness_texture_strength := INF
+	var minimum_feature_detail_far_distance := INF
+	var maximum_ground_texture_weight := -INF
+	var maximum_ground_normal_strength := -INF
+	var maximum_ground_roughness_texture_strength := -INF
+	var maximum_ground_detail_far_distance := -INF
 	for body_node: Node in resort.find_children("*", "StaticBody3D", true, false):
 		if not body_node.has_meta("profile_rows"):
 			continue
@@ -95,14 +102,75 @@ func _physics_process(_delta: float) -> void:
 			if snow_material == null or snow_material.shader == null:
 				failures.append("Profiled feature %s has no snow shader material" % mesh_instance.get_path())
 				continue
+			var presentation_role: Variant = snow_material.get("presentation_role")
+			if presentation_role == null or int(presentation_role) != SnowMaterial.PresentationRole.PARK_FEATURE:
+				failures.append("Profiled feature %s does not use the PARK_FEATURE snow presentation role" % mesh_instance.get_path())
 			var texture_weight := float(snow_material.get_shader_parameter("albedo_texture_strength"))
 			minimum_feature_texture_weight = minf(minimum_feature_texture_weight, texture_weight)
+			minimum_feature_normal_strength = minf(minimum_feature_normal_strength, float(snow_material.get_shader_parameter("normal_strength")))
+			minimum_feature_roughness_texture_strength = minf(minimum_feature_roughness_texture_strength, float(snow_material.get_shader_parameter("roughness_texture_strength")))
+			minimum_feature_detail_far_distance = minf(minimum_feature_detail_far_distance, float(snow_material.get_shader_parameter("detail_far_distance")))
 	if profiled_feature_meshes == 0:
 		failures.append("No profiled feature meshes were available for texture coverage validation")
-	elif minimum_feature_texture_weight < 0.25:
-		failures.append("Profiled feature albedo texture blend is only %.3f; jump surfaces remain mostly flat" % minimum_feature_texture_weight)
+	else:
+		var minimum_expected_feature_texture := SnowMaterial.PRESENTATION.park_feature_albedo_texture_strength + SnowMaterial.PRESENTATION.park_feature_emphasis_floor * SnowMaterial.PRESENTATION.park_feature_albedo_emphasis_gain
+		if minimum_feature_texture_weight < minimum_expected_feature_texture - 0.001:
+			failures.append("Profiled feature albedo texture blend is only %.3f; expected at least %.3f" % [minimum_feature_texture_weight, minimum_expected_feature_texture])
+		if minimum_feature_normal_strength < 0.39:
+			failures.append("Profiled feature normal response is only %.3f; ramp relief remains too flat" % minimum_feature_normal_strength)
+		if minimum_feature_roughness_texture_strength < 0.46:
+			failures.append("Profiled feature roughness texture response is only %.3f; ramp material remains too uniform" % minimum_feature_roughness_texture_strength)
+		if minimum_feature_detail_far_distance < SnowMaterial.PRESENTATION.park_feature_detail_far_distance - 0.01:
+			failures.append("Profiled feature detail fades at %.1fm; expected at least %.1fm" % [minimum_feature_detail_far_distance, SnowMaterial.PRESENTATION.park_feature_detail_far_distance])
 	if profiled_feature_colliders == 0:
 		failures.append("No playable profiled feature retained a collision shape")
+	var park_feature_mesh_ids: Dictionary = {}
+	for group_name: String in ["park_jumps", "park_terrain_features", "park_wallrides", "park_bonks", "park_cannons"]:
+		for root_node: Node in get_tree().get_nodes_in_group(group_name):
+			for mesh_node: Node in root_node.find_children("*", "MeshInstance3D", true, false):
+				var mesh_instance := mesh_node as MeshInstance3D
+				if mesh_instance == null:
+					continue
+				var material := mesh_instance.material_override as ShaderMaterial
+				if material == null or material.shader == null:
+					continue
+				park_feature_mesh_ids[mesh_instance.get_instance_id()] = mesh_instance.get_path()
+				var presentation_role: Variant = material.get("presentation_role")
+				if presentation_role == null or int(presentation_role) != SnowMaterial.PresentationRole.PARK_FEATURE:
+					failures.append("Park feature %s does not use the PARK_FEATURE snow presentation role" % mesh_instance.get_path())
+	if park_feature_mesh_ids.is_empty():
+		failures.append("No park feature snow materials were available for role validation")
+	for ground_body_name: String in ["MainSnowFace", "LeftBank", "RightBank", "BottomHub"]:
+		var ground_body := resort.get_node_or_null(ground_body_name) as StaticBody3D
+		if ground_body == null:
+			failures.append("Expected ground body %s was not created" % ground_body_name)
+			continue
+		var ground_mesh_found := false
+		for mesh_node: Node in ground_body.find_children("*", "MeshInstance3D", true, false):
+			var mesh_instance := mesh_node as MeshInstance3D
+			if mesh_instance == null:
+				continue
+			var material := mesh_instance.material_override as ShaderMaterial
+			if material == null or material.shader == null:
+				continue
+			ground_mesh_found = true
+			maximum_ground_texture_weight = maxf(maximum_ground_texture_weight, float(material.get_shader_parameter("albedo_texture_strength")))
+			maximum_ground_normal_strength = maxf(maximum_ground_normal_strength, float(material.get_shader_parameter("normal_strength")))
+			maximum_ground_roughness_texture_strength = maxf(maximum_ground_roughness_texture_strength, float(material.get_shader_parameter("roughness_texture_strength")))
+			maximum_ground_detail_far_distance = maxf(maximum_ground_detail_far_distance, float(material.get_shader_parameter("detail_far_distance")))
+			var presentation_role: Variant = material.get("presentation_role")
+			if presentation_role == null or int(presentation_role) != SnowMaterial.PresentationRole.GROUND:
+				failures.append("Ordinary piste body %s does not use the GROUND snow presentation role" % ground_body_name)
+		if not ground_mesh_found:
+			failures.append("Ordinary piste body %s has no snow shader render surface" % ground_body_name)
+	if maximum_ground_texture_weight > -INF and minimum_feature_texture_weight <= maximum_ground_texture_weight:
+		failures.append("Feature albedo response %.3f does not exceed ordinary ground maximum %.3f" % [minimum_feature_texture_weight, maximum_ground_texture_weight])
+	if maximum_ground_normal_strength > -INF and minimum_feature_normal_strength <= maximum_ground_normal_strength:
+		failures.append("Feature normal response %.3f does not exceed ordinary ground maximum %.3f" % [minimum_feature_normal_strength, maximum_ground_normal_strength])
+	if maximum_ground_roughness_texture_strength > -INF and minimum_feature_roughness_texture_strength <= maximum_ground_roughness_texture_strength:
+		failures.append("Feature roughness response %.3f does not exceed ordinary ground maximum %.3f" % [minimum_feature_roughness_texture_strength, maximum_ground_roughness_texture_strength])
+	if maximum_ground_detail_far_distance > -INF and minimum_feature_detail_far_distance <= maximum_ground_detail_far_distance:
+		failures.append("Feature detail distance %.1fm does not exceed ordinary ground maximum %.1fm" % [minimum_feature_detail_far_distance, maximum_ground_detail_far_distance])
 	var world_signs := resort.find_children("*", "Label3D", true, false)
 	if not world_signs.is_empty():
 		failures.append("Normal play still contains %d world labels that can cover the skier" % world_signs.size())

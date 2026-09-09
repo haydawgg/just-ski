@@ -2,6 +2,7 @@ class_name SnowMaterial
 extends RefCounted
 
 enum Kind { POWDER, PACKED, GROOMED }
+enum PresentationRole { GROUND, PARK_FEATURE }
 
 const FAST_SHADER: Shader = preload("res://shaders/snow_fast.gdshader")
 const PREMIUM_SHADER: Shader = preload("res://shaders/snow_premium.gdshader")
@@ -14,12 +15,18 @@ class SnowMaterialInstance extends ShaderMaterial:
 	var surface_kind: int
 	var groom_direction_world_xz: Vector2
 	var feature_emphasis: float
+	var requested_feature_emphasis: float
+	var presentation_role: int
 	var render_shadow_safe: bool
 
-	func _init(kind: int, groom_direction: Vector2, emphasis: float, shadow_safe: bool = false) -> void:
+	func _init(kind: int, groom_direction: Vector2, emphasis: float, shadow_safe: bool = false, role: int = SnowMaterial.PresentationRole.GROUND) -> void:
 		surface_kind = kind
 		groom_direction_world_xz = groom_direction.normalized() if groom_direction.length_squared() > 0.0001 else Vector2(0.0, -1.0)
-		feature_emphasis = clampf(emphasis, 0.0, 1.0)
+		requested_feature_emphasis = clampf(emphasis, 0.0, 1.0)
+		presentation_role = SnowMaterial.PresentationRole.PARK_FEATURE if role == SnowMaterial.PresentationRole.PARK_FEATURE else SnowMaterial.PresentationRole.GROUND
+		feature_emphasis = requested_feature_emphasis
+		if presentation_role == SnowMaterial.PresentationRole.PARK_FEATURE:
+			feature_emphasis = maxf(feature_emphasis, SnowMaterial.PRESENTATION.park_feature_emphasis_floor)
 		render_shadow_safe = shadow_safe
 		GameSettings.settings_applied.connect(_apply_quality)
 		_apply_quality()
@@ -29,14 +36,19 @@ class SnowMaterialInstance extends ShaderMaterial:
 		shader = SnowMaterial.SUMMIT_SHADER if render_shadow_safe else (SnowMaterial.PREMIUM_SHADER if premium else SnowMaterial.FAST_SHADER)
 		set_shader_parameter("snow_albedo_texture", SnowMaterial.ALBEDO_TEXTURE)
 		set_shader_parameter("snow_detail_texture", SnowMaterial.DETAIL_TEXTURE)
-		set_shader_parameter("texture_world_size", 1.35)
+		var texture_world_size := 1.35
+		if presentation_role == SnowMaterial.PresentationRole.PARK_FEATURE:
+			texture_world_size = SnowMaterial.PRESENTATION.park_feature_texture_world_size
+		set_shader_parameter("texture_world_size", texture_world_size)
 		set_shader_parameter("triplanar_sharpness", 4.0)
 		set_shader_parameter("detail_near_distance", SnowMaterial.PRESENTATION.detail_near_distance)
 		# Keep the groomed run's restrained far-field response, but carry the
 		# authored snow texture farther across jumps and booters so their profiles
 		# do not flatten before the player reaches the takeoff.
 		var detail_far_distance := SnowMaterial.PRESENTATION.detail_far_distance
-		if feature_emphasis > 0.0:
+		if presentation_role == SnowMaterial.PresentationRole.PARK_FEATURE:
+			detail_far_distance = maxf(detail_far_distance, SnowMaterial.PRESENTATION.park_feature_detail_far_distance)
+		elif feature_emphasis > 0.0:
 			detail_far_distance = maxf(detail_far_distance, 74.0 + feature_emphasis * 22.0)
 		set_shader_parameter("detail_far_distance", detail_far_distance)
 		set_shader_parameter("groom_direction_world_xz", groom_direction_world_xz)
@@ -52,13 +64,50 @@ class SnowMaterialInstance extends ShaderMaterial:
 		set_shader_parameter("feature_tint", Color(0.86, 0.9, 0.94))
 		set_shader_parameter("disturbed_roughness_offset", 0.075)
 		set_shader_parameter("disturbed_detail_boost", 0.15)
+		if render_shadow_safe:
+			set_shader_parameter("summit_form_contrast", SnowMaterial.PRESENTATION.summit_form_contrast)
+			set_shader_parameter("summit_macro_contrast", SnowMaterial.PRESENTATION.summit_macro_contrast)
+			set_shader_parameter("summit_drift_strength", SnowMaterial.PRESENTATION.summit_drift_strength)
+			set_shader_parameter("summit_broad_variation", SnowMaterial.PRESENTATION.summit_broad_variation)
+			set_shader_parameter("summit_luminance_floor", SnowMaterial.PRESENTATION.summit_luminance_floor)
 		_apply_surface_parameters(premium)
-		if feature_emphasis > 0.0:
+		if presentation_role == SnowMaterial.PresentationRole.PARK_FEATURE:
+			_apply_park_feature_parameters()
+		elif feature_emphasis > 0.0:
 			# Feature surfaces use the same triplanar source as the piste, with a
-			# deliberate 0.27..0.37 blend so terrain form remains visible without
+			# deliberate 0.25..0.4 blend so terrain form remains visible without
 			# making the entire run look noisy.
 			var feature_texture_strength := clampf(0.25 + feature_emphasis * 0.18, 0.25, 0.4)
 			set_shader_parameter("albedo_texture_strength", feature_texture_strength)
+
+	func _apply_park_feature_parameters() -> void:
+		var feature_texture_strength := clampf(
+			SnowMaterial.PRESENTATION.park_feature_albedo_texture_strength
+				+ feature_emphasis * SnowMaterial.PRESENTATION.park_feature_albedo_emphasis_gain,
+			0.0,
+			1.0
+		)
+		set_shader_parameter("albedo_texture_strength", feature_texture_strength)
+		var base_normal_strength := float(get_shader_parameter("normal_strength"))
+		set_shader_parameter(
+			"normal_strength",
+			minf(
+				base_normal_strength + SnowMaterial.PRESENTATION.park_feature_normal_boost,
+				SnowMaterial.PRESENTATION.park_feature_normal_max
+			)
+		)
+		var base_roughness_texture_strength := float(get_shader_parameter("roughness_texture_strength"))
+		set_shader_parameter(
+			"roughness_texture_strength",
+			minf(
+				base_roughness_texture_strength + SnowMaterial.PRESENTATION.park_feature_roughness_texture_boost,
+				SnowMaterial.PRESENTATION.park_feature_roughness_texture_max
+			)
+		)
+		var base_form_contrast := float(get_shader_parameter("form_contrast_strength"))
+		set_shader_parameter("form_contrast_strength", minf(base_form_contrast + SnowMaterial.PRESENTATION.park_feature_form_contrast_boost, 0.3))
+		var base_corduroy := float(get_shader_parameter("corduroy_amount"))
+		set_shader_parameter("corduroy_amount", minf(base_corduroy + SnowMaterial.PRESENTATION.park_feature_corduroy_boost, 1.0))
 
 	func _apply_surface_parameters(premium: bool) -> void:
 		match surface_kind:
@@ -120,5 +169,5 @@ class SnowMaterialInstance extends ShaderMaterial:
 					set_shader_parameter("sparkle_density", 0.992)
 					set_shader_parameter("subsurface_strength", 0.14)
 
-static func create(kind: Kind = Kind.POWDER, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), feature_emphasis: float = 0.0, shadow_safe: bool = false) -> ShaderMaterial:
-	return SnowMaterialInstance.new(kind, groom_direction_world_xz, feature_emphasis, shadow_safe)
+static func create(kind: Kind = Kind.POWDER, groom_direction_world_xz: Vector2 = Vector2(0.0, -1.0), feature_emphasis: float = 0.0, shadow_safe: bool = false, presentation_role: PresentationRole = PresentationRole.GROUND) -> ShaderMaterial:
+	return SnowMaterialInstance.new(kind, groom_direction_world_xz, feature_emphasis, shadow_safe, presentation_role)
