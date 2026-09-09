@@ -9,6 +9,7 @@ $releasePath = Join-Path $RepoRoot "docs/RELEASE.md"
 $readmePath = Join-Path $RepoRoot "README.md"
 $licensePath = Join-Path $RepoRoot "LICENSE"
 $licensingDecisionPath = Join-Path $RepoRoot "docs/LICENSING_DECISION.md"
+$exportContentPath = Join-Path $RepoRoot "docs/EXPORT_CONTENT.md"
 $gitignorePath = Join-Path $RepoRoot ".gitignore"
 $failures = [System.Collections.Generic.List[string]]::new()
 
@@ -20,6 +21,9 @@ else {
 	foreach ($requiredText in @(
 		'name="Windows Desktop"',
 		'platform="Windows Desktop"',
+		'export_filter="scenes"',
+		'res://world/resort.tscn',
+		'res://world/sunset_resort.tscn',
 		'export_path="builds/windows/SummitSessions.exe"',
 		'binary_format/architecture="x86_64"',
 		'binary_format/embed_pck=true'
@@ -28,10 +32,8 @@ else {
 			$failures.Add("export_presets.cfg is missing: $requiredText")
 		}
 	}
-	# Shipping every repository resource silently packages tests and development
-	# fixtures. Keep the release preset explicit about its production boundary.
 	if ($preset -match '(?m)^export_filter="all_resources"\s*$') {
-		$failures.Add("Windows release preset exports all_resources; use an explicit production resource filter before distribution.")
+		$failures.Add("Windows release preset exports all_resources; keep the production scene/dependency boundary explicit.")
 	}
 }
 
@@ -40,11 +42,15 @@ if (-not (Test-Path -LiteralPath $releasePath -PathType Leaf)) {
 }
 else {
 	$release = Get-Content -Raw $releasePath
-	foreach ($requiredText in @("4.7.2.stable.official.ed1daf0bf", "Windows Desktop", "--export-release", "--quit-after 120")) {
+	foreach ($requiredText in @("4.7.2.stable.official.ed1daf0bf", "Windows Desktop", "--export-release", "--quit-after 120", "docs/EXPORT_CONTENT.md")) {
 		if ($release -notmatch [regex]::Escape($requiredText)) {
 			$failures.Add("docs/RELEASE.md is missing: $requiredText")
 		}
 	}
+}
+
+if (-not (Test-Path -LiteralPath $exportContentPath -PathType Leaf)) {
+	$failures.Add("docs/EXPORT_CONTENT.md is missing.")
 }
 
 $readme = Get-Content -Raw $readmePath
