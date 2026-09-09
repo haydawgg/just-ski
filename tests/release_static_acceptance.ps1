@@ -21,9 +21,8 @@ else {
 	foreach ($requiredText in @(
 		'name="Windows Desktop"',
 		'platform="Windows Desktop"',
-		'export_filter="scenes"',
-		'res://world/resort.tscn',
-		'res://world/sunset_resort.tscn',
+		'export_filter="all_resources"',
+		'exclude_filter="tests/*,tools/*"',
 		'export_path="builds/windows/SummitSessions.exe"',
 		'binary_format/architecture="x86_64"',
 		'binary_format/embed_pck=true'
@@ -32,8 +31,8 @@ else {
 			$failures.Add("export_presets.cfg is missing: $requiredText")
 		}
 	}
-	if ($preset -match '(?m)^export_filter="all_resources"\s*$') {
-		$failures.Add("Windows release preset exports all_resources; keep the production scene/dependency boundary explicit.")
+	if ($preset -match '(?m)^export_filter="scenes"\s*$') {
+		$failures.Add("Windows release preset uses selected scenes; global class_name dependencies require the complete production resource graph.")
 	}
 }
 
