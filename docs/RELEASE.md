@@ -39,8 +39,7 @@ shader, or asset-loading errors. Record the artifact size as part of release
 validation; an unexpected size increase can indicate that development-only
 resources entered the production dependency graph.
 
-Project-authored code and content are licensed under the repository-root
-`LICENSE` (MIT). Distribute that file with the source or export documentation.
+Project-authored code and content are licensed under the repository-root `LICENSE` (MIT). Distribute that file with the source or export documentation.
 The CC0/OFL external assets are documented separately in
 `docs/ASSET_SOURCES.md` and retain their own notices and license files. New
 binary assets must also follow `docs/ASSET_POLICY.md`.
