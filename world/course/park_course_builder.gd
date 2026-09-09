@@ -39,6 +39,7 @@ static func _apply_content_metadata(feature: Node3D, spec: Dictionary) -> void:
 		"feature_id": StringName(str(spec.get("name", "park_feature")).to_snake_case()),
 		"spot_id": &"unassigned",
 		"route": &"intermediate",
+		"discipline": StringName(spec.get("kind", "feature")),
 		"skill_floor": 0,
 		"skill_ceiling": 5,
 		"intent_tags": [&"legacy"],
