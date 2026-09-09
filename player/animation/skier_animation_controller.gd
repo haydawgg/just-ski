@@ -2387,16 +2387,31 @@ func _apply_bail_pose(frame: SkierAnimationFrame) -> void:
 			_current_pose_name = "Crash Fall"
 			var phase := stage_time * profile.crash_tumble_speed
 			var tumble := profile.crash_tumble_limit * angular_strength
-			_add_rotation(pelvis, Vector3(-0.42 + sin(phase) * tumble * 0.3, side * 0.18, side * 0.48 + sin(phase * 0.6) * tumble * 0.28))
-			_add_rotation(spine, Vector3(-0.38 + cos(phase * 0.72) * tumble * 0.32, -side * 0.12, side * 0.3))
-			_add_rotation(chest, Vector3(-0.24, -side * 0.2, side * 0.5 + sin(phase * 0.55) * tumble * 0.22))
-			_add_rotation(head, Vector3(0.18, side * 0.2, -side * 0.18))
+			var sprawl := _crash_reaction_layer.fall_travel_sprawl(frame, profile)
+			var fall_side := float(sprawl.get("lateral", 0.0)) if bool(sprawl.get("valid", false)) else side
+			_add_rotation(pelvis, Vector3(-0.42 + sin(phase) * tumble * 0.3, fall_side * 0.18, fall_side * 0.48 + sin(phase * 0.6) * tumble * 0.28))
+			_add_rotation(spine, Vector3(-0.38 + cos(phase * 0.72) * tumble * 0.32, -fall_side * 0.12, fall_side * 0.3))
+			_add_rotation(chest, Vector3(-0.24, -fall_side * 0.2, fall_side * 0.5 + sin(phase * 0.55) * tumble * 0.22))
+			_add_rotation(head, Vector3(0.18, fall_side * 0.2, -fall_side * 0.18))
 			_add_rotation(left_shoulder, Vector3(-1.18 + sin(phase) * 0.16, 0.28, -0.95))
 			_add_rotation(right_shoulder, Vector3(-0.86 + cos(phase * 0.8) * 0.16, -0.28, 0.95))
-			_add_rotation(left_hip, Vector3(-0.72, 0.08, -side * 0.38))
-			_add_rotation(right_hip, Vector3(-0.42, -0.08, side * 0.38))
-			_add_rotation(left_knee, Vector3(1.28, 0.0, -side * 0.16))
-			_add_rotation(right_knee, Vector3(0.82, 0.0, side * 0.16))
+			_add_rotation(left_hip, Vector3(-0.72, 0.08, -fall_side * 0.38))
+			_add_rotation(right_hip, Vector3(-0.42, -0.08, fall_side * 0.38))
+			_add_rotation(left_knee, Vector3(1.28, 0.0, -fall_side * 0.16))
+			_add_rotation(right_knee, Vector3(0.82, 0.0, fall_side * 0.16))
+			if bool(sprawl.get("valid", false)):
+				_add_rotation(pelvis, sprawl.get("pelvis", Vector3.ZERO) as Vector3)
+				_add_rotation(spine, sprawl.get("spine", Vector3.ZERO) as Vector3)
+				_add_rotation(chest, sprawl.get("chest", Vector3.ZERO) as Vector3)
+				_add_rotation(head, sprawl.get("head", Vector3.ZERO) as Vector3)
+				_add_rotation(left_shoulder, sprawl.get("left_shoulder", Vector3.ZERO) as Vector3)
+				_add_rotation(right_shoulder, sprawl.get("right_shoulder", Vector3.ZERO) as Vector3)
+				_add_rotation(left_hip, sprawl.get("left_hip", Vector3.ZERO) as Vector3)
+				_add_rotation(right_hip, sprawl.get("right_hip", Vector3.ZERO) as Vector3)
+				_add_rotation(left_knee, sprawl.get("left_knee", Vector3.ZERO) as Vector3)
+				_add_rotation(right_knee, sprawl.get("right_knee", Vector3.ZERO) as Vector3)
+				_add_rotation(left_ski, sprawl.get("left_ski", Vector3.ZERO) as Vector3)
+				_add_rotation(right_ski, sprawl.get("right_ski", Vector3.ZERO) as Vector3)
 		CrashContext.Stage.REST:
 			_current_pose_name = "Crash Rest"
 			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + Vector3(0.0, -profile.crash_rest_pelvis_drop, 0.0)
@@ -2553,18 +2568,10 @@ func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
 	if frame.crash_stage != CrashContext.Stage.FALL and frame.crash_stage != CrashContext.Stage.REST:
 		return
 	var stage_time := _crash_stage_time(frame)
-	var drag_vel := frame.crash_current_velocity
-	var drag_speed := drag_vel.length()
-	var ground_n := frame.ground_normal if frame.grounded else frame.crash_impact_normal
-	if ground_n.length_squared() < 0.001:
-		ground_n = Vector3.UP
-	var lateral_drag := drag_vel.slide(ground_n)
-	var lateral_speed := lateral_drag.length()
-	var drag_dir := Vector3.ZERO
-	var has_drag := lateral_speed >= 0.1 and drag_speed >= 0.15
-	if has_drag:
-		drag_dir = lateral_drag.normalized()
-	var influence := clampf(lateral_speed / 7.0, 0.0, 1.0)
+	var sprawl := _crash_reaction_layer.fall_travel_sprawl(frame, profile)
+	var influence := float(sprawl.get("influence", 0.0))
+	var has_drag := bool(sprawl.get("valid", false)) and influence > 0.02
+	var local_travel := sprawl.get("local", Vector3.ZERO) as Vector3
 	# In FALL, add subtle translation and tumble from remaining velocity plus a
 	# minimum stage-driven oscillation so slow falls still tumble readably.
 	if frame.crash_stage == CrashContext.Stage.FALL:
@@ -2572,16 +2579,17 @@ func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
 		_add_rotation(pelvis, Vector3(idle_sway * 0.4, idle_sway * 0.6, idle_sway))
 		if has_drag:
 			var fall_drag := influence * 0.07
-			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_dir * fall_drag + Vector3(0, -0.015 * fall_drag, 0)
-			_add_rotation(pelvis, Vector3(0, drag_dir.x * 0.08 * influence, 0))
-			_add_rotation(left_ski, Vector3(0, drag_dir.x * 0.06 * influence, 0))
-			_add_rotation(right_ski, Vector3(0, drag_dir.x * 0.06 * influence, 0))
+			var drag_offset := Vector3(local_travel.x, 0.0, -local_travel.z) * fall_drag
+			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_offset + Vector3(0, -0.015 * fall_drag, 0)
+			_add_rotation(pelvis, Vector3(-local_travel.z * 0.06 * influence, local_travel.x * 0.08 * influence, local_travel.x * 0.05 * influence))
+			_add_rotation(left_ski, Vector3(0.0, local_travel.x * 0.06 * influence, 0.0))
+			_add_rotation(right_ski, Vector3(0.0, local_travel.x * 0.06 * influence, 0.0))
 	# In REST, keep a small residual slide and secondary wobble until rest is confirmed.
 	if frame.crash_stage == CrashContext.Stage.REST:
 		var decay := clampf(1.0 - stage_time / maxf(0.8, 0.01), 0.0, 1.0)
 		if has_drag:
 			var rest_drag := influence * 0.045 * decay
-			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + drag_dir * rest_drag
+			_position_targets[pelvis] = (_position_targets[pelvis] as Vector3) + Vector3(local_travel.x, 0.0, -local_travel.z) * rest_drag
 		var wobble := sin(stage_time * 6.2) * maxf(influence, 0.3) * 0.035 * decay
 		_add_rotation(spine, Vector3(wobble * 0.5, 0, wobble))
 		_add_rotation(chest, Vector3(0, 0, wobble * 0.7))

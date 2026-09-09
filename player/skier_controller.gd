@@ -661,26 +661,31 @@ func _update_bail(delta: float) -> void:
 	skid_amount = 0.0
 	crash_context.advance(delta)
 	bail_time = maxf(0.0, profile.crash_max_duration - crash_context.elapsed)
-	var bail_motion := _bail_motion_solver.step_motion(velocity, angular_velocity, contact.average_normal, contact.grounded, crash_context.stage, delta, profile)
+	var bail_motion := _bail_motion_solver.step_motion(
+		velocity,
+		angular_velocity,
+		contact.average_normal,
+		contact.grounded,
+		crash_context.stage,
+		delta,
+		profile,
+		global_basis
+	)
 	velocity = bail_motion.velocity
 	angular_velocity = bail_motion.angular_velocity
 	if contact.grounded:
-		# Grounded crashes keep a damped tumble so the fall reads physically
-		# instead of sliding upright. Snow contact owns the final alignment,
-		# applied slowly during the fall stages and faster once at rest.
-		rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta * 0.6)
-		rotate_object_local(Vector3.UP, angular_velocity.y * delta * 0.6)
-		rotate_object_local(Vector3.BACK, angular_velocity.z * delta * 0.6)
-		global_basis = global_basis.orthonormalized()
-		var align_rate := profile.bail_ground_align_rate
-		if crash_context.stage == CrashContext.Stage.RELEASE or crash_context.stage == CrashContext.Stage.IMPACT or crash_context.stage == CrashContext.Stage.FALL:
-			align_rate *= 0.35
-		var aligned_up := global_basis.y.lerp(contact.average_normal, 1.0 - exp(-align_rate * delta)).normalized()
-		var forward := (-global_basis.z).slide(contact.average_normal)
-		if forward.length_squared() < 0.0001:
-			forward = contact.downhill()
-		if forward.length_squared() > 0.0001:
-			global_basis = Basis.looking_at(forward.normalized(), aligned_up)
+		# Grounded FALL couples residual crash spin to surface roll around
+		# normal × travel. Alignment is a speed-aware slerp toward snow, not a
+		# looking_at rebuild that would discard the tumble each tick.
+		global_basis = _bail_motion_solver.integrate_grounded_crash_basis(
+			global_basis,
+			angular_velocity,
+			contact.average_normal,
+			bail_motion.planar_travel,
+			bail_motion.align_rate,
+			delta,
+			profile
+		)
 	else:
 		# Unsupported crashes retain their damped tumble. Upright alignment is
 		# owned by snow contact; correcting to world-up here snaps inverted falls.
