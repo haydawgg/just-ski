@@ -110,6 +110,7 @@ Require-Match $grindCollisionResult 'var safe_fraction' "GRIND collision results
 Require-Match $controller 'state_before_motion\s*!=\s*State\.GRIND' "GRIND must not receive a second CharacterBody motion pass."
 Require-Match $controller '_evaluate_grind_collision' "GRIND feature impacts must reuse the crash evaluator seam."
 Require-Match $controller 'State\.GRIND,\s*\r?\n\s*profile\.feature_collision_min_speed' "GRIND feature impacts must be evaluated as GRIND-origin collisions."
+Require-Match $controller 'func respawn_at\(value:\s*Transform3D,\s*_reason:\s*StringName' "Skier respawn must accept the session respawn reason from the signal."
 Require-Match $controller 'var was_finished\s*:=\s*scoring != null and scoring\.finished' "Respawn must snapshot finished-run state before clearing locomotion."
 Require-Match $controller 'if was_finished:\s*\r?\n\s*scoring\.reset_run\(\)' "Respawn after finish must start a new scoring run."
 Require-Match $contact 'average_normal\s*=\s*Vector3\.UP' "Contact sampling must reset the current average normal before each sample."

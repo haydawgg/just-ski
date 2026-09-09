@@ -1241,7 +1241,7 @@ func _recover_from_bail(delta: float = 1.0 / 60.0) -> void:
 	_clear_crash_state()
 	state_changed.emit("Ground")
 
-func respawn_at(value: Transform3D) -> void:
+func respawn_at(value: Transform3D, _reason: StringName = SessionManager.RESPAWN_SESSION) -> void:
 	var was_finished := scoring != null and scoring.finished
 	respawn_count += 1
 	active_rail = null
