@@ -65,17 +65,11 @@ func apply_snapshot(data: Dictionary) -> void:
 		linger_time = 0.16
 	visible = bool(GameSettings.active.get("trick_visualizer_enabled", true)) and (active or linger_time > 0.0)
 	modulate.a = 0.62 if active else clampf(linger_time / 0.16, 0.0, 0.34)
-	if not trick_text.is_empty():
-		title_label.text = trick_text
-	else:
-		title_label.text = _pretty(kind)
+	# The scored trick name and rotation degrees already have a single readout
+	# in the center-top trick label. This teaching widget shows the input
+	# gesture identity and stick state; the arcs visualize rotation progress.
+	title_label.text = _pretty(kind)
 	var base_detail := "%s  •  %d%%  •  %s" % [_pretty(phase), roundi(strength * 100.0), grab if not grab.is_empty() else "NO GRAB"]
-	if trick_text.contains(" + ") or (yaw_degrees >= 5 and flip_degrees >= 5):
-		base_detail += "  •  Y:%d° F:%d°" % [yaw_degrees, flip_degrees]
-	elif yaw_degrees >= 5 and flip_degrees < 5 and yaw_degrees >= 10:
-		base_detail += "  •  Y:%d°" % yaw_degrees
-	elif flip_degrees >= 5 and yaw_degrees < 5 and flip_degrees >= 10:
-		base_detail += "  •  F:%d°" % flip_degrees
 	detail_label.text = base_detail
 	queue_redraw()
 

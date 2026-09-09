@@ -11,6 +11,10 @@ const TRACK_BREAK_DISTANCE := 3.0
 const MIN_TRACK_SPEED := 1.4
 const MAX_CONTINUOUS_PARTICLES := 184
 const LANDING_EMITTER_WINDOW := 0.68
+## Response rate for contact-spray density changes. Emitters ramp toward their
+## demand each frame instead of switching on/off in one tick, so spray fades
+## in and trails off rather than popping into existence.
+const EMITTER_SMOOTH_RESPONSE := 12.0
 
 var skier: SkierController
 var track_mesh_instance: MeshInstance3D
@@ -111,27 +115,39 @@ func update_from_existing_contact(delta: float) -> void:
 	track_sample_time += delta
 	if grounded and contact_presentation.allows_snow_effects() and speed >= MIN_TRACK_SPEED:
 		_update_tracks(speed)
-		_update_continuous_spray(speed)
-		bail_scrape.emitting = false
+		_update_continuous_spray(speed, delta)
+		_set_emitter_density(bail_scrape, 0.0, delta)
 	elif skier.state == SkierController.State.BAIL and skier.contact.grounded and contact_presentation.allows_snow_effects() and speed >= 0.9:
 		last_track_valid = false
-		carve_spray.emitting = false
-		skid_spray.emitting = false
-		_update_bail_scrape(speed)
+		_set_emitter_density(carve_spray, 0.0, delta)
+		_set_emitter_density(skid_spray, 0.0, delta)
+		_update_bail_scrape(speed, delta)
 	else:
 		last_track_valid = false
-		carve_spray.emitting = false
-		skid_spray.emitting = false
-		bail_scrape.emitting = false
+		_set_emitter_density(carve_spray, 0.0, delta)
+		_set_emitter_density(skid_spray, 0.0, delta)
+		_set_emitter_density(bail_scrape, 0.0, delta)
 		last_mode = "none"
 	_update_speed_snow(speed)
 
+## Ramps an emitter's density toward its demand and gates visibility on the
+## smoothed value, so contact spray never starts or stops in a single frame.
+static func smooth_emitter_ratio(current: float, target: float, delta: float, response: float = EMITTER_SMOOTH_RESPONSE) -> float:
+	return current + (clampf(target, 0.0, 1.0) - current) * (1.0 - exp(-maxf(response, 0.01) * maxf(delta, 0.0)))
+
+func _set_emitter_density(emitter: GPUParticles3D, target: float, delta: float) -> void:
+	if emitter == null:
+		return
+	emitter.amount_ratio = smooth_emitter_ratio(emitter.amount_ratio, target, delta)
+	emitter.emitting = emitter.amount_ratio > 0.04
+
 func clear_transient_effects() -> void:
 	last_track_valid = false
-	carve_spray.emitting = false
-	skid_spray.emitting = false
-	speed_snow.emitting = false
-	bail_scrape.emitting = false
+	for emitter: GPUParticles3D in [carve_spray, skid_spray, speed_snow, bail_scrape]:
+		if emitter == null:
+			continue
+		emitter.amount_ratio = 0.0
+		emitter.emitting = false
 	# Landing feedback is a one-shot event. The skier emits `landed` before
 	# entering control recovery, so clearing the continuous effects here must
 	# not erase a burst that was just restarted by _on_landed().
@@ -354,7 +370,7 @@ func _set_particle_emitter_height(particles: GPUParticles3D, height: float) -> v
 	if mat is ShaderMaterial:
 		(mat as ShaderMaterial).set_shader_parameter("emitter_base_height", height)
 
-func _update_continuous_spray(speed: float) -> void:
+func _update_continuous_spray(speed: float, delta: float) -> void:
 	var contact_position := _presentation_center() + _presentation_normal() * 0.08
 	var normal := _presentation_normal()
 	var travel := skier.velocity.slide(normal)
@@ -384,21 +400,21 @@ func _update_continuous_spray(speed: float) -> void:
 	skid_material.spread = lerpf(34.0, 62.0, maxf(skid, brake))
 	skid_material.initial_velocity_min = lerpf(1.8, 2.8, brake)
 	skid_material.initial_velocity_max = lerpf(6.8, 8.2, brake)
-	carve_spray.amount_ratio = clampf(carve * speed_ratio * (1.0 - skid * 0.78), 0.0, 0.52)
+	var carve_target := clampf(carve * speed_ratio * (1.0 - skid * 0.78), 0.0, 0.52)
 	var skid_demand := maxf((skid - 0.16) / 0.84, brake * 0.82)
-	skid_spray.amount_ratio = clampf(skid_demand * speed_ratio, 0.0, 1.0)
-	carve_spray.emitting = carve_spray.amount_ratio > 0.04
-	skid_spray.emitting = skid_spray.amount_ratio > 0.04
+	var skid_target := clampf(skid_demand * speed_ratio, 0.0, 1.0)
+	_set_emitter_density(carve_spray, carve_target, delta)
+	_set_emitter_density(skid_spray, skid_target, delta)
 	last_mode = "brake" if skid_spray.emitting and brake > 0.2 else ("skid" if skid_spray.emitting else ("carve" if carve_spray.emitting else "track"))
 
-func _update_bail_scrape(speed: float) -> void:
+func _update_bail_scrape(speed: float, delta: float) -> void:
 	var normal := _presentation_normal()
 	if normal.length_squared() < 0.001:
 		normal = Vector3.UP
 	var surface_velocity := skier.velocity.slide(normal)
 	last_bail_surface_speed = surface_velocity.length()
 	if last_bail_surface_speed < 0.9:
-		bail_scrape.emitting = false
+		_set_emitter_density(bail_scrape, 0.0, delta)
 		return
 	var travel := surface_velocity.normalized()
 	bail_scrape.global_position = _presentation_center() + normal * 0.12 - travel * 0.24
@@ -408,8 +424,7 @@ func _update_bail_scrape(speed: float) -> void:
 	process_material.spread = 54.0
 	process_material.initial_velocity_min = lerpf(0.9, 2.0, clampf(last_bail_surface_speed / 14.0, 0.0, 1.0))
 	process_material.initial_velocity_max = lerpf(3.2, 6.5, clampf(last_bail_surface_speed / 14.0, 0.0, 1.0))
-	bail_scrape.amount_ratio = clampf((last_bail_surface_speed - 0.9) / 9.0, 0.12, 0.78)
-	bail_scrape.emitting = true
+	_set_emitter_density(bail_scrape, clampf((last_bail_surface_speed - 0.9) / 9.0, 0.12, 0.78), delta)
 	last_mode = "bail_scrape"
 
 func _update_speed_snow(speed: float) -> void:

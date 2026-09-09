@@ -462,6 +462,7 @@ func reset_immediate() -> void:
 	_ground_heading_hold_timer = 0.0
 	_previous_planar_speed = target.velocity.slide(_filtered_surface_up).length()
 	_composition_initialized = true
+	reset_physics_interpolation()
 
 func _physics_process(delta: float) -> void:
 	if target == null:

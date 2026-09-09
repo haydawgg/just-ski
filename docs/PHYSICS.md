@@ -47,6 +47,20 @@ A segmented predictor estimates likely landing position and normal for preparati
 
 ## Landing evaluation
 
+The long terrain probes support suspension and landing prediction; they no
+longer independently trigger touchdown. Probe-based landing requires support
+within 0.05 m of the intended seat. A swept capsule collision with rideable
+terrain resolves landing in the same physics tick, using incoming velocity
+before `move_and_slide` removes the impact component. Terrain hops return to
+suspension without an immediate position snap. The regular crash/recovery suite
+covers the former 0.53 m early-touchdown case, real snow collisions, impact-speed
+preservation, and valid contact at the world origin.
+
+Pop cancels inward suspension velocity before adding its normal impulse, while
+preserving tangential and outward momentum. Regression coverage includes all
+three cases on a sloped normal. The reference gameplay jump remains inside its
+existing envelope (0.76 m peak, 0.88 s airtime at 120 Hz).
+
 Landing evaluation combines travel alignment, skier/surface alignment, impact severity, and remaining angular motion. The score weights, impact-severity biases, and balance biases are owned by the active `SkiPhysicsProfile`; hard plausibility gates remain explicit safety logic. Hard plausibility gates prevent obviously inverted, excessively rotating, or extreme impacts from passing only because a weighted average is acceptable.
 
 Successful landings retain and project motion onto the receiving surface, classify the outcome for scoring/presentation, and may briefly reduce ordinary steering after a heavier impact. The AIR-to-GROUND state change is immediate, but the airborne root orientation is preserved and settles toward the receiving surface inside GROUND at a bounded angular rate. Clean landings use the short end of the settle envelope; heavier non-bail landings use the longer end and transfer only a small, damped amount of airborne yaw/tilt residual. The initial ground target keeps the touchdown heading, while normal ground steering and weathervaning correct it afterward. Failed landings preserve incoming momentum into the bail path instead of freezing the skier.
@@ -60,6 +74,33 @@ All fall entry passes through a guarded gameplay boundary that records the sourc
 `BAIL` is controlled physics rather than ragdoll simulation. Linear momentum is retained and angular motion is damped within configured bounds. Rail release supplies a filtered, bounded angular presentation value instead of passing through the normal air-entry reset. Recovery waits for a sufficiently quiet grounded rest state, then advances through an explicit presentation recovery while gameplay remains in `BAIL`. `GROUND` begins only after that recovery duration reaches its skiing-ready endpoint and grounded support is still present. An airborne bail that reaches the configured maximum duration, or loses support before recovery can complete, uses normal marker/default respawn and cannot transition directly to `GROUND`.
 
 Solid-feature contact becomes a bail only when the profile's impact conditions are met. Low-speed brushes remain ordinary collisions.
+
+Unsupported bail rotation follows damped angular momentum without a world-up
+correction. Snow contact owns upright alignment. Crash presentation treats zero
+stage time/progress as the start of a stage, including the first recovery frame,
+so total crash time cannot prematurely complete the get-up pose or contact IK.
+`crash_recovery_acceptance.tscn` covers inverted pitch/roll continuity, stage
+handoffs through the real controller, and the complete rest/recovery lifecycle.
+These checks do not establish grounded tumble quality or eliminate the remaining
+equipment and recovery-pose issues in [Known Issues](KNOWN_ISSUES.md).
+
+Crash entry clears downhill locomotion channels (edge, steering, carve, tuck,
+pressure, skid) while preserving linear/angular momentum, so no pre-crash skiing
+posture leaks into crash presentation or telemetry. Grounded crashes keep a
+damped tumble with a stage-dependent alignment rate (slow through the fall,
+firm at rest). Recovery clears locomotion again, realigns the root within one
+ground-settle angular step, and seeds the standard orientation settle for the
+remainder instead of snapping. The crash recovery suite guards entry clearing,
+gradual grounded tumble, low-speed settle motion, and rate-limited recovery.
+
+Terrain-hop reseating uses the same bounded root-orientation settling as
+deliberate landings. The landing orientation suite covers tilted reseating at
+30, 60, and 120 Hz; the reproduced 18.4-degree instantaneous correction is
+removed. Contact seating uses actual probe hits to establish validity, so a
+terrain hit at world position `(0, 0, 0)` is no longer mistaken for missing data.
+Unarmed post-spawn seating settles quietly without a landing presentation;
+armed terrain hops keep their landing absorption. The landing orientation suite
+guards both paths.
 
 ## Rails
 
@@ -108,3 +149,10 @@ Full runtime gate:
 ```
 
 `tests/runtime_quality_gate.ps1` is the maintained source of truth for the runtime scene list. `tests/physics_benchmark.tscn` remains the deterministic end-to-end handling benchmark and writes telemetry under Godot's user-data path rather than into the repository.
+
+The handling benchmark starts at x=30 rather than x=28. With corrected touchdown
+timing, the old timed linked turn physically hit `UpperBonk` (authored at x=22,
+z=76), producing a collision-related speed loss. Moving the fixture 2 m right
+keeps that intended snow-handling route clear; the zero-feature-collision,
+speed-retention, carve, and jump assertions are unchanged. Actual obstacle
+collision behavior remains covered by the physics collision and crash suites.

@@ -14,6 +14,7 @@ const CollisionCrashEvaluatorModule := preload("res://player/motion/collision_cr
 const BailMotionSolverModule := preload("res://player/motion/bail_motion_solver.gd")
 const SkierInputFrameModule := preload("res://player/input/skier_input_frame.gd")
 const SkierInputSamplerModule := preload("res://player/input/skier_input_sampler.gd")
+const TOUCHDOWN_SEAT_MARGIN := 0.05
 
 signal state_changed(state_name: String)
 signal telemetry_updated(data: Dictionary)
@@ -142,6 +143,7 @@ func _ready() -> void:
 	flick = FlickTrickInterpreter.new(flick_profile)
 	trick_command = TrickCommand.new()
 	SessionManager.respawn_requested.connect(respawn_at)
+	_reset_presentation()
 	state_changed.emit("Air")
 
 func _exit_tree() -> void:
@@ -196,9 +198,11 @@ func _physics_process(delta: float) -> void:
 	# pass on a tick that started in GRIND, even if the rail update transitions
 	# to AIR or BAIL while processing that tick.
 	if state != State.GRIND and state_before_motion != State.GRIND:
+		var incoming_velocity := velocity
 		move_and_slide()
 		_record_motion_diagnostics(velocity_before_motion)
 		_evaluate_feature_crash_after_motion()
+		_resolve_air_snow_collision(incoming_velocity)
 		if state == State.GROUND and contact.grounded:
 			_suppress_into_slope_bounce()
 			_update_wall_pin(delta)
@@ -500,13 +504,38 @@ func _update_air(delta: float) -> void:
 	_try_capture_rail()
 	if state != State.AIR:
 		return
-	if contact.grounded and air_time >= profile.min_air_time and velocity.dot(contact.average_normal) < 1.5:
+	var seat_clearance := (global_position - contact.average_hit_position).dot(contact.average_normal) - profile.ground_attach_height
+	if contact.grounded and not contact.hit_points.is_empty() and seat_clearance <= TOUCHDOWN_SEAT_MARGIN and air_time >= profile.min_air_time and velocity.dot(contact.average_normal) < 1.5:
 		if air_deliberate:
 			_handle_landing()
 		else:
 			# Terrain hop (crest, deck lip, spawn seat): rejoin the snow without
 			# presenting a jump landing.
 			_reseat_on_snow()
+
+func _resolve_air_snow_collision(incoming_velocity: Vector3) -> void:
+	if state != State.AIR:
+		return
+	for index: int in get_slide_collision_count():
+		var collision := get_slide_collision(index)
+		var collider := collision.get_collider() as CollisionObject3D
+		var normal := collision.get_normal()
+		if collider == null or (collider.collision_layer & SkiContactSolver.TERRAIN_MASK) == 0:
+			continue
+		if normal.dot(Vector3.UP) < cos(deg_to_rad(profile.maximum_ground_angle_degrees)):
+			continue
+		if incoming_velocity.dot(normal) >= 0.0:
+			continue
+		# CharacterBody has already removed the impact component. Landing must
+		# evaluate the incoming speed, in the same tick as physical snow contact.
+		velocity = incoming_velocity
+		contact.sample(self, profile.ground_probe_distance, profile.ground_probe_reach, profile.contact_probe_offsets(), profile.ground_probe_origin_height)
+		contact.merge_capsule_floor(true, normal, profile.maximum_ground_angle_degrees)
+		if air_deliberate:
+			_handle_landing()
+		else:
+			_reseat_on_snow()
+		return
 
 func _air_rotation_compactness(predicted_landing: float) -> float:
 	if not trick_rotation_state.active:
@@ -622,33 +651,29 @@ func _update_bail(delta: float) -> void:
 	velocity = bail_motion.velocity
 	angular_velocity = bail_motion.angular_velocity
 	if contact.grounded:
-		var aligned_up := global_basis.y.lerp(contact.average_normal, 1.0 - exp(-profile.bail_ground_align_rate * delta)).normalized()
+		# Grounded crashes keep a damped tumble so the fall reads physically
+		# instead of sliding upright. Snow contact owns the final alignment,
+		# applied slowly during the fall stages and faster once at rest.
+		rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta * 0.6)
+		rotate_object_local(Vector3.UP, angular_velocity.y * delta * 0.6)
+		rotate_object_local(Vector3.BACK, angular_velocity.z * delta * 0.6)
+		global_basis = global_basis.orthonormalized()
+		var align_rate := profile.bail_ground_align_rate
+		if crash_context.stage == CrashContext.Stage.RELEASE or crash_context.stage == CrashContext.Stage.IMPACT or crash_context.stage == CrashContext.Stage.FALL:
+			align_rate *= 0.35
+		var aligned_up := global_basis.y.lerp(contact.average_normal, 1.0 - exp(-align_rate * delta)).normalized()
 		var forward := (-global_basis.z).slide(contact.average_normal)
 		if forward.length_squared() < 0.0001:
 			forward = contact.downhill()
 		if forward.length_squared() > 0.0001:
 			global_basis = Basis.looking_at(forward.normalized(), aligned_up)
 	else:
+		# Unsupported crashes retain their damped tumble. Upright alignment is
+		# owned by snow contact; correcting to world-up here snaps inverted falls.
 		rotate_object_local(Vector3.RIGHT, angular_velocity.x * delta)
 		rotate_object_local(Vector3.UP, angular_velocity.y * delta)
 		rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
 		global_basis = global_basis.orthonormalized()
-		# Prevent sustained vertical post where skis appear as a pole through the character.
-		var up_dot := global_basis.y.dot(Vector3.UP)
-		if up_dot < 0.45:
-			var forward := -global_basis.z
-			if forward.length_squared() < 0.001:
-				forward = Vector3.FORWARD
-			var target_basis := Basis.looking_at(forward.normalized(), Vector3.UP)
-			global_basis = global_basis.slerp(target_basis, 0.68)
-			global_basis = global_basis.orthonormalized()
-			# Strongly damp angular velocity when correcting from extreme inversion.
-			angular_velocity *= 0.62
-			# Add upright torque to prevent lingering vertical.
-			var upright_torque := Vector3.UP.cross(global_basis.y).normalized() * 4.5 * (0.45 - up_dot)
-			angular_velocity += upright_torque * delta
-			# Clamp angular velocity to prevent re-tumbling into vertical.
-			angular_velocity = angular_velocity.limit_length(3.5)
 	crash_context.current_velocity = velocity
 	crash_context.angular_speed = angular_velocity.length()
 	_update_crash_stage_and_rest(delta)
@@ -662,6 +687,8 @@ func _pop(
 ) -> void:
 	var normalized_charge := clampf(jump_charge / maxf(profile.maximum_jump_charge, 0.001), 0.0, 1.0)
 	var strength := requested_strength if requested_strength >= 0.0 else lerpf(profile.minimum_pop_strength, 1.0, normalized_charge)
+	# Suspension pulls into the surface; it must not consume the jump impulse.
+	velocity -= normal * minf(0.0, velocity.dot(normal))
 	velocity += normal * profile.pop_impulse * strength
 	AudioManager.pop_feedback(strength)
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.POP, strength)
@@ -768,7 +795,7 @@ func _handle_landing() -> void:
 	state_changed.emit("Ground")
 
 func _snap_to_contact_seat() -> void:
-	if not contact.grounded or contact.average_hit_position.length_squared() < 0.001:
+	if not contact.grounded or contact.hit_points.is_empty():
 		return
 	var normal := contact.average_normal.normalized()
 	if normal.length_squared() < 0.001:
@@ -870,24 +897,22 @@ func _reseat_on_snow() -> void:
 	var transition := _landing_transition.evaluate(global_basis.y, -global_basis.z, contact.average_normal, velocity, angular_velocity, profile)
 	var result: Dictionary = transition.data
 	_capture_landing_context(result, false)
+	var was_armed := landing_feedback_armed
 	landing_feedback_armed = false
 	if int(result.get("outcome", LandingSolver.Outcome.BAIL)) == LandingSolver.Outcome.BAIL:
 		enter_crash(_landing_crash_context(result))
 		return
-	animation_controller.trigger(
-		SkierAnimationController.AnimationEvent.LAND_CLEAN,
-		float(landing_context.get("impact_severity", 0.12)),
-		signf(float(result.lateral_velocity))
-	)
+	# Post-spawn seating (never armed via _enter_air) must not play a landing
+	# crouch as the hover settles onto the snow; terrain hops stay expressive.
+	if was_armed or float(landing_context.get("impact_severity", 0.0)) >= 0.05 or air_time >= 0.1:
+		animation_controller.trigger(
+			SkierAnimationController.AnimationEvent.LAND_CLEAN,
+			float(landing_context.get("impact_severity", 0.12)),
+			signf(float(result.lateral_velocity))
+		)
 	velocity = velocity.slide(contact.average_normal)
-	_clear_landing_orientation_settle()
+	_begin_landing_orientation_settle(float(result.impact_severity))
 	angular_velocity = Vector3.ZERO
-	var projected_forward := (-global_basis.z).slide(contact.average_normal)
-	if projected_forward.length_squared() < 0.0001:
-		projected_forward = contact.downhill()
-	if projected_forward.length_squared() < 0.0001:
-		projected_forward = Vector3.FORWARD
-	global_basis = Basis.looking_at(projected_forward.normalized(), contact.average_normal.normalized()).orthonormalized()
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
 	trick_rotation_state.reset()
@@ -1016,6 +1041,10 @@ func enter_crash(context: CrashContext) -> bool:
 	state = State.BAIL
 	bail_time = profile.crash_max_duration
 	bail_recovering = true
+	# Bail owns the body: downhill locomotion channels must not persist into
+	# crash presentation, telemetry, or the eventual recovery. Velocity and
+	# angular momentum are preserved separately above via crash_context.
+	_clear_locomotion_channels()
 	landing_context = {}
 	landing_control_multiplier = 1.0
 	landing_control_recovery_rate = 0.0
@@ -1086,7 +1115,7 @@ func _update_crash_stage_and_rest(delta: float) -> void:
 	if crash_context.stage == CrashContext.Stage.RECOVERY:
 		if crash_context.stage_elapsed >= animation_controller.profile.crash_recovery_duration:
 			if contact.grounded:
-				_recover_from_bail()
+				_recover_from_bail(delta)
 			else:
 				_request_bail_respawn()
 		return
@@ -1178,17 +1207,31 @@ func _request_bail_respawn() -> void:
 	if state == State.BAIL:
 		SessionManager.request_respawn()
 
-func _recover_from_bail() -> void:
+func _recover_from_bail(delta: float = 1.0 / 60.0) -> void:
 	bail_recovering = false
-	_clear_landing_orientation_settle()
+	# Single coordinated return to skiing: fresh locomotion channels first so
+	# no pre-crash edge/steer/carve leaks into the first grounded frames, then
+	# a rate-limited root realignment whose remainder the GROUND settle owns.
+	_clear_locomotion_channels()
 	velocity = velocity.slide(contact.average_normal) * profile.bail_recovery_speed_retain
+	# Seed the ground orientation settle from the pre-zero tumble so residual
+	# correction continues under the same angular budget as landings.
+	_begin_landing_orientation_settle(0.35)
 	angular_velocity = Vector3.ZERO
 	var projected_forward := (-global_basis.z).slide(contact.average_normal)
 	if projected_forward.length_squared() < 0.0001:
 		projected_forward = contact.downhill()
 	if projected_forward.length_squared() < 0.0001:
 		projected_forward = Vector3.FORWARD
-	global_basis = Basis.looking_at(projected_forward.normalized(), contact.average_normal.normalized()).orthonormalized()
+	var target_basis := Basis.looking_at(projected_forward.normalized(), contact.average_normal.normalized()).orthonormalized()
+	var step_angle := deg_to_rad(maxf(profile.landing_orientation_max_rate_degrees, 0.0)) * maxf(delta, 0.0)
+	var current_quat := global_basis.orthonormalized().get_rotation_quaternion()
+	var target_quat := target_basis.get_rotation_quaternion()
+	var error := current_quat.angle_to(target_quat)
+	if error > 0.000001 and step_angle > 0.0 and step_angle < error:
+		global_basis = Basis(current_quat.slerp(target_quat, step_angle / error)).orthonormalized()
+	else:
+		global_basis = target_basis
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
 	state = State.GROUND
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.RECOVERY_COMPLETE, 0.55)
@@ -1238,6 +1281,12 @@ func respawn_at(value: Transform3D) -> void:
 	last_speed_discontinuity = {}
 	animation_frame.reset()
 	_clear_crash_state()
+	grab_amount = 0.0
+	grab_tweak = Vector2.ZERO
+	grab_release_time = 0.0
+	gesture_strength = 0.0
+	input_frame.clear_values()
+	trick_command.reset()
 	if was_finished:
 		scoring.reset_run()
 	elif SessionManager.has_marker:
@@ -1246,9 +1295,20 @@ func respawn_at(value: Transform3D) -> void:
 		scoring.reset_link()
 		scoring.break_combo("respawn")
 	AudioManager.stop_feedback()
-	animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
+	_reset_presentation()
 	state_changed.emit("Air")
 	respawn_applied.emit(global_transform)
+
+func _reset_presentation() -> void:
+	# Publish a fully evaluated body/equipment pose before camera reset observers
+	# run. Teleports must also discard the previous location's prediction/cache.
+	_landing_prediction_cache_serial = -1
+	_landing_prediction_cache.clear()
+	animation_frame.reset()
+	_update_animation(0.0, true)
+	if snow_vfx != null:
+		snow_vfx.clear_transient_effects()
+	reset_physics_interpolation()
 
 func set_recovery_frozen(value: bool) -> void:
 	"""Freeze simulation/input while CourseRecovery performs its fade/respawn lifecycle."""
@@ -1345,7 +1405,7 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	if snow_vfx != null:
 		snow_vfx.clear_transient_effects()
 	if animation_controller != null:
-		animation_controller.trigger(SkierAnimationController.AnimationEvent.RESPAWN)
+		_reset_presentation()
 	state_changed.emit("Air")
 
 func _record_motion_diagnostics(velocity_before_motion: Vector3) -> void:
@@ -1625,7 +1685,7 @@ func _flick_context() -> int:
 		State.GRIND: return FlickTrickInterpreter.Context.GRIND
 	return FlickTrickInterpreter.Context.BAIL
 
-func _update_animation(delta: float) -> void:
+func _update_animation(delta: float, reset_pose: bool = false) -> void:
 	var prediction := {
 		"time": -1.0,
 		"valid": false,
@@ -1807,7 +1867,10 @@ func _update_animation(delta: float) -> void:
 	if absf(balance_side) < 0.05:
 		balance_side = signf(velocity.dot(global_basis.x))
 	animation_frame.pre_bail_side = balance_side
-	animation_controller.apply_frame(animation_frame, delta)
+	if reset_pose:
+		animation_controller.reset_to_frame(animation_frame)
+	else:
+		animation_controller.apply_frame(animation_frame, delta)
 	var animation_snapshot := animation_controller.debug_snapshot()
 	trick.set_grab_contact(
 		float(animation_snapshot.get("grab_contact_weight", 0.0)),

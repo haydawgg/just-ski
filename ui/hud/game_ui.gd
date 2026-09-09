@@ -38,6 +38,7 @@ var total_score := 0
 var combo_count := 0
 var combo_multiplier := 1.0
 var notice_time := 0.0
+var _notice_text := ""
 var trick_result_time := 0.0
 var onboarding_remaining := 8.0
 var clean_capture_mode := false
@@ -90,6 +91,7 @@ func bind_player(value: SkierController) -> void:
 	_unbind_player()
 	player = value
 	_bound_player = value
+	_update_notice()
 	if player == null:
 		return
 	player.telemetry_updated.connect(_on_telemetry)
@@ -171,9 +173,8 @@ func _process(delta: float) -> void:
 		onboarding_remaining = maxf(0.0, onboarding_remaining - delta)
 		hint_label.modulate.a = clampf(onboarding_remaining / ONBOARDING_FADE_TIME, 0.0, 0.82)
 		hint_label.visible = onboarding_remaining > 0.0
-	if notice_time > 0.0:
-		notice_time -= delta
-		notice_label.modulate.a = clampf(notice_time, 0.0, 1.0)
+	notice_time = maxf(0.0, notice_time - delta)
+	_update_notice()
 	if trick_result_time > 0.0:
 		trick_result_time -= delta
 		trick_result_label.modulate.a = clampf(trick_result_time / 0.55, 0.0, 1.0)
@@ -964,6 +965,7 @@ func _close_options(applied: bool) -> void:
 		_focus_first_pause_button()
 
 func _on_telemetry(data: Dictionary) -> void:
+	_update_notice()
 	var speed := float(data.speed_mps) * (2.23694 if bool(GameSettings.active["units_mph"]) else 3.6)
 	speed_label.text = "%d %s" % [roundi(speed), "mph" if bool(GameSettings.active["units_mph"]) else "km/h"]
 	var animation: Dictionary = data.get("animation", {})
@@ -1125,7 +1127,7 @@ func _on_landed(result: Dictionary) -> void:
 	_show_trick_result(_quality_name(int(result.get("outcome", LandingSolver.Outcome.BAIL))) + " LANDING")
 
 func _on_crashed() -> void:
-	_show_notice("BAIL — recover on snow")
+	_update_notice()
 
 func _reset_combo() -> void:
 	if player != null and player.scoring != null:
@@ -1208,9 +1210,21 @@ func _update_hint() -> void:
 		hint_label.visible = true
 
 func _show_notice(text: String) -> void:
-	notice_label.text = text
-	notice_label.modulate.a = 1.0
+	_notice_text = text
 	notice_time = 2.0
+	_update_notice()
+
+func _update_notice() -> void:
+	if notice_label == null:
+		return
+	# Crash status belongs to locomotion, including the entire get-up. Other
+	# notices keep their own expiry and cannot replace an active crash status.
+	if is_instance_valid(player) and player.state == SkierController.State.BAIL:
+		notice_label.text = "BAIL — getting up" if player.crash_context.stage == CrashContext.Stage.RECOVERY else "BAIL — recover on snow"
+		notice_label.modulate.a = 1.0
+	else:
+		notice_label.text = _notice_text
+		notice_label.modulate.a = clampf(notice_time, 0.0, 1.0)
 
 func _show_trick_result(text: String) -> void:
 	trick_result_label.text = text

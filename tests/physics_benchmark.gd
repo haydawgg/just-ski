@@ -3,7 +3,9 @@ extends Node
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
 
 const SAMPLE_INTERVAL := 2
-const BENCHMARK_START_POSITION := Vector3(28.0, 97.932, 138.0)
+# Keep the terrain-only handling route clear of UpperBonk at (22, 76).
+# Real touchdown timing moved the old x=28 linked turn into its collision body.
+const BENCHMARK_START_POSITION := Vector3(30.0, 97.932, 138.0)
 const SETTLE_SECONDS := 1.0
 const PURE_CARVE_SECONDS := 3.5
 const LINK_TURN_SECONDS := 1.4

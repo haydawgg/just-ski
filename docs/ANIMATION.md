@@ -4,16 +4,26 @@ Summit Sessions uses procedural skier presentation driven by gameplay telemetry.
 
 ## Gameplay / presentation boundary
 
-`SkierAnimationController` is fed through two public operations:
+`SkierAnimationController` receives continuous frames, events, and explicit teleport resets:
 
 ```gdscript
-apply_frame(frame: SkierAnimationFrame, delta: float)
+apply_frame(frame: SkierAnimationFrame, delta: float, snap_pose: bool = false)
 trigger(event: int, strength: float = 1.0, side: float = 0.0)
+reset_to_frame(frame: SkierAnimationFrame)
 ```
 
 `SkierAnimationFrame` is a reusable presentation snapshot built by gameplay. It carries the information the visual system needs, including locomotion state, speed, steering/carve/skid response, terrain contact, ski frame, air/trick state, landing prediction, grab/style state, rail information, and crash context.
 
 The animation controller may smooth, classify, and blend that data for presentation, but it must not change the gameplay transform, velocity, collision state, rail state, or scored trick state.
+
+Startup and respawn use `reset_to_frame` to clear pose/IK/secondary history and
+evaluate the initial pose without advancing animation time. Canonical joints,
+the visible body, and equipment attachments are synchronized before the player
+emits `respawn_applied` and the camera resets. Ordinary frames retain their
+normal smoothing. Player and camera reset physics interpolation after a teleport.
+The camera runtime stability suite compares startup and post-crash reset body
+landmarks, ski/pole transforms, and camera framing before any movement, and
+checks that grab input/release state is cleared.
 
 ## Rig architecture
 
@@ -95,7 +105,7 @@ Presentation can add:
 - opening and counter-rotation as the skier prepares to land;
 - distinct visual shapes for flips and corks.
 
-The HUD can show continuous in-progress rotation while landed scoring resolves to the established trick buckets. Both read the same gameplay-owned rotation history.
+The HUD can show continuous in-progress rotation while landed scoring resolves to the established trick buckets. Both read the same gameplay-owned rotation history. Touchdown freezes a single rotation snapshot shared by the display, scoring, and landing validity, and accumulation cannot continue past contact; the landing orientation suite guards the freeze.
 
 ## Head, gaze, and headwear
 
@@ -117,7 +127,7 @@ Physical grabs and style-only poses are data-driven resources.
 
 `default_grab_animation_library.tres` contains the supported physical grabs and their hand / ski target definitions. `default_style_pose_library.tres` contains style poses that do not require hand-to-ski contact.
 
-The grab system blends authored body shapes with bounded arm targeting. Ski-local markers move with the skier, so grab targets remain attached through spins and tweaks. On the production `Skeleton3D`, the adapter receives a typed visual reach request after canonical retargeting and applies bounded upper-spine/clavicle assistance, an actual-length two-bone arm solve, and marker-aligned wrist orientation. The palm contact point is calibrated against the attached equipment marker, with a `0.18 m` acquisition cap and a `0.12 m` maintenance envelope during `HOLD`; no bone scaling, root translation, or gameplay transform is involved. The primitive adapter keeps the canonical solver path, and production helper bones return to their neutral pose outside grabs. Contact is presentation-only; scoring state remains owned by the trick system.
+The grab system blends authored body shapes with bounded arm targeting. Ski-local markers move with the skier, so grab targets remain attached through spins and tweaks. On the production `Skeleton3D`, the adapter receives a typed visual reach request after canonical retargeting and applies bounded upper-spine/clavicle assistance, an actual-length two-bone arm solve, and marker-aligned wrist orientation. The palm contact point is calibrated against the attached equipment marker, with a `0.14 m` acquisition cap and a `0.12 m` maintenance envelope during `HOLD`; no bone scaling, root translation, or gameplay transform is involved. The primitive adapter keeps the canonical solver path, and production helper bones return to their neutral pose outside grabs. Contact is presentation-only; scoring state remains owned by the trick system.
 
 Grab presentation moves through setup, reach, contact, hold, release, and recovery behavior without snapping the root or changing airtime. Landing preparation can progressively take priority as contact approaches.
 
@@ -128,9 +138,9 @@ Landing animation has two separate responsibilities:
 - anticipation before contact, using the predicted landing frame;
 - impact/recovery after the authoritative gameplay landing event.
 
-Before contact, the skier can begin aligning skis, spotting, opening the arms, and extending the legs. A continuous presentation-only readiness envelope evaluates time-to-contact, surface orientation, vertical motion, and rotational residual. It does not replace the active trick phase or decide the gameplay landing result; the evaluated trick pose remains visible until contact starts the handoff.
+Before contact, the skier can begin aligning skis, spotting, opening the arms, and extending the legs. A continuous presentation-only readiness envelope evaluates time-to-contact, surface orientation, vertical motion, and rotational residual. It does not replace the active trick phase or decide the gameplay landing result; the evaluated trick pose remains visible until contact starts the handoff. Anticipation leg extension is restrained by probe clearance near the seat (`LandingPoseLayer.air_extension_scale`), so the rendered skis cannot punch through the snow before the authoritative touchdown seats the body.
 
-After contact, clean, sketchy, and hard landing events drive different compression and recovery responses. Clean landings may trigger a short stomp layer. Failed landings hand off to the bail presentation instead of also playing a successful landing reaction.
+After contact, clean, sketchy, and hard landing events drive different compression and recovery responses. Clean landings may trigger a short stomp layer. Failed landings hand off to the bail presentation instead of also playing a successful landing reaction. Balance-driven wobble decays with presentation age with a 1.5 s failsafe, so rotational landings always release the crouch; the landing orientation suite guards the release.
 
 ## Rails
 
@@ -142,7 +152,7 @@ The layer moves through `APPROACH`, `CONTACT`, `COMPRESSION`, `GRIND`, and `RELE
 
 Gameplay owns the root. Ground/rail contact owns ski targets; free-air and bail presentation own the boot pose and derive each ski from its fixed binding transform. A state transition captures the final evaluated pose, including procedural layers and constraints, before the receiving owner begins.
 
-The canonical pose controller routes authored ski intent through hips, knees, and boots, then keeps ski-local rotation neutral. A specialized analytic two-bone solve moves each hip-knee-boot chain toward contact-owned boot targets. Stable knee hints, bilateral pelvis compensation, reach and crossing checks, correction-rate limits, and state-dependent weights prevent inverted knees or stretched legs. Skiing IK releases in air/bail and returns progressively during rail contact and recovery.
+The canonical pose controller routes authored ski intent through hips, knees, and boots, then keeps ski-local rotation neutral. A specialized analytic two-bone solve moves each hip-knee-boot chain toward contact-owned boot targets. Stable knee hints, bilateral pelvis compensation, reach and crossing checks, correction-rate limits, and state-dependent weights prevent inverted knees or stretched legs. Crossed targets are additionally hard-separated to the minimum stance (`SkiConstrainedLegIK.separate_boot_targets`) before the solve, so X-shaped ski configurations cannot form. Skiing IK releases in air/bail and returns progressively during rail contact and recovery.
 
 ```text
 physics/gameplay root
@@ -159,7 +169,7 @@ physics/gameplay root
 
 Bail animation is a staged procedural fall layered over gameplay's authoritative `BAIL` motion. It is not a physics ragdoll.
 
-The animation controller reads the captured crash context and produces `RELEASE`, `IMPACT`, `FALL`, `REST`, and `RECOVERY` using stage-local progress. Ordinary recovery remains in `BAIL` while the body recenters and leg IK reacquires contact, then emits recovery completion and enters ground presentation. Respawn remains a separate hard-reset path.
+The animation controller reads the captured crash context and produces `RELEASE`, `IMPACT`, `FALL`, `REST`, and `RECOVERY` using stage-local progress. FALL/REST keep minimum stage-driven secondary motion even at low slide speeds so the crash never presents as a frozen pose. Ordinary recovery remains in `BAIL` while the body recenters and leg IK reacquires contact, then emits recovery completion and enters ground presentation. Respawn remains a separate hard-reset path.
 
 ## Secondary motion
 
