@@ -83,8 +83,13 @@ func _test_motion_interfaces() -> void:
 
 	var bail := BailMotionSolver.new()
 	var bail_motion := bail.step_motion(Vector3(8.0, -2.0, 0.0), Vector3.ONE, Vector3.UP, true, CrashContext.Stage.FALL, 0.1, PHYSICS_PROFILE)
-	if bail_motion.velocity.length() >= Vector3(8.0, 0.0, 0.0).length() or bail_motion.angular_velocity.length() >= Vector3.ONE.length():
-		failures.append("Bail solver did not damp grounded linear and angular motion")
+	if bail_motion.velocity.length() >= Vector3(8.0, 0.0, 0.0).length():
+		failures.append("Bail solver did not damp grounded linear motion")
+	if not bail_motion.roll_valid or bail_motion.generated_roll_speed <= 0.0:
+		failures.append("Bail solver did not couple grounded FALL motion to a surface-roll axis")
+	var rest_motion := bail.step_motion(Vector3(8.0, -2.0, 0.0), Vector3.ONE, Vector3.UP, true, CrashContext.Stage.REST, 0.1, PHYSICS_PROFILE)
+	if rest_motion.angular_velocity.length() >= Vector3.ONE.length() or rest_motion.roll_valid:
+		failures.append("Bail solver did not damp REST angular motion without manufacturing roll")
 	var rest := bail.resolve_rest(true, PHYSICS_PROFILE.crash_min_duration, 0.0, 0.0, false, 0.0, PHYSICS_PROFILE.crash_rest_confirm_time, 0.05, 0.05, PHYSICS_PROFILE)
 	if not rest.rest_detected or rest.stage != CrashContext.Stage.REST:
 		failures.append("Bail solver did not confirm a bounded rest state")
@@ -150,6 +155,16 @@ func _test_animation_interfaces() -> void:
 	var pre_bail := crash.step_pre_bail(0.0, 0.0, frame, 1.0 / 60.0, ANIMATION_PROFILE)
 	if not pre_bail.has("weight") or not pre_bail.has("side"):
 		failures.append("Crash reaction layer did not return a typed pre-bail step")
+	frame.crash_stage = CrashContext.Stage.FALL
+	frame.crash_current_velocity = Vector3(0.0, 0.0, -6.0)
+	frame.ground_normal = Vector3.UP
+	frame.body_up = Vector3.UP
+	frame.body_up_valid = true
+	frame.ski_forward = Vector3.FORWARD
+	frame.ski_forward_valid = true
+	var sprawl := crash.fall_travel_sprawl(frame, ANIMATION_PROFILE)
+	if not bool(sprawl.get("valid", false)) or not sprawl.has("pelvis") or not sprawl.has("left_ski"):
+		failures.append("Crash reaction layer did not resolve travel-direction FALL sprawl")
 	var secondary := SecondaryMotionLayer.new()
 	if secondary.target(0.5, 0.5, 0.5, false) <= 0.0:
 		failures.append("Secondary motion layer did not resolve activity")

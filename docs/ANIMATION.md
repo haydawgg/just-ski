@@ -172,7 +172,7 @@ physics/gameplay root
 
 Bail animation is a staged procedural fall layered over gameplay's authoritative `BAIL` motion. It is not a physics ragdoll.
 
-The animation controller reads the captured crash context and produces `RELEASE`, `IMPACT`, `FALL`, `REST`, and `RECOVERY` using stage-local progress. FALL/REST keep minimum stage-driven secondary motion even at low slide speeds so the crash never presents as a frozen pose. Ordinary recovery remains in `BAIL` while the body recenters and leg IK reacquires contact, then emits recovery completion and enters ground presentation. Respawn remains a separate hard-reset path.
+The animation controller reads the captured crash context and produces `RELEASE`, `IMPACT`, `FALL`, `REST`, and `RECOVERY` using stage-local progress. FALL sprawl is driven from skier-local planar travel (pelvis orientation, torso fold, shoulder/arm spread, leg drag, and ski silhouette) through the existing crash reaction layer rather than a second pose owner. FALL/REST keep minimum stage-driven secondary motion even at low slide speeds so the crash never presents as a frozen pose. Ordinary recovery remains in `BAIL` while the body recenters and leg IK reacquires contact, then emits recovery completion and enters ground presentation. Respawn remains a separate hard-reset path.
 
 ## Secondary motion
 

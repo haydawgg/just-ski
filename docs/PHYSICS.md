@@ -76,22 +76,30 @@ All fall entry passes through a guarded gameplay boundary that records the sourc
 Solid-feature contact becomes a bail only when the profile's impact conditions are met. Low-speed brushes remain ordinary collisions.
 
 Unsupported bail rotation follows damped angular momentum without a world-up
-correction. Snow contact owns upright alignment. Crash presentation treats zero
-stage time/progress as the start of a stage, including the first recovery frame,
-so total crash time cannot prematurely complete the get-up pose or contact IK.
-`crash_recovery_acceptance.tscn` covers inverted pitch/roll continuity, stage
-handoffs through the real controller, and the complete rest/recovery lifecycle.
-These checks do not establish grounded tumble quality or eliminate the remaining
-equipment and recovery-pose issues in [Known Issues](KNOWN_ISSUES.md).
+correction. Snow contact owns alignment. Grounded `FALL` couples residual crash
+spin toward surface roll around `ground_normal × travel`, using planar speed
+over an effective body radius, then profile-limited coupling, cap, and fade.
+Alignment is a speed-aware slerp toward a snow pose: weak while sliding quickly,
+stronger as speed falls, and strongest in `REST`/`RECOVERY`. It never strengthens
+just because travel sped up. Degenerate normals or travel keep the existing
+damped angular momentum instead of inventing an axis. Crash presentation treats
+zero stage time/progress as the start of a stage, including the first recovery
+frame, so total crash time cannot prematurely complete the get-up pose or
+contact IK. `crash_recovery_acceptance.tscn` covers inverted pitch/roll
+continuity, ground-coupled roll axes, travel-direction sprawl, per-frame
+rotation bounds, airborne bit-for-behavior continuity, stage handoffs through
+the real controller, and the complete rest/recovery lifecycle. These checks do
+not replace a human visual pass on tumble choreography; remaining equipment and
+recovery-pose issues stay in [Known Issues](KNOWN_ISSUES.md).
 
 Crash entry clears downhill locomotion channels (edge, steering, carve, tuck,
 pressure, skid) while preserving linear/angular momentum, so no pre-crash skiing
-posture leaks into crash presentation or telemetry. Grounded crashes keep a
-damped tumble with a stage-dependent alignment rate (slow through the fall,
-firm at rest). Recovery clears locomotion again, realigns the root within one
-ground-settle angular step, and seeds the standard orientation settle for the
-remainder instead of snapping. The crash recovery suite guards entry clearing,
-gradual grounded tumble, low-speed settle motion, and rate-limited recovery.
+posture leaks into crash presentation or telemetry. Grounded crashes roll and
+slide with incoming momentum still visible. Recovery clears locomotion again,
+realigns the root within one ground-settle angular step, and seeds the standard
+orientation settle for the remainder instead of snapping. The crash recovery
+suite guards entry clearing, ground-coupled tumble, low-speed settle motion,
+and rate-limited recovery.
 
 Terrain-hop reseating uses the same bounded root-orientation settling as
 deliberate landings. The landing orientation suite covers tilted reseating at

@@ -99,9 +99,28 @@ Require-Match $collisionCrashEvaluator 'class_name CollisionCrashEvaluator' "Fea
 Require-Match $collisionCrashEvaluator 'func evaluate\(' "Feature crash diagnostics must be module-owned."
 Require-Match $bailMotion 'class_name BailMotionSolver' "Bail motion and recovery policy must be exposed through a typed solver module."
 Require-Match $bailMotion 'func resolve_rest\(' "Bail solver must own rest and recovery readiness policy."
+Require-Match $bailMotion 'func surface_roll_axis\(' "Bail solver must own grounded surface-roll axis policy."
+Require-Match $bailMotion 'func couple_surface_roll\(' "Bail solver must blend crash angular velocity into surface roll."
+Require-Match $bailMotion 'func ground_align_rate\(' "Bail solver must own speed-aware snow alignment."
+Require-Match $bailMotion 'func integrate_grounded_crash_basis\(' "Grounded crash rotation must stay inside the bail solver."
 Require-Match $bailMotion 'should_respawn' "Bail solver must expose an unsupported-airborne terminal outcome."
 Require-Match $bailMotion 'not grounded and elapsed >= profile\.crash_max_duration' "Airborne bail timeout must be explicit and profile-bounded."
 Require-Match $bailMotionResult 'should_respawn' "Bail motion results must carry the respawn decision."
+Require-Match $bailMotionResult 'roll_axis' "Bail motion results must expose the generated surface-roll axis."
+Require-Match $profile 'crash_roll_body_radius' "Surface-roll radius must be profile-owned."
+Require-Match $profile 'crash_roll_coupling' "Surface-roll coupling must be profile-owned."
+Require-Match $profile 'crash_roll_max_angular_speed' "Surface-roll cap must be profile-owned."
+Require-Match $profile 'crash_roll_fade_speed' "Generated rolling must fade out below a profile speed."
+Require-Match $profile 'crash_align_speed_reference' "Grounded crash alignment must weaken from a profile speed reference."
+Require-Match $profile 'crash_ground_max_rotation_rate_degrees' "Grounded crash rotation must have a per-frame rate cap."
+$bailUpdate = [regex]::Match($controller, 'func _update_bail\(delta: float\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($bailUpdate.Success) {
+	Require-Match $bailUpdate.Groups["body"].Value 'integrate_grounded_crash_basis' "Grounded bail must apply solver-owned crash integration."
+	Require-Match $bailUpdate.Groups["body"].Value 'rotate_object_local' "Unsupported bail rotation must keep the existing local-axis path."
+	Reject-Match $bailUpdate.Groups["body"].Value 'global_basis\s*=\s*Basis\.looking_at' "Grounded bail cannot rebuild an upright looking_at basis each tick."
+} else {
+	$failures.Add("Could not locate _update_bail.")
+}
 Require-Match $grindCollisionSolver 'class_name GrindCollisionSolver' "GRIND solid-feature queries must be exposed through a typed solver module."
 Require-Match $grindCollisionSolver 'func sweep\(body:\s*CharacterBody3D,\s*motion:\s*Vector3\)' "GRIND collision sweeps must use the skier body and requested rail motion."
 Require-Match $grindCollisionSolver 'PhysicsServer3D\.body_test_motion' "GRIND collision sweeps must use a body motion query."
@@ -130,6 +149,8 @@ Require-Match $railPose 'class_name RailPoseLayer' "Rail presentation policy mus
 Require-Match $railPose 'func slide_target\(' "Rail pose layer must own slide targeting."
 Require-Match $crashReaction 'class_name CrashReactionLayer' "Crash presentation policy must be exposed through a typed layer."
 Require-Match $crashReaction 'func step_pre_bail\(' "Crash reaction layer must own pre-bail response policy."
+Require-Match $crashReaction 'func fall_travel_sprawl\(' "Crash reaction layer must own travel-direction FALL sprawl."
+Require-Match $animationController '_crash_reaction_layer\.fall_travel_sprawl' "FALL presentation must consume the existing crash reaction sprawl."
 Require-Match $secondaryMotion 'class_name SecondaryMotionLayer' "Secondary motion policy must be exposed through a typed layer."
 Require-Match $secondaryMotion 'func target\(' "Secondary motion layer must own activity targeting."
 
