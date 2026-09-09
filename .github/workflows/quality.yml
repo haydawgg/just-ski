@@ -165,9 +165,17 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path builds\windows -Force | Out-Null
-          & $env:GODOT_PATH --headless --audio-driver Dummy --path $PWD --export-pack "Windows Desktop" builds\windows\SummitSessions.pck
-          if ($LASTEXITCODE -ne 0) {
-            throw "Godot production pack export failed with exit code $LASTEXITCODE"
+          $exportLog = Join-Path $env:RUNNER_TEMP 'summit-sessions-export-pack.log'
+          & $env:GODOT_PATH --headless --verbose --audio-driver Dummy --path $PWD --export-pack "Windows Desktop" builds\windows\SummitSessions.pck *> $exportLog
+          $exitCode = $LASTEXITCODE
+          $exportOutput = Get-Content -Raw -LiteralPath $exportLog
+          Write-Output $exportOutput
+          $errorPattern = '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
+          if ($exitCode -ne 0 -or $exportOutput -match $errorPattern) {
+            throw "Godot production pack export failed or emitted an engine/script error (exit $exitCode)"
+          }
+          if ($exportOutput -match '(?im)Storing File:\s+res://(?:tests|tools)/') {
+            throw 'Production pack included a tests/ or tools/ resource.'
           }
           $pack = Get-Item -LiteralPath builds\windows\SummitSessions.pck
           if ($pack.Length -le 0) {
@@ -185,9 +193,14 @@ jobs:
           New-Item -ItemType Directory -Path $local -Force | Out-Null
           $env:APPDATA = (Resolve-Path $roaming).Path
           $env:LOCALAPPDATA = (Resolve-Path $local).Path
-          & $env:GODOT_PATH --headless --audio-driver Dummy --main-pack builds\windows\SummitSessions.pck --quit-after 120
-          if ($LASTEXITCODE -ne 0) {
-            throw "Exported production pack smoke test failed with exit code $LASTEXITCODE"
+          $smokeLog = Join-Path $env:RUNNER_TEMP 'summit-sessions-export-pack-smoke.log'
+          & $env:GODOT_PATH --headless --audio-driver Dummy --main-pack builds\windows\SummitSessions.pck --quit-after 120 *> $smokeLog
+          $exitCode = $LASTEXITCODE
+          $smokeOutput = Get-Content -Raw -LiteralPath $smokeLog
+          Write-Output $smokeOutput
+          $errorPattern = '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
+          if ($exitCode -ne 0 -or $smokeOutput -match $errorPattern) {
+            throw "Exported production pack smoke test failed or emitted an engine/script error (exit $exitCode)"
           }
 
       - name: Upload export pack
