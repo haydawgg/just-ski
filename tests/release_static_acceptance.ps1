@@ -28,6 +28,11 @@ else {
 			$failures.Add("export_presets.cfg is missing: $requiredText")
 		}
 	}
+	# Shipping every repository resource silently packages tests and development
+	# fixtures. Keep the release preset explicit about its production boundary.
+	if ($preset -match '(?m)^export_filter="all_resources"\s*$') {
+		$failures.Add("Windows release preset exports all_resources; use an explicit production resource filter before distribution.")
+	}
 }
 
 if (-not (Test-Path -LiteralPath $releasePath -PathType Leaf)) {
