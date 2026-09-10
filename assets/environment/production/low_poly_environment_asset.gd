@@ -13,7 +13,6 @@ const DEFAULT_LOD_DISTANCES := Vector3(35.0, 105.0, 230.0)
 const CONIFER_ALBEDO := preload("res://assets/materials/alpine_props/conifer_needles_albedo_512.png")
 const GRANITE_ALBEDO := preload("res://assets/materials/alpine_props/snowy_granite_albedo_512.png")
 const METAL_ALBEDO := preload("res://assets/materials/alpine_props/weathered_metal_albedo_512.png")
-const SNOW_ALBEDO := preload("res://assets/materials/snow_02/snow_02_diff_2k.jpg")
 
 @export var asset_kind: AssetKind = AssetKind.PARK_TREE
 
@@ -65,10 +64,14 @@ func _build_tree(lod0: Node3D, lod1: Node3D) -> void:
 	var color_shift := float(variant % 4) * 0.035
 	# The texture supplies needle-scale breakup; these pale tints preserve the
 	# original three-tier value hierarchy because albedo colors multiply maps.
-	var needle_dark := _material(Color("#a8bab2").lightened(color_shift), 0.86, 0.0, 1.0, false, CONIFER_ALBEDO, 2.0)
-	var needle_mid := _material(Color("#c0d0c8").lightened(color_shift), 0.84, 0.0, 1.0, false, CONIFER_ALBEDO, 1.7)
-	var needle_light := _material(Color("#d5e0d9").lightened(color_shift), 0.82, 0.0, 1.0, false, CONIFER_ALBEDO, 1.45)
-	var snow_cap := _material(Color("#edf4f5"), 0.96, 0.0, 1.0, false, SNOW_ALBEDO, 1.2)
+	# The conifer map averages ~58/255 luminance, so tints stay near-white to
+	# keep the effective canopy out of near-black under sun.
+	var needle_dark := _material(Color("#c9d8d2").lightened(color_shift), 0.86, 0.0, 1.0, false, CONIFER_ALBEDO, 2.0)
+	var needle_mid := _material(Color("#dbe5e0").lightened(color_shift), 0.84, 0.0, 1.0, false, CONIFER_ALBEDO, 1.7)
+	var needle_light := _material(Color("#e9f0ec").lightened(color_shift), 0.82, 0.0, 1.0, false, CONIFER_ALBEDO, 1.45)
+	# Snow caps stay flat: binding the 2K piste diffuse to 0.3 m cones costs a
+	# full-residency sampler for no readable detail and risks distance shimmer.
+	var snow_cap := _material(Color("#edf4f5"), 0.96)
 	_add_cylinder(lod0, "Trunk", 0.24, 0.32, 3.0, Vector3(0.0, 1.5, 0.0), bark, 8, 0.0, 105.0)
 	_add_cone(lod0, "LowerCanopy", 0.12, 1.50, 2.4, Vector3(sway, 2.5, counter_sway), needle_dark, 9, 0.0, 105.0)
 	_add_cone(lod0, "LowerSnowCap", 0.05, 1.10, 0.42, Vector3(sway, 3.52, counter_sway), snow_cap, 9, 0.0, 105.0)
@@ -84,8 +87,8 @@ func _build_gate(lod0: Node3D, lod1: Node3D) -> void:
 	add_to_group("park_gates")
 	set_meta("guidance_style", "minimal_flag_posts")
 	set_meta("non_colliding", true)
-	var post_material := _material(Color("#355d69"), 0.72, 0.08, 0.72, false, METAL_ALBEDO, 0.85)
-	var post_base := _material(Color("#24444e"), 0.8, 0.04, 0.82, false, METAL_ALBEDO, 0.65)
+	var post_material := _material(Color("#355d69"), 0.72, 0.0, 0.72, false, METAL_ALBEDO, 0.85)
+	var post_base := _material(Color("#24444e"), 0.8, 0.0, 0.82, false, METAL_ALBEDO, 0.65)
 	var accent: Color = get_meta("accent_color", Color("#55d6be"))
 	var flag_material := _material(accent.lerp(Color("#d8eef2"), 0.12), 0.8, 0.0, 0.78, true)
 	var flag_stripe := _material(Color("#e8f6f5"), 0.9, 0.0, 0.76, true)
@@ -103,8 +106,8 @@ func _build_gate(lod0: Node3D, lod1: Node3D) -> void:
 
 func _build_boundary(lod0: Node3D, lod1: Node3D) -> void:
 	add_to_group("course_landmarks")
-	var post_material := _material(Color("#52676e"), 0.76, 0.08, 1.0, false, METAL_ALBEDO, 0.75)
-	var rail_material := _material(Color("#e5ae58"), 0.68, 0.04, 1.0, false, METAL_ALBEDO, 0.95)
+	var post_material := _material(Color("#52676e"), 0.76, 0.0, 1.0, false, METAL_ALBEDO, 0.75)
+	var rail_material := _material(Color("#e5ae58"), 0.68, 0.0, 1.0, false, METAL_ALBEDO, 0.95)
 	for along: float in [-9.9, -5.0, 0.0, 5.0, 9.9]:
 		_add_box(lod0, "BoundaryPost", Vector3(0.2, 1.1, 0.2), Vector3(0.0, 0.55, along), post_material, 0.0, 125.0)
 		_add_box(lod0, "BoundaryReflector", Vector3(0.2, 0.16, 0.2), Vector3(0.0, 1.02, along), rail_material, 0.0, 125.0)
@@ -119,8 +122,8 @@ func _build_boundary(lod0: Node3D, lod1: Node3D) -> void:
 
 func _build_lift_tower(lod0: Node3D, lod1: Node3D) -> void:
 	add_to_group("course_landmarks")
-	var metal := _material(Color("#536d78"), 0.62, 0.28, 1.0, false, METAL_ALBEDO, 1.1)
-	var accent := _material(Color("#dbaa57"), 0.7, 0.06, 1.0, false, METAL_ALBEDO, 0.72)
+	var metal := _material(Color("#536d78"), 0.62, 0.0, 1.0, false, METAL_ALBEDO, 1.1)
+	var accent := _material(Color("#dbaa57"), 0.7, 0.0, 1.0, false, METAL_ALBEDO, 0.72)
 	for side: float in [-1.0, 1.0]:
 		_add_cylinder(lod0, "TowerLeg", 0.09, 0.13, 6.3, Vector3(side * 0.82, 3.15, 0.0), metal, 7, 0.0, 150.0)
 		_add_cylinder(lod0, "TowerBrace", 0.045, 0.06, 5.2, Vector3(side * 0.38, 2.75, 0.0), metal, 6, 0.0, 150.0, Vector3(0.0, 0.0, -side * 8.0))
@@ -133,8 +136,8 @@ func _build_lift_tower(lod0: Node3D, lod1: Node3D) -> void:
 
 func _build_snowmaker(lod0: Node3D, lod1: Node3D) -> void:
 	add_to_group("course_landmarks")
-	var frame := _material(Color("#60747c"), 0.66, 0.24, 1.0, false, METAL_ALBEDO, 0.72)
-	var barrel := _material(Color("#df9342"), 0.5, 0.18, 1.0, false, METAL_ALBEDO, 0.82)
+	var frame := _material(Color("#60747c"), 0.66, 0.0, 1.0, false, METAL_ALBEDO, 0.72)
+	var barrel := _material(Color("#df9342"), 0.5, 0.0, 1.0, false, METAL_ALBEDO, 0.82)
 	_add_box(lod0, "SnowmakerBase", Vector3(0.72, 0.2, 0.82), Vector3(0.0, 0.1, 0.0), frame, 0.0, 105.0)
 	_add_box(lod0, "SnowmakerMast", Vector3(0.16, 1.35, 0.16), Vector3(0.0, 0.78, 0.0), frame, 0.0, 105.0)
 	var barrel_mesh := _add_cylinder(lod0, "SnowmakerBarrel", 0.28, 0.36, 1.0, Vector3(0.0, 1.63, -0.14), barrel, 10, 0.0, 105.0, Vector3(66.0, 0.0, 0.0))
@@ -159,7 +162,7 @@ func _build_snow_boulder(lod0: Node3D, lod1: Node3D) -> void:
 	var variant := int(get_meta("style_variant", 0))
 	var rock := _material(Color("#71838d").lightened(float(variant % 3) * 0.035), 0.94, 0.0, 1.0, false, GRANITE_ALBEDO, 1.35)
 	var facet := _material(Color("#87969d").lightened(float(variant % 2) * 0.04), 0.96, 0.0, 1.0, false, GRANITE_ALBEDO, 0.82)
-	var snow := _material(Color("#eef5f6"), 0.98, 0.0, 1.0, false, SNOW_ALBEDO, 1.15)
+	var snow := _material(Color("#eef5f6"), 0.98)
 	# Keep the authored bounds stable across style variants so the catalog's
 	# nominal dimensions remain meaningful after each placement is validated.
 	var width := 2.15

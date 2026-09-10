@@ -2,6 +2,7 @@ class_name GrindRail3D
 extends Node3D
 
 const CollisionLayers := preload("res://resources/physics/collision_layers.gd")
+const METAL_ALBEDO := preload("res://assets/materials/alpine_props/weathered_metal_albedo_512.png")
 
 enum RailType { RAIL, BOX, PIPE, COPING, LOG, OTHER }
 
@@ -107,9 +108,16 @@ func _build_visual_and_collision() -> void:
 	visual.mesh = _build_continuous_visual_mesh(samples)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color("#c76833") if rail_type == RailType.BOX else Color("#2f6f82")
-	material.metallic = 0.52 if rail_type != RailType.BOX else 0.12
+	material.metallic = 0.0 if rail_type == RailType.BOX else 0.35
 	material.roughness = 0.38 if rail_type != RailType.BOX else 0.52
 	material.emission_enabled = false
+	# World-space breakup reuses the resort metal set so long rails do not read
+	# as flat plastic; no UV authoring required on the swept mesh.
+	material.albedo_texture = METAL_ALBEDO
+	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	material.uv1_triplanar = true
+	material.uv1_world_triplanar = true
+	material.uv1_scale = Vector3(1.25, 1.25, 1.25)
 	visual.material_override = material
 	var lod_end := 190.0
 	var lod_start := 30.0

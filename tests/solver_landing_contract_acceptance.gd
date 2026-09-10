@@ -9,6 +9,7 @@ func _ready() -> void:
 	AudioManager.shutdown_audio()
 	await get_tree().process_frame
 	await get_tree().process_frame
+	await get_tree().process_frame
 	if failures.is_empty():
 		print("SOLVER_LANDING_CONTRACT_PASS: extension, stance, preview, and obstruction contracts passed")
 		get_tree().quit(0)
