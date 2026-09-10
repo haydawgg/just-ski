@@ -1,13 +1,15 @@
 class_name CameraCollisionSolver
 extends RefCounted
 
+const CollisionLayers := preload("res://resources/physics/collision_layers.gd")
+
 ## Owns the camera's collision query objects and their narrow query interface.
 ## The camera coordinator still owns policy (which candidate to choose and how
 ## quickly to apply it); this module owns the physics-query implementation.
 
 var world: World3D
 var target: CharacterBody3D
-var collision_mask := 1 | 4
+var collision_mask := CollisionLayers.CAMERA_COLLISION_MASK
 var camera_collision_radius := 0.22
 var collision_clearance := 0.35
 
