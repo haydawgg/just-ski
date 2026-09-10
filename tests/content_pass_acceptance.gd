@@ -9,10 +9,12 @@ const EXPECTED_SPOTS := [
 	&"finale",
 ]
 const REQUIRED_ROUTES := [&"safe", &"intermediate", &"expert"]
+const REQUIRED_DISCIPLINES := [&"air", &"jib", &"flow", &"guide", &"terrain"]
 const REQUIRED_FEATURE_FIELDS := [
 	"feature_id",
 	"spot_id",
 	"route",
+	"discipline",
 	"skill_floor",
 	"skill_ceiling",
 	"intent_tags",
@@ -32,7 +34,7 @@ func _ready() -> void:
 	_validate_profile_contract(profile)
 	_validate_rejected_content(profile)
 	if failures.is_empty():
-		print("CONTENT_PASS_ACCEPTANCE_PASS: six sessionable spots, route tiers, metadata, and references validated")
+		print("CONTENT_PASS_ACCEPTANCE_PASS: six sessionable spots, route tiers, disciplines, metadata, and references validated")
 		AudioManager.shutdown_audio()
 		get_tree().quit(0)
 		return
@@ -60,6 +62,8 @@ func _validate_features(features: Array[Dictionary]) -> void:
 		names[label] = true
 		if StringName(spec.get("route", &"")) not in REQUIRED_ROUTES:
 			failures.append("%s has invalid route %s" % [label, spec.get("route", "")])
+		if StringName(spec.get("discipline", &"")) not in REQUIRED_DISCIPLINES:
+			failures.append("%s has invalid discipline %s" % [label, spec.get("discipline", "")])
 		if int(spec.get("skill_floor", -1)) < 0 or int(spec.get("skill_ceiling", -1)) > 5:
 			failures.append("%s has invalid skill range" % label)
 		if int(spec.get("skill_floor", 6)) > int(spec.get("skill_ceiling", -1)):
@@ -145,8 +149,10 @@ func _validate_rejected_content(profile: ParkCourseProfile) -> void:
 	invalid[3]["width"] = -1.0
 	invalid[4]["points"] = []
 	invalid[5]["spot_id"] = &"missing_spot"
+	invalid[6]["route"] = &"jib"
+	invalid[7]["discipline"] = &"expert"
 	var errors := ParkCourseProfile.validate_content_specs(invalid, spots)
-	for expected: String in ["duplicate feature ID", "duplicate feature name", "Invalid feature kind", "invalid width", "needs at least two points", "Invalid spot ID"]:
+	for expected: String in ["duplicate feature ID", "duplicate feature name", "Invalid feature kind", "invalid width", "needs at least two points", "Invalid spot ID", "Invalid route tier", "Invalid discipline"]:
 		var found := false
 		for error: String in errors:
 			if expected.to_lower() in error.to_lower():
