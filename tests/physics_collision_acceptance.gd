@@ -139,11 +139,16 @@ func _test_small_table_geometry() -> void:
 	var mesh_aabb := mesh_instance.mesh.get_aabb()
 	var render_arrays := (mesh_instance.mesh as ArrayMesh).surface_get_arrays(0)
 	var render_vertices := render_arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
-	var missing_render_vertices := _count_vertices_missing_from_shape(render_vertices, concave.data)
-	if missing_render_vertices > 0:
-		failures.append("SmallTable Table collision does not contain %d visible-surface vertices" % missing_render_vertices)
-	if collision_aabb.position.y > mesh_aabb.position.y + 0.05 or collision_aabb.end.y < mesh_aabb.end.y - 0.05:
-		failures.append("SmallTable Table collision no longer covers the visible surface height")
+	var render_normals := render_arrays[Mesh.ARRAY_NORMAL] as PackedVector3Array
+	var top_surface_vertices := _top_surface_vertices(render_vertices, render_normals, ParkLayout.snow_normal())
+	if top_surface_vertices.is_empty():
+		failures.append("SmallTable Table render mesh exposes no upward-facing skiable surface")
+	else:
+		var missing_surface_vertices := _count_vertices_missing_from_shape(top_surface_vertices, concave.data)
+		if missing_surface_vertices > 0:
+			failures.append("SmallTable Table collision does not contain %d skiable top-surface vertices" % missing_surface_vertices)
+	if not _aabb_contains_with_tolerance(collision_aabb, mesh_aabb, 0.05):
+		failures.append("SmallTable Table collision no longer contains the shallow render shell bounds")
 	if int(table.get_meta("profile_rows", 0)) < 8 or int(table.get_meta("profile_columns", 0)) < 7:
 		failures.append("SmallTable Table does not have enough profile samples for a rounded knuckle and shoulders")
 	if mesh_instance.mesh.get_faces().size() < 120:
@@ -168,6 +173,7 @@ func _test_small_table_geometry() -> void:
 	print(
 		"SMALLTABLE_PROFILE rows=", table.get_meta("profile_rows", 0),
 		" columns=", table.get_meta("profile_columns", 0),
+		" top_surface_vertices=", top_surface_vertices.size(),
 		" collision_aabb=", collision_aabb,
 		" mesh_aabb=", mesh_aabb,
 		" direct_collider=", direct_hit.get("collider", null),
@@ -184,6 +190,19 @@ func _points_aabb(points: PackedVector3Array) -> AABB:
 		result = result.expand(point)
 	return result
 
+func _top_surface_vertices(vertices: PackedVector3Array, normals: PackedVector3Array, surface_normal: Vector3) -> PackedVector3Array:
+	var result := PackedVector3Array()
+	if vertices.size() != normals.size():
+		return result
+	var reference_normal := surface_normal.normalized()
+	for index: int in range(vertices.size()):
+		# The profiled top normals are explicitly oriented toward the piste normal.
+		# Bottom normals point away and skirt-wall normals are perpendicular, so
+		# this isolates the skiable render surface without assuming vertex order.
+		if normals[index].dot(reference_normal) > 0.001:
+			result.append(vertices[index])
+	return result
+
 func _count_vertices_missing_from_shape(vertices: PackedVector3Array, shape_data: PackedVector3Array) -> int:
 	var missing := 0
 	for vertex: Vector3 in vertices:
@@ -195,6 +214,15 @@ func _count_vertices_missing_from_shape(vertices: PackedVector3Array, shape_data
 		if not found:
 			missing += 1
 	return missing
+
+func _aabb_contains_with_tolerance(outer: AABB, inner: AABB, tolerance: float) -> bool:
+	var margin := Vector3.ONE * tolerance
+	var outer_min := outer.position - margin
+	var outer_max := outer.end + margin
+	return (
+		inner.position.x >= outer_min.x and inner.position.y >= outer_min.y and inner.position.z >= outer_min.z
+		and inner.end.x <= outer_max.x and inner.end.y <= outer_max.y and inner.end.z <= outer_max.z
+	)
 
 func _finish() -> void:
 	print(
