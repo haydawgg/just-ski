@@ -1,7 +1,7 @@
 class_name GrindCollisionSolver
 extends RefCounted
 
-const FEATURE_MASK := 4
+const CollisionLayers := preload("res://resources/physics/collision_layers.gd")
 const MAX_COLLISIONS := 8
 const GrindCollisionResultModule := preload("res://player/motion/grind_collision_result.gd")
 
@@ -23,7 +23,7 @@ func sweep(body: CharacterBody3D, motion: Vector3) -> RefCounted:
 	for index: int in range(physics_result.get_collision_count()):
 		var collider = physics_result.get_collider(index)
 		var collider_layer: int = collider.collision_layer if collider is CollisionObject3D else 0
-		if (collider_layer & FEATURE_MASK) == 0:
+		if (collider_layer & CollisionLayers.FEATURE) == 0:
 			continue
 		result.hit = true
 		result.travel = physics_result.get_travel()
