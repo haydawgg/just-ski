@@ -147,14 +147,14 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export var crash_max_duration: float = 2.4
 @export var crash_air_angular_damping: float = 1.1
 @export var crash_ground_angular_damping: float = 4.0
-@export var crash_roll_body_radius: float = 0.42
-@export_range(0.0, 1.0) var crash_roll_coupling: float = 0.55
-@export var crash_roll_max_angular_speed: float = 6.0
+@export var crash_roll_body_radius: float = 0.75
+@export_range(0.0, 1.0) var crash_roll_coupling: float = 0.38
+@export var crash_roll_max_angular_speed: float = 3.2
 @export var crash_roll_fade_speed: float = 1.1
 @export var crash_roll_min_travel: float = 0.12
 @export var crash_align_speed_reference: float = 7.0
-@export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.10
-@export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.45
+@export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.75
+@export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.90
 @export var crash_ground_max_rotation_rate_degrees: float = 300.0
 
 @export_category("Rails")

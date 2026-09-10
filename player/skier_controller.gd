@@ -12,9 +12,12 @@ const GrindCollisionSolverModule := preload("res://player/motion/grind_collision
 const LandingTransitionModule := preload("res://player/motion/landing_transition.gd")
 const CollisionCrashEvaluatorModule := preload("res://player/motion/collision_crash_evaluator.gd")
 const BailMotionSolverModule := preload("res://player/motion/bail_motion_solver.gd")
+const EquipmentFeatureCollisionSolverModule := preload("res://player/motion/equipment_feature_collision_solver.gd")
 const SkierInputFrameModule := preload("res://player/input/skier_input_frame.gd")
 const SkierInputSamplerModule := preload("res://player/input/skier_input_sampler.gd")
 const TOUCHDOWN_SEAT_MARGIN := 0.05
+const BODY_COLLISION_SEAT_OFFSET := 0.67
+const CRASH_REST_MIN_SNOW_ALIGNMENT_DOT := 0.94
 
 signal state_changed(state_name: String)
 signal telemetry_updated(data: Dictionary)
@@ -119,6 +122,7 @@ var respawn_count := 0
 var recovery_frozen := false
 var contact_shadow: MeshInstance3D
 var contact_shadow_material: ShaderMaterial
+var body_collision_shape: CollisionShape3D
 var _ground_motion_solver := GroundMotionSolverModule.new()
 var _air_motion_solver := AirMotionSolverModule.new()
 var _rail_motion_solver := RailMotionSolverModule.new()
@@ -126,6 +130,7 @@ var _grind_collision_solver := GrindCollisionSolverModule.new()
 var _landing_transition := LandingTransitionModule.new()
 var _collision_crash_evaluator := CollisionCrashEvaluatorModule.new()
 var _bail_motion_solver := BailMotionSolverModule.new()
+var _equipment_feature_collision_solver := EquipmentFeatureCollisionSolverModule.new()
 
 func _ready() -> void:
 	collision_layer = 2
@@ -194,7 +199,8 @@ func _physics_process(delta: float) -> void:
 		profile.ground_probe_distance,
 		profile.ground_probe_reach,
 		profile.contact_probe_offsets(),
-		profile.ground_probe_origin_height
+		profile.ground_probe_origin_height,
+		state != State.BAIL
 	)
 	contact.merge_capsule_floor(is_on_floor(), get_floor_normal(), profile.maximum_ground_angle_degrees)
 	_sample_trick_input(delta)
@@ -208,6 +214,7 @@ func _physics_process(delta: float) -> void:
 	# to AIR or BAIL while processing that tick.
 	if state != State.GRIND and state_before_motion != State.GRIND:
 		var incoming_velocity := velocity
+		resolve_visual_ski_feature_sweep(delta, incoming_velocity)
 		move_and_slide()
 		_record_motion_diagnostics(velocity_before_motion)
 		_evaluate_feature_crash_after_motion()
@@ -693,6 +700,7 @@ func _update_bail(delta: float) -> void:
 		rotate_object_local(Vector3.UP, angular_velocity.y * delta)
 		rotate_object_local(Vector3.BACK, angular_velocity.z * delta)
 		global_basis = global_basis.orthonormalized()
+	_stabilize_bail_collision_shape(contact.average_normal)
 	crash_context.current_velocity = velocity
 	crash_context.angular_speed = angular_velocity.length()
 	_update_crash_stage_and_rest(delta)
@@ -1162,6 +1170,16 @@ func _update_crash_stage_and_rest(delta: float) -> void:
 	if rest.should_respawn:
 		_request_bail_respawn()
 		return
+	if rest.rest_detected and not crash_context.rest_detected and contact.grounded:
+		var support_normal := contact.average_normal.normalized() if contact.average_normal.length_squared() > 0.0001 else Vector3.UP
+		var root_up := global_basis.y.normalized() if global_basis.y.length_squared() > 0.0001 else Vector3.UP
+		if root_up.dot(support_normal) < CRASH_REST_MIN_SNOW_ALIGNMENT_DOT:
+			# REST owns the held sprawl and recovery handoff. Keep FALL alignment
+			# active until the root is close enough to snow-up that skis cannot
+			# freeze as vertical posts at the stage boundary.
+			rest.rest_detected = false
+			rest.rest_elapsed = 0.0
+			rest.stage = CrashContext.Stage.FALL
 	crash_context.set_stage(rest.stage)
 	crash_context.rest_detected = rest.rest_detected
 	crash_context.rest_elapsed = rest.rest_elapsed
@@ -1172,6 +1190,28 @@ func _clear_crash_state() -> void:
 	crash_context.reset()
 	bail_time = 0.0
 	bail_recovering = false
+	if body_collision_shape != null:
+		body_collision_shape.transform = Transform3D(Basis.IDENTITY, Vector3.UP * BODY_COLLISION_SEAT_OFFSET)
+
+func _stabilize_bail_collision_shape(support_normal: Vector3) -> void:
+	if body_collision_shape == null:
+		return
+	var up := support_normal.normalized() if support_normal.is_finite() and support_normal.length_squared() > 0.0001 else Vector3.UP
+	var forward := velocity.slide(up)
+	if forward.length_squared() < 0.0001:
+		forward = (-global_basis.z).slide(up)
+	if forward.length_squared() < 0.0001:
+		forward = Vector3.FORWARD.slide(up)
+	if forward.length_squared() < 0.0001:
+		forward = Vector3.RIGHT.slide(up)
+	var collision_basis := Basis.looking_at(forward.normalized(), up).orthonormalized()
+	# The CharacterBody root carries the crash tumble for animation and camera
+	# continuity. Counter-transform its capsule so floor contact cannot turn that
+	# visual rotation and the seated offset into a launch impulse.
+	body_collision_shape.global_transform = Transform3D(
+		collision_basis,
+		global_position + up * BODY_COLLISION_SEAT_OFFSET
+	)
 
 func _evaluate_feature_crash_after_motion() -> void:
 	var context := _collision_crash_evaluator.evaluate(
@@ -1186,6 +1226,77 @@ func _evaluate_feature_crash_after_motion() -> void:
 	)
 	if context != null:
 		enter_crash(context)
+
+func resolve_visual_ski_feature_sweep(delta: float, velocity_before_motion: Vector3) -> Dictionary:
+	var no_hit := {"hit": false, "safe_fraction": 1.0}
+	if state not in [State.GROUND, State.AIR] or animation_controller == null or delta <= 0.0:
+		return no_hit
+	var adapter := animation_controller.rig_adapter
+	if adapter == null:
+		return no_hit
+	var landmarks := adapter.landmarks()
+	for key: String in ["left_ski_nose", "left_ski_tail", "right_ski_nose", "right_ski_tail"]:
+		if not landmarks.has(key):
+			return no_hit
+	var motion := velocity * delta
+	var segments := {
+		&"left": {"nose": landmarks.left_ski_nose, "tail": landmarks.left_ski_tail},
+		&"right": {"nose": landmarks.right_ski_nose, "tail": landmarks.right_ski_tail},
+	}
+	var result := _equipment_feature_collision_solver.sweep(
+		get_world_3d().direct_space_state,
+		segments,
+		motion,
+		[get_rid()]
+	)
+	if not bool(result.get("hit", false)):
+		return result
+	var safe_fraction := clampf(float(result.get("safe_fraction", 0.0)), 0.0, 1.0)
+	var clearance_fraction := EquipmentFeatureCollisionSolverModule.CONTACT_MARGIN / maxf(motion.length(), 0.001)
+	var travel_fraction := clampf(safe_fraction - clearance_fraction, 0.0, 1.0)
+	var impact_velocity := velocity_before_motion
+	velocity *= travel_fraction
+	var collider = result.get("collider")
+	var normal := result.get("normal", -impact_velocity.normalized()) as Vector3
+	if normal.length_squared() <= 0.0001:
+		normal = -impact_velocity.normalized()
+	var resolved_velocity := velocity
+	var collider_layer: int = collider.collision_layer if collider is CollisionObject3D else EquipmentFeatureCollisionSolverModule.FEATURE_MASK
+	var diagnostic := {
+		"collider": collider.name if collider is Node else "<visual-ski-sweep>",
+		"asset_id": str(collider.get_meta("asset_id", "")) if collider is Node else "",
+		"asset_class": str(collider.get_meta("asset_class", "")) if collider is Node else "",
+		"collision_policy": str(collider.get_meta("collision_policy", "")) if collider is Node else "",
+		"normal": normal.normalized(),
+		"position": result.get("position", global_position),
+		"collider_layer": collider_layer,
+		"velocity_before": impact_velocity,
+		"velocity_after": resolved_velocity,
+		"speed_before": impact_velocity.length(),
+		"speed_after": resolved_velocity.length(),
+		"speed_loss": maxf(0.0, impact_velocity.length() - resolved_velocity.length()),
+		"speed_retention": resolved_velocity.length() / maxf(impact_velocity.length(), 0.01),
+		"incoming_normal_speed": maxf(0.0, -impact_velocity.dot(normal.normalized())),
+		"grounded": contact.grounded,
+		"equipment_side": str(result.get("side", &"")),
+		"equipment_sweep": true,
+	}
+	last_collision_diagnostics.append(diagnostic)
+	last_collision_colliders.append(str(diagnostic.collider))
+	var context := _collision_crash_evaluator.evaluate(
+		[diagnostic],
+		state,
+		profile.feature_collision_min_speed,
+		profile.feature_collision_min_normal_speed,
+		profile.feature_collision_max_speed_retention,
+		angular_velocity.length(),
+		global_basis,
+		impact_velocity
+	)
+	if context != null:
+		enter_crash(context)
+	result["travel_fraction"] = travel_fraction
+	return result
 
 func _evaluate_grind_collision(collision, velocity_before: Vector3) -> CrashContext:
 	var collider = collision.collider
@@ -1615,8 +1726,9 @@ func _build_body() -> void:
 	shape.shape = capsule
 	# Seat the capsule so its resting contact puts the body origin at the seat
 	# height above the snow (skis kissing the surface) instead of sinking below it.
-	shape.position.y = 0.67
+	shape.position.y = BODY_COLLISION_SEAT_OFFSET
 	add_child(shape)
+	body_collision_shape = shape
 	animation_controller = SkierVisualScene.instantiate() as SkierAnimationController
 	animation_controller.name = "SkierAnimationController"
 	visual_root = animation_controller

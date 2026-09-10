@@ -100,19 +100,29 @@ function Test-IgnoredGodotWindowsTeardownCrash {
 		[bool]$SceneHasError
 	)
 	# Godot 4.7.2 headless on Windows can ACCESS_VIOLATE (0xC0000005 /
-	# -1073741819) during process teardown after solver-layer acceptance
-	# already printed SOLVER_LAYER_PASS. Assertions finished; do not fail
-	# the shard for that engine crash.
+	# -1073741819) during process teardown after a solver-interface acceptance
+	# already printed its PASS marker. Assertions finished; do not fail the
+	# shard for that engine crash.
+	# (Merged with origin PR #57: that fix covered solver_layer acceptance,
+	# which 1df31b1 refactored into the five scenes below, so only the
+	# five live markers are kept.)
 	if ($SceneHasError) {
 		return $false
 	}
-	if ($Scene -ne "res://tests/solver_layer_interface_acceptance.tscn") {
+	$solverPassMarkers = @{
+		"res://tests/solver_motion_interface_acceptance.tscn" = "SOLVER_MOTION_INTERFACE_PASS:"
+		"res://tests/solver_animation_interface_acceptance.tscn" = "SOLVER_ANIMATION_INTERFACE_PASS:"
+		"res://tests/solver_camera_interface_acceptance.tscn" = "SOLVER_CAMERA_INTERFACE_PASS:"
+		"res://tests/solver_grab_contract_acceptance.tscn" = "SOLVER_GRAB_CONTRACT_PASS:"
+		"res://tests/solver_landing_contract_acceptance.tscn" = "SOLVER_LANDING_CONTRACT_PASS:"
+	}
+	if (-not $solverPassMarkers.ContainsKey($Scene)) {
 		return $false
 	}
 	if ($ExitCode -ne -1073741819) {
 		return $false
 	}
-	return $Output -match 'SOLVER_LAYER_PASS:'
+	return $Output.Contains($solverPassMarkers[$Scene])
 }
 
 function Invoke-GodotScene {
@@ -230,6 +240,7 @@ $sceneShards = [ordered]@{
 		"res://tests/animation_polish_acceptance.tscn",
 		"res://tests/animation_transition_regression_acceptance.tscn",
 		"res://tests/animation_presentation_quality_acceptance.tscn",
+		"res://tests/equipment_collision_acceptance.tscn",
 		"res://tests/crash_recovery_acceptance.tscn"
 	)
 	"tricks-gameplay" = @(
@@ -257,7 +268,11 @@ $sceneShards = [ordered]@{
 		"res://tests/settings_acceptance.tscn",
 		"res://tests/input_manager_acceptance.tscn",
 		"res://tests/skier_input_frame_acceptance.tscn",
-		"res://tests/solver_layer_interface_acceptance.tscn",
+		"res://tests/solver_motion_interface_acceptance.tscn",
+		"res://tests/solver_animation_interface_acceptance.tscn",
+		"res://tests/solver_camera_interface_acceptance.tscn",
+		"res://tests/solver_grab_contract_acceptance.tscn",
+		"res://tests/solver_landing_contract_acceptance.tscn",
 		"res://tests/mp4_encoder_acceptance.tscn",
 		"res://tests/visual_evidence_acceptance.tscn"
 	)
@@ -289,6 +304,7 @@ $shardLabel = if ([string]::IsNullOrWhiteSpace($Shard)) { "all" } else { $Shard 
 Write-Output "RUNTIME_SHARD name=$shardLabel scenes=$($scenes.Count)"
 
 $failures = [System.Collections.Generic.List[string]]::new()
+$sceneErrorPattern = '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
 foreach ($scene in $scenes) {
 	Write-Output "===== $scene ====="
 	$safeName = ($scene -replace '^res://', '') -replace '[^A-Za-z0-9_-]', '_'
@@ -301,7 +317,7 @@ foreach ($scene in $scenes) {
 	$output = [string]$result.Output
 	Write-Output $output.TrimEnd()
 	$sceneDuration = $sceneTimer.Elapsed.TotalSeconds.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture)
-	$sceneHasError = $output -match '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
+	$sceneHasError = $output -match $sceneErrorPattern
 	$ignoredTeardownCrash = Test-IgnoredGodotWindowsTeardownCrash -Scene $scene -ExitCode $exitCode -Output $output -SceneHasError $sceneHasError
 	if ($exitCode -ne 0 -and -not $ignoredTeardownCrash) {
 		$failures.Add("$scene exited with code $exitCode; logs: $stdoutPath, $stderrPath")
@@ -312,7 +328,7 @@ foreach ($scene in $scenes) {
 	if (($exitCode -eq 0 -or $ignoredTeardownCrash) -and -not $sceneHasError) {
 		Write-Output ("PASS {0} — {1}s" -f $scene, $sceneDuration)
 		if ($ignoredTeardownCrash) {
-			Write-Output "IGNORED Godot 4.7 Windows ACCESS_VIOLATION after SOLVER_LAYER_PASS during process teardown"
+			Write-Output "IGNORED Godot 4.7 Windows ACCESS_VIOLATION after solver-interface PASS during process teardown"
 		}
 	}
 	else {

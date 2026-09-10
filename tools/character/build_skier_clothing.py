@@ -40,22 +40,26 @@ COLLAR_SKIRT_TOP_Y = 0.655
 COLLAR_SKIRT_MIN_OFFSET = 0.012
 BONE_OFFSETS = {
     "Jacket": {
-        "upper_arm.L": 0.026, "upper_arm.R": 0.026,
-        "forearm.L": 0.023, "forearm.R": 0.023,
-        "shoulder.L": 0.022, "shoulder.R": 0.022,
-        "spine.003": 0.017, "spine.002": 0.017,
-        "spine.001": 0.019, "spine": 0.020,
+        # Insulated ski-jacket volume: shoulders and sleeves carry slightly
+        # more loft than the torso, with enough separation to read as a real
+        # garment instead of a second material painted on the base body.
+        "upper_arm.L": 0.036, "upper_arm.R": 0.036,
+        "forearm.L": 0.032, "forearm.R": 0.032,
+        "shoulder.L": 0.032, "shoulder.R": 0.032,
+        "spine.003": 0.027, "spine.002": 0.027,
+        "spine.001": 0.029, "spine": 0.030,
     },
     "Pants": {
-        "thigh.L": 0.017, "thigh.R": 0.017,
-        "shin.L": 0.013, "shin.R": 0.013,
-        "pelvis.L": 0.016, "pelvis.R": 0.016,
+        # Ski pants retain a padded thigh/seat and taper toward the boot.
+        "thigh.L": 0.026, "thigh.R": 0.026,
+        "shin.L": 0.020, "shin.R": 0.020,
+        "pelvis.L": 0.024, "pelvis.R": 0.024,
     },
     "Gloves": {
-        "hand.L": 0.008, "hand.R": 0.008,
+        "hand.L": 0.014, "hand.R": 0.014,
     },
 }
-DEFAULT_OFFSETS = {"Jacket": 0.017, "Pants": 0.015, "Gloves": 0.005}
+DEFAULT_OFFSETS = {"Jacket": 0.027, "Pants": 0.022, "Gloves": 0.010}
 
 
 def read_accessor(doc: dict, binary: bytes, accessor_index: int) -> list:
@@ -299,6 +303,7 @@ def main() -> None:
         print(f"{region} shell: {len(out_indices) // 3} triangles, {len(shell_vertices)} vertices, mean offset {sum(used_amounts) / len(used_amounts):.4f} m")
 
     extras["clothingShells"] = list(SHELL_REGIONS)
+    extras["clothingShellProfile"] = "insulated_skiwear_v2"
     doc["extras"] = extras
     doc["buffers"][0]["byteLength"] = len(binary)
 

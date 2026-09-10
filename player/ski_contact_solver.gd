@@ -11,6 +11,7 @@ const NORMAL_DISAGREEMENT_HARD := 0.5
 const DISTANCE_DISCONTINUITY_SOFT := 0.12
 const DISTANCE_DISCONTINUITY_HARD := 0.5
 const DEFAULT_MAX_GROUND_ANGLE_DEGREES := 62.0
+const PROBE_AXIS_EPSILON_SQ := 0.0001
 ## Fallback for direct solver callers that do not have a physics profile. The
 ## production controller supplies the same geometry from SkiPhysicsProfile.
 const PROBE_OFFSETS := [
@@ -65,7 +66,8 @@ func sample(
 	distance: float = 1.45,
 	band: float = 0.5,
 	probe_offsets: Array[Vector3] = [],
-	probe_origin_height: float = 0.35
+	probe_origin_height: float = 0.35,
+	body_aligned_offsets: bool = true
 ) -> void:
 	grounded_band = maxf(band, 0.05)
 	# These values describe this sample only. last_normal remains the probe
@@ -129,7 +131,7 @@ func sample(
 	right_front_normal = average_normal
 	right_rear_normal = average_normal
 	for local_offset: Vector3 in active_probe_offsets:
-		var planar_offset := body.global_basis * Vector3(local_offset.x, 0.0, local_offset.z)
+		var planar_offset := planar_probe_offset(local_offset, body.global_basis, up, body_aligned_offsets)
 		var origin := body.global_position + planar_offset - down * safe_probe_origin_height
 		var target := origin + down * distance
 		var query := PhysicsRayQueryParameters3D.create(origin, target, TERRAIN_MASK)
@@ -240,6 +242,17 @@ func sample(
 				surface_class = class_id
 		if front_hits > 0 and rear_hits > 0:
 			tip_load = (rear_distance / float(rear_hits)) - (front_distance / float(front_hits))
+
+func planar_probe_offset(local_offset: Vector3, body_basis: Basis, ground_normal: Vector3, body_aligned: bool = true) -> Vector3:
+	var horizontal_offset := Vector3(local_offset.x, 0.0, local_offset.z)
+	if body_aligned:
+		return body_basis * horizontal_offset
+	var up := ground_normal.normalized() if ground_normal.is_finite() and ground_normal.length_squared() >= PROBE_AXIS_EPSILON_SQ else Vector3.UP
+	var forward := Vector3.FORWARD.slide(up)
+	if forward.length_squared() < PROBE_AXIS_EPSILON_SQ:
+		forward = Vector3.RIGHT.slide(up)
+	var surface_basis := Basis.looking_at(forward.normalized(), up).orthonormalized()
+	return surface_basis * horizontal_offset
 
 func _side_contact_confidence(
 	front_valid: bool,

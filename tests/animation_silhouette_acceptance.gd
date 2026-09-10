@@ -362,6 +362,7 @@ func _sample_actual_gameplay_camera(frame: SkierAnimationFrame, event: int = -1,
 	add_child(skier)
 	skier.global_transform = Transform3D.IDENTITY
 	skier.state = frame.locomotion_state
+	skier.rail_pose = frame.rail_pose
 	skier.velocity = Vector3(0.0, 0.0, -maxf(frame.speed_mps, 1.0))
 	var camera_rig := SkiCameraController.new()
 	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
@@ -385,7 +386,9 @@ func _sample_actual_gameplay_camera(frame: SkierAnimationFrame, event: int = -1,
 		projected[key] = _project_gameplay_landmark(camera_rig.camera, world[key] as Vector3)
 	var ski_center_y := ((projected.left_ski_tail as Vector2).y + (projected.right_ski_tail as Vector2).y) * 0.5
 	projected["body_height"] = maxf(1.0, absf((projected.head as Vector2).y - ski_center_y))
-	projected["camera_state"] = camera_rig.debug_snapshot().state
+	var camera_snapshot := camera_rig.debug_snapshot()
+	projected["camera_state"] = camera_snapshot.state
+	projected["rail_orbit_offset"] = camera_snapshot.get("rail_orbit_offset", 0.0)
 	var attachment := animation_snapshot.get("equipment_attachment", {}) as Dictionary
 	projected["pole_knee_clearance_m"] = attachment.get("pole_knee_clearance_m", -1.0)
 	projected["poles_outward"] = attachment.get("poles_outward", false)
@@ -446,9 +449,17 @@ func _test_rotation_rail_and_stomp_vocabulary_through_gameplay_camera() -> void:
 	var cork := _sample_actual_gameplay_camera(cork_frame)
 	_assert_projected_separation("Frontflip vs backflip", front, back)
 	_assert_projected_separation("Backflip vs cork", back, cork)
+	_assert_pole_quality("Cork", cork)
 	var fifty := _sample_actual_gameplay_camera(_grind_frame(0))
-	var boardslide := _sample_actual_gameplay_camera(_grind_frame(1))
-	_assert_projected_separation("50-50 vs boardslide", fifty, boardslide)
+	var right_boardslide := _sample_actual_gameplay_camera(_grind_frame(1))
+	var left_boardslide := _sample_actual_gameplay_camera(_grind_frame(-1))
+	_assert_projected_separation("50-50 vs boardslide", fifty, right_boardslide)
+	_assert_boardslide_silhouette("Right boardslide", right_boardslide)
+	_assert_boardslide_silhouette("Left boardslide", left_boardslide)
+	if absf(float(fifty.rail_orbit_offset)) > 0.05:
+		failures.append("50-50 rail camera drifted off center (%.2fm)" % float(fifty.rail_orbit_offset))
+	if float(right_boardslide.rail_orbit_offset) * float(left_boardslide.rail_orbit_offset) >= 0.0:
+		failures.append("Mirrored boardslides did not mirror the rail camera orbit")
 	var ground := _ground_frame()
 	ground.landing_event_active = true
 	ground.landing_impact_severity = 0.22
@@ -475,6 +486,18 @@ func _grind_frame(pose: int) -> SkierAnimationFrame:
 	frame.speed_ratio = 0.55
 	frame.rail_speed = 13.0
 	frame.rail_pose = pose
+	frame.rail_direction = Vector3.FORWARD
+	frame.rail_up = Vector3.UP
+	frame.rail_contact_valid = true
+	frame.rail_contact_point = Vector3(0.0, -0.08, -0.75)
+	var ski_forward := frame.rail_direction
+	if pose != 0:
+		ski_forward = ski_forward.rotated(Vector3.UP, signf(float(pose)) * PI * 0.5)
+	var stance := SkiConstrainedLegIK.stance_ski_targets(frame.rail_contact_point, ski_forward, Vector3.UP, 0.2)
+	frame.left_ski_target_world = stance.left
+	frame.right_ski_target_world = stance.right
+	frame.left_ski_target_valid = true
+	frame.right_ski_target_valid = true
 	frame.rail_distance_to_end = 5.0
 	return frame
 
@@ -502,6 +525,12 @@ func _assert_projected_separation(label: String, baseline: Dictionary, candidate
 			readable_count += 1
 	if largest < 0.12 or readable_count < 3:
 		failures.append("%s was not distinct from straight air at gameplay distance (max %.1f%% at %s, landmarks over 5%%: %d)" % [label, largest * 100.0, largest_landmark, readable_count])
+
+func _assert_boardslide_silhouette(label: String, sample: Dictionary) -> void:
+	var knee_separation := absf(float((sample.left_knee as Vector2).x) - float((sample.right_knee as Vector2).x)) / float(sample.body_height)
+	print("ANIMATION_RAIL_SILHOUETTE %s knee_separation=%.3f orbit=%.3f" % [label, knee_separation, float(sample.rail_orbit_offset)])
+	if knee_separation < 0.08:
+		failures.append("%s knees collapsed into one chase-camera silhouette (%.1f%% of body height)" % [label, knee_separation * 100.0])
 
 func _sample_spin_signature(degrees: float, side: float = 1.0) -> PackedFloat32Array:
 	var rig := SkierAnimationController.new()

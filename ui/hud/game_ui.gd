@@ -20,6 +20,8 @@ var notice_label: Label
 var menu_backdrop: ColorRect
 var pause_panel: PanelContainer
 var options_panel: PanelContainer
+var display_confirmation_panel: PanelContainer
+var display_confirmation_label: Label
 var trick_guide_panel: PanelContainer
 var challenge_panel: PanelContainer
 var challenge_list_label: Label
@@ -46,6 +48,9 @@ const ONBOARDING_FADE_TIME := 2.5
 var _stored_mouse_mode := Input.MOUSE_MODE_VISIBLE
 var _bound_player: SkierController
 var _bound_content_tracker: ParkContentTracker
+var _display_rollback: Dictionary = {}
+var _display_confirmation_seconds := 0.0
+const DISPLAY_CONFIRMATION_DURATION := 15.0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -57,6 +62,7 @@ func _ready() -> void:
 	_build_trick_guide()
 	_build_challenge_panel()
 	_build_options_menu()
+	_build_display_confirmation()
 	_build_notice_overlay()
 	_build_recovery_overlay()
 	_layout_menus()
@@ -152,6 +158,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if focused is OptionButton:
 			return
 	if event.is_action_pressed("pause") or (event.is_action_pressed("ui_cancel") and get_tree().paused):
+		if display_confirmation_panel.visible:
+			_revert_display_settings()
+			get_viewport().set_input_as_handled()
+			return
 		if results_panel.visible:
 			_results_continue()
 			get_viewport().set_input_as_handled()
@@ -169,6 +179,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
+	if display_confirmation_panel != null and display_confirmation_panel.visible:
+		_display_confirmation_seconds = maxf(0.0, _display_confirmation_seconds - delta)
+		_update_display_confirmation_label()
+		if _display_confirmation_seconds <= 0.0:
+			_revert_display_settings()
 	if hint_label != null and onboarding_remaining > 0.0 and not get_tree().paused:
 		onboarding_remaining = maxf(0.0, onboarding_remaining - delta)
 		hint_label.modulate.a = clampf(onboarding_remaining / ONBOARDING_FADE_TIME, 0.0, 0.82)
@@ -663,6 +678,30 @@ func _build_options_menu() -> void:
 	buttons.add_child(_named_button("ResetButton", "Reset Defaults", _reset_options))
 	_wire_options_focus(tabs)
 
+func _build_display_confirmation() -> void:
+	display_confirmation_panel = PanelContainer.new()
+	display_confirmation_panel.name = "DisplayConfirmationPanel"
+	display_confirmation_panel.visible = false
+	display_confirmation_panel.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(display_confirmation_panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 18)
+	display_confirmation_panel.add_child(box)
+	var title := _label("KEEP THESE DISPLAY SETTINGS?", 28)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	display_confirmation_label = _label("", 19)
+	display_confirmation_label.name = "DisplayConfirmationCountdown"
+	display_confirmation_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	display_confirmation_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(display_confirmation_label)
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 12)
+	box.add_child(buttons)
+	buttons.add_child(_named_button("KeepDisplayButton", "Keep", _keep_display_settings))
+	buttons.add_child(_named_button("RevertDisplayButton", "Revert", _revert_display_settings))
+
 func _row(label_text: String, control: Control) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	var label := _label(label_text, 18)
@@ -756,6 +795,7 @@ func _layout_menus(viewport_size_override: Vector2 = Vector2.ZERO) -> void:
 	_fit_menu_panel(trick_guide_panel, Vector2(940, 790), viewport_size)
 	_fit_menu_panel(challenge_panel, Vector2(740, 630), viewport_size)
 	_fit_menu_panel(options_panel, Vector2(870, 815), viewport_size)
+	_fit_menu_panel(display_confirmation_panel, Vector2(590, 250), viewport_size)
 
 func _fit_menu_panel(panel: Control, desired_size: Vector2, viewport_size: Vector2) -> void:
 	if panel == null:
@@ -783,6 +823,7 @@ func _set_menu_visible(panel: Control) -> void:
 	trick_guide_panel.visible = panel == trick_guide_panel
 	challenge_panel.visible = panel == challenge_panel
 	options_panel.visible = panel == options_panel
+	display_confirmation_panel.visible = panel == display_confirmation_panel
 
 func _pause() -> void:
 	_stored_mouse_mode = Input.mouse_mode
@@ -797,6 +838,7 @@ func _resume() -> void:
 	if focused != null:
 		focused.release_focus()
 	options_panel.visible = false
+	display_confirmation_panel.visible = false
 	trick_guide_panel.visible = false
 	challenge_panel.visible = false
 	pause_panel.visible = false
@@ -942,10 +984,54 @@ func _sync_options() -> void:
 	(options_panel.find_child("Response", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_response"]))
 
 func _apply_options() -> void:
-	var save_error := GameSettings.apply_pending()
+	var previous := GameSettings.active.duplicate(true)
+	var display_changed: bool = (
+		int(GameSettings.pending["display_mode"]) != int(GameSettings.active["display_mode"])
+		or GameSettings.pending["resolution"] != GameSettings.active["resolution"]
+	)
+	if display_changed:
+		_display_rollback = previous
+		GameSettings.apply_pending(false)
+		_show_display_confirmation()
+		return
+	var save_error := GameSettings.apply_pending(true)
 	_close_options(true)
 	if save_error == OK:
 		_show_notice("SETTINGS SAVED")
+
+func _show_display_confirmation() -> void:
+	_display_confirmation_seconds = DISPLAY_CONFIRMATION_DURATION
+	_update_display_confirmation_label()
+	_set_menu_visible(display_confirmation_panel)
+	var keep := display_confirmation_panel.find_child("KeepDisplayButton", true, false) as Button
+	if keep != null:
+		keep.grab_focus()
+
+func _update_display_confirmation_label() -> void:
+	if display_confirmation_label == null:
+		return
+	display_confirmation_label.text = "Reverting automatically in %d seconds.\nPress Escape if the new display is not usable." % ceili(_display_confirmation_seconds)
+
+func _keep_display_settings() -> void:
+	if _display_rollback.is_empty():
+		return
+	_display_rollback.clear()
+	_display_confirmation_seconds = 0.0
+	var save_error := GameSettings.save_settings(GameSettings.CONFIG_PATH, false)
+	_set_menu_visible(pause_panel)
+	if save_error == OK:
+		_show_notice("DISPLAY SETTINGS SAVED")
+
+func _revert_display_settings() -> void:
+	if _display_rollback.is_empty():
+		return
+	var rollback := _display_rollback.duplicate(true)
+	_display_rollback.clear()
+	_display_confirmation_seconds = 0.0
+	var save_error := GameSettings.restore_settings(rollback, true)
+	_set_menu_visible(pause_panel)
+	if save_error == OK:
+		_show_notice("DISPLAY SETTINGS REVERTED")
 
 func _cancel_options() -> void:
 	_close_options(false)

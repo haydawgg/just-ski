@@ -251,6 +251,19 @@ func _physics_process(_delta: float) -> void:
 				failures.append("Track mesh rebuilds are no longer gated below the physics-frame rate")
 			if int(snapshot.continuous_particle_cap) > 200:
 				failures.append("Continuous snow particle budget exceeded the acceptance ceiling")
+			var first_emitter_step := SkiSnowVFX.smooth_emitter_ratio(0.0, 0.68, 1.0 / 60.0)
+			if first_emitter_step <= 0.04 or first_emitter_step >= 0.68:
+				failures.append("Emitter smoothing did not ramp spray onset (first step %.3f)" % first_emitter_step)
+			var settled_emitter_ratio := 0.0
+			for _frame: int in 120:
+				settled_emitter_ratio = SkiSnowVFX.smooth_emitter_ratio(settled_emitter_ratio, 0.68, 1.0 / 60.0)
+			if absf(settled_emitter_ratio - 0.68) > 0.01:
+				failures.append("Emitter smoothing did not converge to spray demand")
+			var released_emitter_ratio := 0.68
+			for _frame: int in 120:
+				released_emitter_ratio = SkiSnowVFX.smooth_emitter_ratio(released_emitter_ratio, 0.0, 1.0 / 60.0)
+			if released_emitter_ratio > 0.04:
+				failures.append("Emitter smoothing did not trail spray off after demand ended")
 			if not vfx.find_children("*", "RayCast3D", true, false).is_empty():
 				failures.append("Snow VFX created a second terrain-contact system")
 			var track_mesh := vfx.get_node_or_null("PersistentSkiTracks") as MeshInstance3D

@@ -15,6 +15,8 @@ func _ready() -> void:
 	_test_bail_rest_damping()
 	_test_crash_entry_clears_locomotion()
 	_test_grounded_crash_tumbles_gradually()
+	_test_bail_collider_stays_surface_aligned()
+	_test_bail_probe_footprint_stays_on_surface()
 	_test_surface_roll_axis_on_flat_and_slope()
 	_test_surface_roll_reverses_with_travel()
 	_test_surface_roll_grows_with_speed_and_respects_cap()
@@ -25,6 +27,7 @@ func _ready() -> void:
 	_test_airborne_bail_continuity_unchanged()
 	_test_ground_alignment_weakens_with_speed()
 	_test_rest_detection_and_recovery_timing()
+	_test_rest_waits_for_snow_alignment()
 	_test_crash_settling_shows_low_speed_motion()
 	_test_recovery_is_rate_limited_and_coordinated()
 	await _test_world_origin_seating()
@@ -484,6 +487,63 @@ func _test_grounded_crash_tumbles_gradually() -> void:
 	var max_step := BailMotionSolver.new().grounded_rotation_step_limit(1.0 / 60.0, skier.profile)
 	if turn > max_step + 0.0001:
 		failures.append("Grounded crash snapped %.1f degrees in one tick instead of staying inside the rotation bound" % rad_to_deg(turn))
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_bail_collider_stays_surface_aligned() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(2.0, 1.0, 3.0)), Vector3(3.0, -1.0, -6.0))
+	skier.enter_crash(_make_crash_context(skier.velocity))
+	skier.global_basis = Basis.from_euler(Vector3(1.2, 0.4, -0.8))
+	var normal := Vector3(0.22, 0.96, 0.17).normalized()
+	if not skier.has_method("_stabilize_bail_collision_shape"):
+		failures.append("BAIL has no surface-aligned collision-shape seam; the tumbling root can lever the capsule off snow")
+	else:
+		skier.call("_stabilize_bail_collision_shape", normal)
+		var collision_shape := skier.find_children("*", "CollisionShape3D", true, false).front() as CollisionShape3D
+		if collision_shape == null:
+			failures.append("BAIL surface-alignment test could not find the production collision shape")
+		else:
+			var shape_up := collision_shape.global_basis.y.normalized()
+			var seat_offset := collision_shape.global_position - skier.global_position
+			if shape_up.dot(normal) < 0.999:
+				failures.append("BAIL collision capsule followed the tumbling visual root instead of the support normal")
+			if absf(seat_offset.dot(normal) - 0.67) > 0.002 or seat_offset.slide(normal).length() > 0.002:
+				failures.append("BAIL collision capsule rotated its seat offset away from the support normal")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_bail_probe_footprint_stays_on_surface() -> void:
+	var solver := SkiContactSolver.new()
+	if not solver.has_method("planar_probe_offset"):
+		failures.append("BAIL has no orientation-independent contact footprint; tumbling probes can lose snow support")
+		return
+	var normal := Vector3(0.2, 0.96, 0.1).normalized()
+	var tumbling_basis := Basis.from_euler(Vector3(1.3, 0.4, -0.9))
+	for offset: Vector3 in SkiPhysicsProfile.new().contact_probe_offsets():
+		var stable := solver.call("planar_probe_offset", offset, tumbling_basis, normal, false) as Vector3
+		if absf(stable.dot(normal)) > 0.0001:
+			failures.append("BAIL contact footprint rotated a probe %.3fm away from the support plane" % absf(stable.dot(normal)))
+			break
+
+func _test_rest_waits_for_snow_alignment() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3.ZERO)
+	skier.enter_crash(_make_crash_context(Vector3.ZERO))
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_basis = Basis.from_euler(Vector3(0.0, 0.0, PI * 0.5))
+	skier.velocity = Vector3.ZERO
+	skier.angular_velocity = Vector3.ZERO
+	skier.crash_context.elapsed = skier.profile.crash_max_duration
+	skier.crash_context.stage_elapsed = skier.profile.crash_max_duration
+	skier._update_crash_stage_and_rest(1.0 / 60.0)
+	if skier.crash_context.stage != CrashContext.Stage.FALL or skier.crash_context.rest_detected:
+		failures.append("Crash entered REST while the root and skis were still side-on to the snow")
 	remove_child(skier)
 	skier.queue_free()
 

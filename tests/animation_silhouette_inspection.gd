@@ -719,6 +719,7 @@ func _set_air(air_time: float, landing_time: float) -> void:
 func _set_grind(pose: int) -> void:
 	_set_inspection_rail_visible(true)
 	skier.state = SkierController.State.GRIND
+	skier.rail_pose = pose
 	skier.velocity = Vector3(0.0, 0.0, -13.0)
 	frame.locomotion_state = 2
 	frame.speed_mps = 13.0

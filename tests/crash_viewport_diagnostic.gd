@@ -12,6 +12,10 @@ var samples: Array[Dictionary] = []
 var frame_count := 0
 var crash_triggered := false
 var _finish_started := false
+var _evaluation_reasons: Array[String] = []
+var _evaluation_summary := ""
+var _waiting_for_clip := false
+var _evaluation_frame := 220
 
 func _ready() -> void:
 	resort = load("res://world/resort.tscn").instantiate() as Node3D
@@ -40,6 +44,13 @@ func _ready() -> void:
 	var cam_pos := focus - down * 6.0 + Vector3(5.5, 2.2, 0) + n * 1.8
 	cam.look_at_from_position(cam_pos, focus, n)
 	cam.fov = 72.0
+	if not RuntimeEnvironment.is_headless():
+		# Cap rendering for a watchable debug clip and extend the evaluation so
+		# the recording contains FALL, REST, and recovery before the test exits.
+		Engine.max_fps = 60
+		_evaluation_frame = 410
+		ClipRecorder.clip_saved.connect(_on_clip_saved)
+		ClipRecorder.clip_failed.connect(_on_clip_failed)
 	set_physics_process(true)
 
 func _physics_process(_delta: float) -> void:
@@ -49,9 +60,9 @@ func _physics_process(_delta: float) -> void:
 		crash_triggered = true
 	if not crash_triggered:
 		return
-	if frame_count > 30 and frame_count < 220:
+	if frame_count > 30 and frame_count < _evaluation_frame:
 		_sample()
-	if frame_count == 220:
+	if frame_count == _evaluation_frame:
 		_evaluate()
 
 func _trigger_crash() -> void:
@@ -80,6 +91,8 @@ func _trigger_crash() -> void:
 		1.0
 	)
 	skier.enter_crash(ctx)
+	if not RuntimeEnvironment.is_headless():
+		ClipRecorder._start_recording()
 
 func _sample() -> void:
 	if skier == null or skier.animation_controller == null:
@@ -120,10 +133,19 @@ func _evaluate() -> void:
 		return
 	var max_vertical := 0.0
 	var grounded_vertical_frames := 0
+	var grounded_frames := 0
+	var grounded_streak := 0
+	var longest_grounded_streak := 0
 	var min_dist := 1e9
 	var max_dist := 0.0
 	for s in samples:
 		max_vertical = max(max_vertical, float(s.max_vertical))
+		if bool(s.grounded):
+			grounded_frames += 1
+			grounded_streak += 1
+			longest_grounded_streak = maxi(longest_grounded_streak, grounded_streak)
+		else:
+			grounded_streak = 0
 		# Only count sustained vertical when grounded in REST (where skis should be flat, not post)
 		if float(s.max_vertical) > 0.78 and bool(s.grounded) and int(s.stage) == CrashContext.Stage.REST:
 			grounded_vertical_frames += 1
@@ -131,6 +153,7 @@ func _evaluate() -> void:
 		max_dist = max(max_dist, float(s.dist))
 	print("CRASH_MAX_VERTICAL: %.3f grounded_rest_vertical %d (threshold <4)" % [max_vertical, grounded_vertical_frames])
 	print("CRASH_SKI_DIST_MIN: %.3f max %.3f" % [min_dist, max_dist])
+	print("CRASH_GROUNDED_FRAMES: %d longest_streak %d" % [grounded_frames, longest_grounded_streak])
 	# Check for static settling: after 60 frames post-impact, pelvis should still show small movement if dragging works.
 	var early_pelvis: Vector3 = samples[10].pelvis as Vector3
 	var mid_pelvis: Vector3 = samples[80].pelvis as Vector3
@@ -165,13 +188,36 @@ func _evaluate() -> void:
 				reasons.append("could not save GPU viewport image")
 			else:
 				print("CRASH_IMAGE_SAVED: user://crash_viewport_capture.png")
-	if reasons.is_empty():
-		print("CRASH_VIEWPORT_PASS: vertical %.3f dist %.3f drag %.4f/%.4f" % [max_vertical, min_dist, early_to_mid, mid_to_late])
+	_evaluation_reasons = reasons
+	_evaluation_summary = "vertical %.3f dist %.3f drag %.4f/%.4f" % [max_vertical, min_dist, early_to_mid, mid_to_late]
+	if not RuntimeEnvironment.is_headless() and ClipRecorder.is_recording():
+		_waiting_for_clip = true
+		ClipRecorder._stop_recording()
+		return
+	_complete_evaluation()
+
+func _on_clip_saved(path: String) -> void:
+	if not _waiting_for_clip:
+		return
+	_waiting_for_clip = false
+	print("CRASH_CLIP_SAVED: %s" % path)
+	_complete_evaluation()
+
+func _on_clip_failed(reason: String) -> void:
+	if not _waiting_for_clip:
+		return
+	_waiting_for_clip = false
+	_evaluation_reasons.append("could not encode crash clip: " + reason)
+	_complete_evaluation()
+
+func _complete_evaluation() -> void:
+	if _evaluation_reasons.is_empty():
+		print("CRASH_VIEWPORT_PASS: " + _evaluation_summary)
 		_finish(0)
-	else:
-		for r in reasons:
-			push_error("CRASH_VIEWPORT_FAIL: " + r)
-		_finish(1)
+		return
+	for reason: String in _evaluation_reasons:
+		push_error("CRASH_VIEWPORT_FAIL: " + reason)
+	_finish(1)
 
 func _finish(exit_code: int) -> void:
 	if _finish_started:
@@ -179,6 +225,8 @@ func _finish(exit_code: int) -> void:
 	_finish_started = true
 	set_process(false)
 	set_physics_process(false)
+	if is_instance_valid(ClipRecorder) and ClipRecorder.has_method("_shutdown_capture_workers"):
+		ClipRecorder.call("_shutdown_capture_workers")
 	AudioManager.shutdown_audio()
 	for child: Node in get_children():
 		if is_instance_valid(child):

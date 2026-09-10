@@ -6,6 +6,7 @@ extends Node3D
 ## gameplay constraints.
 
 const SPAN_M := 56.0
+const METAL_ALBEDO := preload("res://assets/materials/alpine_props/weathered_metal_albedo_512.png")
 var _built := false
 
 func _ready() -> void:
@@ -26,8 +27,8 @@ func build_now() -> void:
 	var lod1 := Node3D.new()
 	lod1.name = "LOD1"
 	render.add_child(lod1)
-	var metal := _material(Color("#3d535d"), 0.62, 0.3)
-	var cable_material := _material(Color("#202e34"), 0.72, 0.45)
+	var metal := _material(Color("#3d535d"), 0.62, 0.0, METAL_ALBEDO, 1.0)
+	var cable_material := _material(Color("#202e34"), 0.72, 0.0, METAL_ALBEDO, 1.0)
 	var chair_material := _material(Color("#b46d42"), 0.7, 0.08)
 	var chair_dark := _material(Color("#6b4a3e"), 0.76, 0.1)
 	for side: float in [-1.0, 1.0]:
@@ -90,10 +91,17 @@ func _add_cylinder(parent: Node3D, node_name: String, top_radius: float, bottom_
 	mesh_instance.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	parent.add_child(mesh_instance)
 
-func _material(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:
+func _material(color: Color, roughness: float, metallic: float, albedo_texture: Texture2D = null, texture_world_size: float = 1.0) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = roughness
 	material.metallic = metallic
+	if albedo_texture != null:
+		material.albedo_texture = albedo_texture
+		material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		material.uv1_triplanar = true
+		material.uv1_world_triplanar = true
+		var texture_scale := 1.0 / maxf(texture_world_size, 0.01)
+		material.uv1_scale = Vector3(texture_scale, texture_scale, texture_scale)
 	return material
 

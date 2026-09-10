@@ -7,6 +7,7 @@ extends Node3D
 var _placements: Array[Dictionary] = []
 
 const DEFAULT_LOD_DISTANCES := Vector3(35.0, 105.0, 230.0)
+const CONIFER_ALBEDO := preload("res://assets/materials/alpine_props/conifer_needles_albedo_512.png")
 
 func _init() -> void:
 	name = "ParkTreeBatch"
@@ -23,10 +24,13 @@ func commit() -> void:
 	if _placements.is_empty():
 		return
 	var bark := _material(Color("#59483b"), 0.9)
-	var needle_dark := _material(Color("#163f38"), 0.86)
-	var needle_mid := _material(Color("#255c50"), 0.84)
-	var needle_light := _material(Color("#397565"), 0.82)
-	var snow := _material(Color("#dcebf0"), 0.96)
+	# Near-white tints compensate the dark (~58/255) conifer map so the batch
+	# matches the LOD0 hierarchy in low_poly_environment_asset.gd.
+	var needle_dark := _material(Color("#c9d8d2"), 0.86, CONIFER_ALBEDO, 2.0)
+	var needle_mid := _material(Color("#dbe5e0"), 0.84, CONIFER_ALBEDO, 1.7)
+	var needle_light := _material(Color("#e9f0ec"), 0.82, CONIFER_ALBEDO, 1.45)
+	# Flat snow avoids a 2K bind on sub-meter caps; see low_poly asset.
+	var snow := _material(Color("#edf4f5"), 0.96)
 	var lod := _lod_distances()
 	# MultiMesh visibility is evaluated for the batch bounds, not each instance.
 	# A compact six-part silhouette avoids drawing overlapping per-tree LODs for
@@ -88,11 +92,18 @@ func _cylinder(top_radius: float, bottom_radius: float, height: float, segments:
 	mesh.material = material
 	return mesh
 
-func _material(color: Color, roughness: float) -> StandardMaterial3D:
+func _material(color: Color, roughness: float, albedo_texture: Texture2D = null, texture_world_size: float = 1.0) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = roughness
 	material.vertex_color_use_as_albedo = true
+	if albedo_texture != null:
+		material.albedo_texture = albedo_texture
+		material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		material.uv1_triplanar = true
+		material.uv1_world_triplanar = true
+		var texture_scale := 1.0 / maxf(texture_world_size, 0.01)
+		material.uv1_scale = Vector3(texture_scale, texture_scale, texture_scale)
 	return material
 
 func _variant_color(variant: int) -> Color:
