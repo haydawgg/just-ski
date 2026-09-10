@@ -117,7 +117,7 @@ The visible presentation includes the skinned body/clothing treatment plus proje
 
 `default_skier_outfit_profile.tres` and the animation/rig resources are the maintained source of truth for outfit palette, material response, proportions, and attachment calibration.
 
-The five original `Outfit_*` body regions retain UV0 data; generated jacket, pants, and glove shells intentionally do not. Material polish therefore uses per-region roughness, metallic, and specular response across the existing skeleton/outfit pipeline instead of adding a texture that only some overlapping surfaces can sample. The jacket also has authored panel, trim, zipper, pocket-flap, and back-stripe materials so close inspection has stable detail variation without cloth simulation or a texture dependency.
+The five original `Outfit_*` body regions retain UV0 data; generated jacket, pants, and glove shells intentionally do not. Material polish uses per-region roughness, metallic, and specular response across the existing skeleton/outfit pipeline, plus a neutral near-white technical-ripstop albedo (`assets/materials/skier_cloth/technical_ripstop_albedo_512.png`) multiplied by the outfit colors on jacket, pants, and gloves. Local (non-world) triplanar projection at a 0.40 m repeat keeps the weave stable on both authored UV surfaces and generated shells without swimming through the world as the skeleton moves. The jacket also has authored panel, trim, zipper, pocket-flap, and back-stripe materials so close inspection has stable detail variation without cloth simulation.
 
 Do not rely on historical mesh/surface counts in documentation; those are implementation details and change as presentation is refined.
 

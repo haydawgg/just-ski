@@ -8,7 +8,6 @@ var _placements: Array[Dictionary] = []
 
 const DEFAULT_LOD_DISTANCES := Vector3(35.0, 105.0, 230.0)
 const CONIFER_ALBEDO := preload("res://assets/materials/alpine_props/conifer_needles_albedo_512.png")
-const SNOW_ALBEDO := preload("res://assets/materials/snow_02/snow_02_diff_2k.jpg")
 
 func _init() -> void:
 	name = "ParkTreeBatch"
@@ -25,10 +24,13 @@ func commit() -> void:
 	if _placements.is_empty():
 		return
 	var bark := _material(Color("#59483b"), 0.9)
-	var needle_dark := _material(Color("#a8bab2"), 0.86, CONIFER_ALBEDO, 2.0)
-	var needle_mid := _material(Color("#c0d0c8"), 0.84, CONIFER_ALBEDO, 1.7)
-	var needle_light := _material(Color("#d5e0d9"), 0.82, CONIFER_ALBEDO, 1.45)
-	var snow := _material(Color("#edf4f5"), 0.96, SNOW_ALBEDO, 1.2)
+	# Near-white tints compensate the dark (~58/255) conifer map so the batch
+	# matches the LOD0 hierarchy in low_poly_environment_asset.gd.
+	var needle_dark := _material(Color("#c9d8d2"), 0.86, CONIFER_ALBEDO, 2.0)
+	var needle_mid := _material(Color("#dbe5e0"), 0.84, CONIFER_ALBEDO, 1.7)
+	var needle_light := _material(Color("#e9f0ec"), 0.82, CONIFER_ALBEDO, 1.45)
+	# Flat snow avoids a 2K bind on sub-meter caps; see low_poly asset.
+	var snow := _material(Color("#edf4f5"), 0.96)
 	var lod := _lod_distances()
 	# MultiMesh visibility is evaluated for the batch bounds, not each instance.
 	# A compact six-part silhouette avoids drawing overlapping per-tree LODs for

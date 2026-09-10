@@ -12,4 +12,6 @@ The source prompts requested square, tileable, perspective-free albedo images
 without text, logos, watermarks, strong directional gradients, or baked
 lighting. Runtime materials use world-space triplanar projection, tinting, and
 mipmapped anisotropic filtering, so the primitive meshes require no authored
-UV changes.
+UV changes. Weathered-metal runtime response stays non-metallic because the
+albedo carries rust/dirt breakup; the conifer map is dark (~58/255 mean), so
+canopy tints stay near-white to preserve the three-tier hierarchy.
