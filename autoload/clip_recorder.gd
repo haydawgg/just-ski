@@ -2,14 +2,16 @@ extends Node
 
 const ClipTimelineModule = preload("res://util/clip_timeline.gd")
 
-## F9-toggleable gameplay clip capture. Pressing F9 arms or cancels the
-## recorder; an explicit Restart from Summit consumes a pending arm and records
-## until the finish trigger (or an early save / 90 s safety cap). The clip is
-## saved to the user's Downloads folder (user:// fallback) as an MJPEG-in-MP4
-## file. Frames are JPEG-encoded during capture and the MP4 is muxed on a
-## background thread so play continues. Capture slots are retained even when
-## the JPEG worker is back-pressured; missing slots are repeated during muxing
-## to preserve the recorded run's presentation duration.
+## Prototype/debug-only F9 gameplay capture. This is intentionally not a
+## supported player-facing sharing/export feature: output remains MJPEG-in-MP4
+## without synchronized game audio. Pressing F9 arms or cancels the recorder;
+## an explicit Restart from Summit consumes a pending arm and records until the
+## finish trigger (or an early save / 90 s safety cap). The clip is saved to
+## the user's Downloads folder (user:// fallback). Frames are JPEG-encoded
+## during capture and the MP4 is muxed on a background thread so play continues.
+## Capture slots are retained even when the JPEG worker is back-pressured;
+## missing slots are repeated during muxing to preserve the recorded run's
+## presentation duration.
 
 signal recording_changed(active: bool)
 signal encoding_changed(active: bool)
@@ -18,6 +20,7 @@ signal clip_failed(reason: String)
 signal clip_info(message: String)
 signal armed_changed(armed: bool)
 
+const RELEASE_SCOPE := &"prototype_debug"
 const CAPTURE_FPS := 30.0
 const MAX_CLIP_FRAMES := 2700         # = 90 s at 30 fps
 const CAPTURE_WIDTH := 960
@@ -62,7 +65,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif armed:
 			disarm()
 		elif _encoding:
-			clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — TRY AGAIN IN A MOMENT")
+			clip_info.emit("DEBUG CAPTURE — STILL ENCODING THE PREVIOUS CLIP")
 		else:
 			arm()
 
@@ -117,21 +120,21 @@ func arm() -> void:
 		return
 	armed = true
 	armed_changed.emit(true)
-	clip_info.emit("RECORDER ARMED — TAKE A RUN FROM THE SUMMIT")
+	clip_info.emit("DEBUG CAPTURE ARMED — MJPEG VIDEO / NO GAME AUDIO")
 
 func disarm() -> void:
 	if _shutting_down or not armed:
 		return
 	armed = false
 	armed_changed.emit(false)
-	clip_info.emit("RECORDER DISARMED")
+	clip_info.emit("DEBUG CAPTURE DISARMED")
 
 func begin_run_capture() -> void:
 	if _shutting_down:
 		return
 	if _encoding:
 		# Previous clip is still muxing; stay armed so the next run records.
-		clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — WAIT A MOMENT")
+		clip_info.emit("DEBUG CAPTURE — STILL ENCODING; NEXT RUN REMAINS ARMED")
 		return
 	if armed:
 		armed = false
@@ -155,7 +158,7 @@ func end_run_capture() -> void:
 
 func _start_recording() -> void:
 	if _shutting_down or _encoding:
-		clip_info.emit("STILL ENCODING THE PREVIOUS CLIP — TRY AGAIN IN A MOMENT")
+		clip_info.emit("DEBUG CAPTURE — STILL ENCODING THE PREVIOUS CLIP")
 		return
 	if _recording:
 		return
@@ -169,6 +172,7 @@ func _start_recording() -> void:
 	_dropped_capture_frames = 0
 	_start_jpeg_worker()
 	recording_changed.emit(true)
+	clip_info.emit("DEBUG CAPTURE RECORDING — MJPEG VIDEO / NO GAME AUDIO")
 
 func _stop_recording() -> void:
 	if not _recording:
@@ -177,7 +181,7 @@ func _stop_recording() -> void:
 	recording_changed.emit(false)
 	_stop_jpeg_worker()
 	if _frames.size() < MIN_CLIP_FRAMES:
-		clip_info.emit("CLIP TOO SHORT — RIDE A MOMENT BEFORE SAVING")
+		clip_info.emit("DEBUG CLIP TOO SHORT — RIDE A MOMENT BEFORE SAVING")
 		_frames.clear()
 		_encoded_frames_by_slot.clear()
 		return
@@ -191,6 +195,7 @@ func _stop_recording() -> void:
 	_encoded_frames_by_slot.clear()
 	_encoding = true
 	encoding_changed.emit(true)
+	clip_info.emit("DEBUG CAPTURE ENCODING — OUTPUT IS MJPEG-IN-MP4")
 	var temporary_path := "user://.clip_encode_%d.mp4" % Time.get_ticks_usec()
 	_encode_temporary_path = temporary_path
 	var start_error := _start_encode_thread(frames, temporary_path)
@@ -363,6 +368,7 @@ func _on_encoded_file(temporary_path: String, error: Error) -> void:
 			if _encode_temporary_path == temporary_path:
 				_encode_temporary_path = ""
 			clip_saved.emit(path)
+			clip_info.emit("DEBUG CAPTURE SAVED — %s" % path.get_file())
 			return
 	_remove_file(temporary_path)
 	if _encode_temporary_path == temporary_path:
@@ -403,5 +409,6 @@ func _remove_file(path: String) -> void:
 		DirAccess.remove_absolute(absolute)
 
 func _fail(reason: String) -> void:
-	push_warning("Clip capture failed: %s" % reason)
+	push_warning("Debug clip capture failed: %s" % reason)
 	clip_failed.emit(reason)
+	clip_info.emit("DEBUG CAPTURE FAILED — %s" % reason)

@@ -19,7 +19,7 @@ Summit Sessions is designed around a standard gamepad, with keyboard bindings ke
 | Pause | Menu / Start | Esc |
 | Settings | Pause → Settings | Pause → Settings |
 | Debug overlay | — | F3 |
-| Arm / cancel / stop clip capture | — | F9 |
+| Debug run capture | — | F9 |
 
 The HUD changes prompt families based on the most recently used input device.
 
@@ -110,11 +110,11 @@ The pause menu is controller navigable and includes an in-game trick guide.
 
 F3 toggles gameplay and presentation telemetry. The exact fields evolve with the prototype, but the overlay is intended to expose the active locomotion state, ski/contact data, carving and skid response, trick input, landing prediction, rail state, crash context, and rig/animation diagnostics.
 
-## Gameplay clip recorder
+## Debug clip recorder
 
-F9 controls the built-in run recorder:
+F9 controls a prototype/debug run recorder. It is not part of the supported player-facing sharing/export surface; current output is MJPEG-in-MP4 without synchronized game audio.
 
-1. Press F9 while idle to arm capture for the next summit run.
+1. Press F9 while idle to arm debug capture for the next summit run.
 2. Press F9 again while idle to cancel the pending arm; ending an unstarted run does not cancel it.
 3. Choose Restart from Summit; the pending arm is consumed and capture begins automatically. Session respawn and out-of-bounds recovery do not start capture, even when they use the default spawn.
 4. While recording, press F9 to stop the capture. It also ends at the finish trigger or 90-second safety cap.
@@ -125,8 +125,8 @@ Capture format:
 - 960×540
 - 30 fps
 - JPEG frames muxed as MJPEG-in-MP4
-- no game audio
+- no synchronized game audio
 - saved as `ski_clip_<timestamp>.mp4`
 - Downloads folder when available, otherwise the Godot user-data directory
 
-The recorder will not start a new capture while the previous clip is still being encoded.
+The recorder will not start a new capture while the previous clip is still being encoded. Browser/Discord compatibility, H.264 output, platform-native codecs, and synchronized audio muxing are outside the current release contract; see `docs/CLIP_CAPTURE.md`.
