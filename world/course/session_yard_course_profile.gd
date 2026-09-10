@@ -24,12 +24,14 @@ func feature_specs() -> Array[Dictionary]:
 		var spec: Dictionary = specs[index]
 		var kind := str(spec.get("kind", "feature"))
 		var route := StringName(spec.get("route", &"intermediate"))
+		var discipline := ParkCourseProfile._discipline_for_kind(kind)
 		var defaults := _asset_contract_defaults(kind)
 		spec["feature_id"] = StringName(str(spec.name).to_snake_case())
 		spec["spot_id"] = &"session_yard"
+		spec["discipline"] = discipline
 		spec["skill_floor"] = 0 if route == &"safe" else (1 if route == &"intermediate" else 2)
 		spec["skill_ceiling"] = 3 if route == &"safe" else (4 if route == &"intermediate" else 5)
-		spec["intent_tags"] = [StringName(kind), route, &"rapid_retry"]
+		spec["intent_tags"] = [StringName(kind), discipline, route, &"rapid_retry"]
 		spec["risk_level"] = 0 if route == &"safe" else (1 if route == &"intermediate" else 3)
 		spec["hero_feature"] = str(spec.name) in ["YardMediumJump", "YardCurveRail"]
 		spec["optional"] = route == &"expert"
