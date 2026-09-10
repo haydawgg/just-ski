@@ -9,6 +9,7 @@ func _ready() -> void:
 	AudioManager.shutdown_audio()
 	await get_tree().process_frame
 	await get_tree().process_frame
+	await get_tree().process_frame
 	if failures.is_empty():
 		print("SOLVER_ANIMATION_INTERFACE_PASS: ground, air, grab, style, landing, rail, crash, and secondary-motion interfaces passed")
 		get_tree().quit(0)

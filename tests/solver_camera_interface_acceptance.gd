@@ -7,6 +7,7 @@ func _ready() -> void:
 	AudioManager.shutdown_audio()
 	await get_tree().process_frame
 	await get_tree().process_frame
+	await get_tree().process_frame
 	if failures.is_empty():
 		print("SOLVER_CAMERA_INTERFACE_PASS: projection, composition, framing, and collision interfaces passed")
 		get_tree().quit(0)
