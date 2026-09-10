@@ -11,7 +11,10 @@ func _ready() -> void:
 	_test_camera_interfaces()
 	_test_contact_and_extension_contracts()
 	# Immediate quit from _ready can ACCESS_VIOLATE Godot 4.7 headless on
-	# Windows after constructing looking_at frames. Drain one idle frame first.
+	# Windows after constructing looking_at frames. One idle frame still
+	# crashed on quit after PASS; drain three frames before exiting.
+	await get_tree().process_frame
+	await get_tree().process_frame
 	await get_tree().process_frame
 	if failures.is_empty():
 		print("SOLVER_LAYER_PASS: typed ground, air, rail, landing, crash, animation, framing, collision, and composition interfaces passed")
