@@ -16,6 +16,7 @@ $checks = @(
 	"tests/config_docs_static_acceptance.ps1",
 	"tests/world_authoring_static_acceptance.ps1",
 	"tests/release_static_acceptance.ps1",
+	"tests/export_content_static_acceptance.ps1",
 	"tests/performance_compare_acceptance.ps1",
 	"tests/ci_static_acceptance.ps1",
 	"tests/visual_evidence_static_acceptance.ps1"
