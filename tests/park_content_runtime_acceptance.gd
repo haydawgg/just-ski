@@ -34,7 +34,7 @@ func _validate_runtime_metadata_and_equivalence(profile: ParkCourseProfile) -> v
 	var side_hits := 0
 	for feature_name: String in first:
 		var feature := first[feature_name] as Node3D
-		for key: String in ["feature_id", "spot_id", "route", "skill_floor", "skill_ceiling", "intent_tags", "risk_level", "hero_feature", "optional"]:
+		for key: String in ["feature_id", "spot_id", "route", "discipline", "skill_floor", "skill_ceiling", "intent_tags", "risk_level", "hero_feature", "optional"]:
 			if feature == null or not feature.has_meta(key):
 				failures.append("%s is missing runtime content metadata %s" % [feature_name, key])
 		if feature_name in ["UpperLeftSideHit", "CenterSpine", "LowerRightSideHit"]:
@@ -55,15 +55,20 @@ func _validate_session_yard() -> void:
 		failures.append("Session Yard lacks a useful rapid-retry feature set")
 	var kinds: Dictionary = {}
 	var routes: Dictionary = {}
+	var disciplines: Dictionary = {}
 	for spec: Dictionary in specs:
 		kinds[StringName(spec.kind)] = true
 		routes[StringName(spec.route)] = true
+		disciplines[StringName(spec.discipline)] = true
 	for required_kind: StringName in [&"tabletop", &"rail", &"berm", &"side_hit", &"butter"]:
 		if not kinds.has(required_kind):
 			failures.append("Session Yard is missing %s content" % required_kind)
 	for required_route: StringName in [&"safe", &"intermediate", &"expert"]:
 		if not routes.has(required_route):
 			failures.append("Session Yard is missing %s route" % required_route)
+	for required_discipline: StringName in [&"air", &"jib", &"flow"]:
+		if not disciplines.has(required_discipline):
+			failures.append("Session Yard is missing %s discipline" % required_discipline)
 	var first_root := Node3D.new()
 	var second_root := Node3D.new()
 	add_child(first_root)
@@ -76,6 +81,8 @@ func _validate_session_yard() -> void:
 		var feature := first[feature_name] as Node3D
 		if feature == null or str(feature.get_meta("asset_source", "")) not in ["production_scene", "project_authored_parametric_scene"]:
 			failures.append("Session Yard feature %s did not satisfy the production asset contract" % feature_name)
+		if feature == null or not feature.has_meta("discipline"):
+			failures.append("Session Yard feature %s did not propagate discipline metadata" % feature_name)
 	first_root.queue_free()
 	second_root.queue_free()
 

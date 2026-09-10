@@ -6,6 +6,7 @@ var failures: Array[String] = []
 var clip_failure_count := 0
 
 func _ready() -> void:
+	await _test_release_scope()
 	await _test_pending_arm_lifecycle()
 	await _test_session_respawn_reasons_gate_capture()
 	await _test_teardown_during_recording()
@@ -16,7 +17,7 @@ func _ready() -> void:
 			push_error("CLIP_RECORDER_LIFECYCLE_FAIL: " + failure)
 		get_tree().quit(1)
 		return
-	print("CLIP_RECORDER_LIFECYCLE_PASS: arm state, summit-restart capture gating, worker teardown, encode teardown, and start failure cleanup verified")
+	print("CLIP_RECORDER_LIFECYCLE_PASS: debug release scope, arm state, summit-restart capture gating, worker teardown, encode teardown, and start failure cleanup verified")
 	get_tree().quit(0)
 
 func _new_recorder() -> Node:
@@ -30,6 +31,17 @@ func _destroy_recorder(recorder: Node) -> void:
 			recorder.call("_shutdown_capture_workers")
 		recorder.queue_free()
 	await get_tree().process_frame
+
+func _test_release_scope() -> void:
+	if ClipRecorderModule.RELEASE_SCOPE != &"prototype_debug":
+		failures.append("clip recorder release scope is no longer explicitly prototype_debug")
+	var recorder := _new_recorder()
+	var notices: Array[String] = []
+	recorder.connect("clip_info", func(message: String) -> void: notices.append(message))
+	recorder.call("arm")
+	if notices.is_empty() or not notices[-1].begins_with("DEBUG CAPTURE"):
+		failures.append("arming the prototype recorder did not identify debug capture in the user-facing notice")
+	await _destroy_recorder(recorder)
 
 func _test_pending_arm_lifecycle() -> void:
 	var recorder := _new_recorder()
@@ -212,4 +224,3 @@ func _assert_clean(recorder: Node, label: String) -> void:
 
 func _on_clip_failed(_reason: String) -> void:
 	clip_failure_count += 1
-

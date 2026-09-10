@@ -12,11 +12,16 @@ if (-not (Test-Path -LiteralPath $workflowPath -PathType Leaf)) {
 }
 else {
 	$workflow = Get-Content -LiteralPath $workflowPath -Raw
-	if (($workflow | Select-String -Pattern 'uses:\s+\./\.github/actions/setup-godot' -AllMatches).Matches.Count -ne 2) {
-		$failures.Add("Prepare and runtime jobs must both use the shared Godot setup action")
+	if (($workflow | Select-String -Pattern 'uses:\s+\./\.github/actions/setup-godot' -AllMatches).Matches.Count -ne 3) {
+		$failures.Add("Prepare, runtime, and export-pack jobs must use the shared Godot setup action")
 	}
 	if ($workflow -match 'Invoke-WebRequest|Expand-Archive|Get-FileHash') {
 		$failures.Add("Godot download/checksum/extraction logic is duplicated in the workflow")
+	}
+	foreach ($required in @('export_pack:', '--export-pack "Windows Desktop"', '--main-pack builds\windows\SummitSessions.pck', 'EXPORT_PACK_RESULT')) {
+		if (-not $workflow.Contains($required)) {
+			$failures.Add("Quality workflow is missing production pack contract: $required")
+		}
 	}
 }
 if (Test-Path -LiteralPath $actionPath -PathType Leaf) {
@@ -29,4 +34,4 @@ if ($failures.Count -gt 0) {
 	$failures | ForEach-Object { Write-Output "FAIL: $_" }
 	exit 1
 }
-Write-Output "PASS: Godot setup is shared and checksum-verified."
+Write-Output "PASS: Godot setup is shared/checksum-verified and CI exports/smokes the production PCK."

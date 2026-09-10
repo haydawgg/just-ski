@@ -11,10 +11,13 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 
 $checks = @(
 	"tests/physics_static_acceptance.ps1",
+	"tests/collision_layer_static_acceptance.ps1",
 	"tests/shader_static_acceptance.ps1",
+	"tests/park_render_shell_static_acceptance.ps1",
 	"tests/config_docs_static_acceptance.ps1",
 	"tests/world_authoring_static_acceptance.ps1",
 	"tests/release_static_acceptance.ps1",
+	"tests/export_content_static_acceptance.ps1",
 	"tests/performance_compare_acceptance.ps1",
 	"tests/ci_static_acceptance.ps1",
 	"tests/visual_evidence_static_acceptance.ps1"

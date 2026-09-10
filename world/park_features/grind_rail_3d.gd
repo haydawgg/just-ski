@@ -1,6 +1,8 @@
 class_name GrindRail3D
 extends Node3D
 
+const CollisionLayers := preload("res://resources/physics/collision_layers.gd")
+
 enum RailType { RAIL, BOX, PIPE, COPING, LOG, OTHER }
 
 @export var path: Curve3D
@@ -131,8 +133,8 @@ func _build_visual_and_collision() -> void:
 		var midpoint := (a + b) * 0.5
 		var collision := CollisionShape3D.new()
 		var body := StaticBody3D.new()
-		body.collision_layer = 8
-		body.collision_mask = 2
+		body.collision_layer = CollisionLayers.GRIND
+		body.collision_mask = CollisionLayers.GRIND_COLLISION_MASK
 		body.set_meta("ski_surface_class", "metal")
 		body.set_meta("asset_id", "grind_rail")
 		body.set_meta("asset_class", "GRIND_ONLY")

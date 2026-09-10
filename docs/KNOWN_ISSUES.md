@@ -20,7 +20,3 @@ This file tracks concrete, actionable bugs and missing functionality. Resolved i
 ## Graphics and performance
 
 - **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution, VSync, FPS cap, and a profile-gated GI toggle. FSR2, HDR, reflection-quality controls, and risky-resolution confirmation are not implemented.
-
-## Audio and capture
-
-- **Gameplay clips use MJPEG-in-MP4 and contain no game audio.** The recorder produces large MJPEG-in-MP4 files with limited browser/Discord compatibility and does not include synchronized game audio. H.264 output and audio capture are missing.

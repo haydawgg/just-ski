@@ -62,7 +62,7 @@ and the decision record is retained in [Licensing Decision](docs/LICENSING_DECIS
 | Return to marker | Y / Triangle or D-pad Down | R |
 | Pause | Menu / Start | Esc |
 | Debug overlay | — | F3 |
-| Arm / stop run capture | — | F9 |
+| Debug run capture | — | F9 |
 
 Controller triggers change role after takeoff: LT/L2 and RT/R2 are ground brake/tuck inputs, then become airborne hand inputs after they are released and pressed again. See [Controls](docs/CONTROLS.md) for the full gesture and grab mapping.
 
@@ -79,7 +79,7 @@ The playable slice includes:
 - Triplanar snow shading with Fast and Premium tiers, procedural environment presentation, snow spray, audio, rumble, HUD feedback, scoring, combos, and finish results.
 - A data-driven downhill park with jump, flow, and jib routes assembled from reusable procedural features.
 - Controller-navigable Settings menu with staged Apply / Cancel / Reset behavior, live graphics changes, and persisted settings.
-- Gameplay clip capture to MJPEG-in-MP4.
+- Prototype/debug gameplay capture to MJPEG-in-MP4 without synchronized game audio.
 
 ## Documentation
 
@@ -93,7 +93,7 @@ Active direction and validation:
 
 Technical reference:
 
-- [Controls](docs/CONTROLS.md) — input mapping, Flick-It gestures, grabs, rails, and clip capture.
+- [Controls](docs/CONTROLS.md) — input mapping, Flick-It gestures, grabs, rails, and debug clip capture.
 - [Physics](docs/PHYSICS.md) — locomotion state ownership, ski handling, landings, crashes, rails, and tuning.
 - [Trick Control Target](docs/TRICK_CONTROL_TARGET.md) — durable trick-system design principles and current implementation alignment.
 - [Animation](docs/ANIMATION.md) — presentation architecture, rig adapters, procedural layers, and animation test coverage.
@@ -101,7 +101,7 @@ Technical reference:
 - [Performance Baseline](docs/PERFORMANCE_BASELINE_1080P.md) — reproducible 1080p benchmark contract and current measurements.
 - [World Authoring](docs/WORLD_AUTHORING.md) — deterministic course/world authoring and preview workflow.
 - [Asset Sources](docs/ASSET_SOURCES.md) — third-party source index and provenance.
-- [Clip capture](docs/CLIP_CAPTURE.md) — timing compensation, worker shutdown, and streaming mux behavior.
+- [Clip capture](docs/CLIP_CAPTURE.md) — prototype/debug scope, timing compensation, worker shutdown, and streaming mux behavior.
 - [Release](docs/RELEASE.md) — supported engine, export preset, and smoke-test procedure.
 - [Historical documents](docs/history/README.md) — completed plans, dated QA reports, and superseded roadmaps retained for decision history.
 
@@ -158,7 +158,7 @@ For a focused legacy-compatible animation capture, use:
 
 The compatibility comparison is written under `.godot_user/captures/`; bundle runs retain those legacy filenames below each suite's `compat/` directory.
 
-During normal play, F9 arms the gameplay recorder. The next run started from the summit is captured at 960×540 / 30 fps until the finish, a manual F9 stop, or the recorder's safety cap. The result is written to the user's Downloads folder when available, with `user://` as a fallback. The file is MJPEG video in an MP4 container and does not include game audio.
+F9 is a prototype/debug capture utility, not a supported sharing/export feature. It arms the next summit run for a 960×540 / 30 fps MJPEG-in-MP4 recording until the finish, a manual F9 stop, or the recorder's safety cap. The result is written to the user's Downloads folder when available, with `user://` as a fallback. It does not include synchronized game audio, and browser/Discord compatibility is not part of the current release contract. See [Clip capture](docs/CLIP_CAPTURE.md) for the maintained scope.
 
 Use `-- --primitive-skier` to force the generated primitive skier presentation for debugging or comparison. Normal runtime uses automatic rig selection and prefers the configured Skeleton3D production body.
 
