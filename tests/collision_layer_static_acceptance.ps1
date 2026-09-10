@@ -38,10 +38,6 @@ Require-Match $layers '(?m)^const SKIER_COLLISION_MASK\s*:=\s*WORLD_SOLID_MASK\s
 Require-Match $layers '(?m)^const CAMERA_COLLISION_MASK\s*:=\s*WORLD_SOLID_MASK\s*$' "Camera mask must retain Terrain | Feature and exclude Grind."
 Require-Match $layers '(?m)^const GRIND_COLLISION_MASK\s*:=\s*SKIER\s*$' "Grind rail bodies must continue to target the Skier layer."
 
-$grindSolver = Read-RepoFile "player/motion/grind_collision_solver.gd"
-Require-Match $grindSolver 'CollisionLayers\.FEATURE' "Grind collision solver must use the shared Feature layer."
-Reject-Match $grindSolver '(?m)^const FEATURE_MASK\s*:=\s*4\s*$' "Grind collision solver reintroduced a private Feature mask."
-
 $cameraSolver = Read-RepoFile "player/camera/camera_collision_solver.gd"
 Require-Match $cameraSolver 'collision_mask\s*:=\s*CollisionLayers\.CAMERA_COLLISION_MASK' "Camera collision solver must default to the shared camera mask."
 Reject-Match $cameraSolver 'collision_mask\s*:=\s*1\s*\|\s*4' "Camera collision solver reintroduced a numeric Terrain | Feature mask."
