@@ -326,6 +326,9 @@ extends Resource
 @export var rail_torso_counter_lean: float = 0.3
 @export var rail_pelvis_shift: float = 0.16
 @export var rail_leg_asymmetry_gain: float = 0.3
+## Opens the knee hinge laterally during a boardslide so depth-staggered boots
+## do not collapse into one leg silhouette from the gameplay camera.
+@export_range(0.0, 1.0) var rail_boardslide_knee_open: float = 0.5
 @export var rail_exit_response: float = 7.0
 @export var rail_exit_anticipation_distance: float = 1.6
 @export var rail_exit_leg_extend: float = 0.18

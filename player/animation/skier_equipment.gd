@@ -6,6 +6,7 @@ const POLE_SHAFT_RADIUS := 0.016
 const POLE_SHAFT_LENGTH := 1.15
 const POLE_BASKET_RADIUS := 0.052
 const POLE_BASKET_THICKNESS := 0.018
+const TECHNICAL_CLOTH_ALBEDO := preload("res://assets/materials/skier_cloth/technical_ripstop_albedo_512.png")
 
 static func material(color: Color, roughness: float, metallic: float, specular: float = 0.5) -> StandardMaterial3D:
 	var value := StandardMaterial3D.new()
@@ -51,6 +52,15 @@ static func region_surface(region: String, outfit: SkierOutfitProfile) -> Standa
 			specular = outfit.hardgoods_specular
 			resolved = "Unmarked"
 	var surface := material(color, roughness, metallic, specular)
+	if resolved in ["Jacket", "Pants", "Gloves"]:
+		# Local triplanar projection covers both authored UV surfaces and the
+		# generated clothing shells without swimming through the world as the
+		# skeleton moves. A 40 cm repeat keeps the weave below gameplay noise.
+		surface.albedo_texture = TECHNICAL_CLOTH_ALBEDO
+		surface.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		surface.uv1_triplanar = true
+		surface.uv1_world_triplanar = false
+		surface.uv1_scale = Vector3(2.5, 2.5, 2.5)
 	surface.resource_name = "Outfit_" + resolved
 	return surface
 

@@ -5,6 +5,8 @@ const TRANSLATED_JOINTS := [&"pelvis", &"chest", &"left_shoulder", &"right_shoul
 const DEFAULT_BODY_PATH := "res://assets/characters/skier/skier_body.glb"
 const DEFAULT_OUTFIT := preload("res://resources/character/default_skier_outfit_profile.tres")
 const MIN_POLE_KNEE_CLEARANCE := 0.10
+const MIN_POLE_BODY_CLEARANCE := 0.015
+const POLE_HAND_EXCLUSION_RATIO := 0.075
 const POLE_SHAFT_LENGTH := 1.185
 const MAX_HELPER_TURN := PI
 
@@ -792,12 +794,12 @@ func _build_attachments() -> void:
 	chest_mount.name = "JacketChestMount"
 	chest_mount.transform = _neutral_mount_transform(&"chest")
 	chest_attachment.add_child(chest_mount)
-	# Jacket-detail depths seated against the imported base-mesh torso wall
+	# Jacket-detail depths seated against the imported insulated jacket shell
 	# (measured, not eyeballed): stripe/zip inner faces ~2-4mm embedded, pocket
 	# on the chest wall. Primitive-calibrated values would float centimeters
 	# off this body, hence per-rig calibration.
 	SkierEquipment.build_jacket_details(spine_mount, chest_mount, jacket_accent, jacket_detail, jacket_trim,
-		0.143, -0.148, Vector3(-0.085, 0.06, -0.132))
+		0.152, -0.155, Vector3(-0.085, 0.06, -0.140))
 	for side: StringName in [&"left", &"right"]:
 		var shoulder_attachment := _bone_attachment(StringName(side + "_shoulder"), side.capitalize() + "SleeveShoulderAttachment")
 		var shoulder_mount := Node3D.new()
@@ -909,9 +911,7 @@ func _stabilize_equipment_poles() -> void:
 		# Cross-body grabs and switch/style poses can move a hand across the
 		# pelvis. Sweep away from the hand's actual lateral position so the pole
 		# remains outside the nearest leg while preserving the hand attachment.
-		var hand_lateral := (pivot.global_position - _bone_world(&"pelvis").origin).dot(lateral)
-		if absf(hand_lateral) > 0.025:
-			side_sign = signf(hand_lateral)
+		side_sign = _pole_side_sign(side, pivot.global_position, lateral)
 		# A pole can still be vertical enough to pass the gravity check while its
 		# shaft is folded into the thigh during a grab or compact style pose. Keep
 		# a small lateral clearance on every side of the skier before deciding the
@@ -920,46 +920,48 @@ func _stabilize_equipment_poles() -> void:
 		var lateral_correction := clampf((0.12 - lateral_alignment) / 0.55, 0.0, 1.0)
 		var current_clearance := _minimum_pole_knee_clearance(pivot.global_position, tip.global_position)
 		var clearance_correction := clampf((MIN_POLE_KNEE_CLEARANCE - current_clearance) / MIN_POLE_KNEE_CLEARANCE, 0.0, 1.0)
-		if downward_alignment >= 0.58 and not grabbing and lateral_correction <= 0.0 and clearance_correction <= 0.0:
+		var current_body_clearance := _minimum_pole_body_clearance(pivot.global_position, tip.global_position)
+		var body_correction := clampf((MIN_POLE_BODY_CLEARANCE - current_body_clearance) / 0.12, 0.0, 1.0)
+		if downward_alignment >= 0.58 and not grabbing and lateral_correction <= 0.0 and clearance_correction <= 0.0 and body_correction <= 0.0:
 			continue
 		var target_lateral_strength := 0.72 if grabbing else 0.28
 		var target_direction := (down * 0.88 - forward * 0.32 + lateral * side_sign * target_lateral_strength).normalized()
 		var target_tip := pivot.global_position + target_direction * POLE_SHAFT_LENGTH
 		var target_clearance := _minimum_pole_knee_clearance(pivot.global_position, target_tip)
+		var target_body_clearance := _minimum_pole_body_clearance(pivot.global_position, target_tip)
 		var target_outward := target_direction.dot(lateral) * side_sign
-		# A deterministic outward/downhill fallback keeps a shaft from threading
-		# through either knee during switch and compact grab/style poses. The pivot
-		# remains hand-mounted; only the shaft orientation is corrected.
-		if target_clearance < MIN_POLE_KNEE_CLEARANCE or target_outward < 0.08:
-			target_direction = (down * 0.94 - forward * 0.22 + lateral * side_sign * 1.0).normalized()
+		# Cross-body hands can sit on either side of several moving body capsules,
+		# so one fixed fallback vector is not sufficient. Select from a bounded set
+		# of readable outward/downhill directions using the current skeleton pose.
+		if target_clearance < MIN_POLE_KNEE_CLEARANCE or target_body_clearance < MIN_POLE_BODY_CLEARANCE or target_outward < 0.08:
+			target_direction = _safest_pole_direction(pivot.global_position, target_direction, side_sign, down, forward, lateral)
 			target_tip = pivot.global_position + target_direction * POLE_SHAFT_LENGTH
 			target_clearance = _minimum_pole_knee_clearance(pivot.global_position, target_tip)
+			target_body_clearance = _minimum_pole_body_clearance(pivot.global_position, target_tip)
+			target_outward = target_direction.dot(lateral) * side_sign
 		var target_basis := _pole_basis_for_direction(target_direction, forward, lateral)
 		# A hard replacement made a pole twitch when a grab or flip crossed the
 		# readability threshold. Preserve the authored hand pose and blend only
 		# the unsafe part back toward a downhill shaft direction.
 		var vertical_correction := clampf((0.58 - downward_alignment) / 0.85, 0.0, 1.0)
-		var correction_weight := maxf(maxf(maxf(0.85 if grabbing else 0.0, vertical_correction), lateral_correction), clearance_correction)
+		var correction_weight := maxf(maxf(maxf(maxf(0.85 if grabbing else 0.0, vertical_correction), lateral_correction), clearance_correction), body_correction)
 		# Lateral violations need a firmer blend than the gentle vertical
 		# readability correction; otherwise the shaft remains between the knees
 		# for the entire held pose even though its tip points downhill.
-		var blend_limit := 0.72 if lateral_correction <= 0.0 and clearance_correction <= 0.0 else 0.96
+		var blend_limit := 0.72 if lateral_correction <= 0.0 and clearance_correction <= 0.0 and body_correction <= 0.0 else 0.96
 		pivot.global_basis = pivot.global_basis.slerp(target_basis, correction_weight * blend_limit).orthonormalized()
 		# If the blended result is still inside the minimum envelope, finish the
 		# correction in the same deterministic update rather than allowing a one
 		# frame knee penetration to reach the renderer.
-		if (lateral_alignment < 0.02 or _minimum_pole_knee_clearance(pivot.global_position, tip.global_position) < MIN_POLE_KNEE_CLEARANCE) and target_outward >= 0.08:
+		if (lateral_alignment < 0.02 or _minimum_pole_knee_clearance(pivot.global_position, tip.global_position) < MIN_POLE_KNEE_CLEARANCE or _minimum_pole_body_clearance(pivot.global_position, tip.global_position) < MIN_POLE_BODY_CLEARANCE) and target_outward >= 0.08:
 			pivot.global_basis = target_basis
 		# Re-read the attachment after the transform write. BoneAttachment3D can
 		# refresh its parent during a skeleton update, so a final deterministic
 		# check prevents a style/switch pose from restoring an inward shaft.
 		var final_direction := (tip.global_position - pivot.global_position).normalized()
-		var final_side_sign := signf((pivot.global_position - _bone_world(&"pelvis").origin).dot(lateral))
-		if is_zero_approx(final_side_sign):
-			final_side_sign = -1.0 if side == &"left" else 1.0
-		if final_direction.dot(lateral) * final_side_sign < 0.02:
-			var final_target_direction := (down * 0.94 - forward * 0.22 + lateral * final_side_sign * 1.0).normalized()
-			pivot.global_basis = _pole_basis_for_direction(final_target_direction, forward, lateral)
+		var final_side_sign := _pole_side_sign(side, pivot.global_position, lateral)
+		if final_direction.dot(lateral) * final_side_sign < 0.02 or _minimum_pole_body_clearance(pivot.global_position, tip.global_position) < MIN_POLE_BODY_CLEARANCE:
+			pivot.global_basis = target_basis
 
 func pole_clearance_snapshot() -> Dictionary:
 	var left_pivot := equipment_nodes.get(&"left_pole") as Node3D
@@ -972,18 +974,19 @@ func pole_clearance_snapshot() -> Dictionary:
 	var left_direction := (left_tip.global_position - left_pivot.global_position).normalized()
 	var right_direction := (right_tip.global_position - right_pivot.global_position).normalized()
 	var pelvis_position := _bone_world(&"pelvis").origin
-	var left_side_sign := signf((left_pivot.global_position - pelvis_position).dot(lateral))
-	var right_side_sign := signf((right_pivot.global_position - pelvis_position).dot(lateral))
-	if is_zero_approx(left_side_sign):
-		left_side_sign = -1.0
-	if is_zero_approx(right_side_sign):
-		right_side_sign = 1.0
+	var left_side_sign := _pole_side_sign(&"left", left_pivot.global_position, lateral, pelvis_position)
+	var right_side_sign := _pole_side_sign(&"right", right_pivot.global_position, lateral, pelvis_position)
 	var left_clearance := _minimum_pole_knee_clearance(left_pivot.global_position, left_tip.global_position)
 	var right_clearance := _minimum_pole_knee_clearance(right_pivot.global_position, right_tip.global_position)
+	var left_body_clearance := _minimum_pole_body_clearance(left_pivot.global_position, left_tip.global_position)
+	var right_body_clearance := _minimum_pole_body_clearance(right_pivot.global_position, right_tip.global_position)
 	return {
 		"left_pole_knee_clearance_m": left_clearance,
 		"right_pole_knee_clearance_m": right_clearance,
 		"pole_knee_clearance_m": minf(left_clearance, right_clearance),
+		"left_pole_body_clearance_m": left_body_clearance,
+		"right_pole_body_clearance_m": right_body_clearance,
+		"pole_body_clearance_m": minf(left_body_clearance, right_body_clearance),
 		"left_pole_outward_dot": left_direction.dot(lateral) * left_side_sign,
 		"right_pole_outward_dot": right_direction.dot(lateral) * right_side_sign,
 		"poles_outward": left_direction.dot(lateral) * left_side_sign >= 0.02 and right_direction.dot(lateral) * right_side_sign >= 0.02,
@@ -1006,6 +1009,94 @@ func _minimum_pole_knee_clearance(start: Vector3, end: Vector3) -> float:
 	var left_knee := _bone_world(&"left_knee").origin
 	var right_knee := _bone_world(&"right_knee").origin
 	return minf(_point_to_segment_distance(left_knee, start, end), _point_to_segment_distance(right_knee, start, end))
+
+func _minimum_pole_body_clearance(start: Vector3, end: Vector3) -> float:
+	# Ignore the short section captured by the hand; touching the grip is
+	# intentional. Everything below it must remain outside the visible body.
+	var shaft_start := start.lerp(end, POLE_HAND_EXCLUSION_RATIO)
+	var capsules: Array[Dictionary] = [
+		{"a": _bone_world(&"pelvis").origin, "b": _bone_world(&"chest").origin, "radius": 0.18},
+		{"a": _bone_world(&"chest").origin, "b": _bone_world(&"head").origin, "radius": 0.145},
+		{"a": _bone_world(&"left_hip").origin, "b": _bone_world(&"left_knee").origin, "radius": 0.105},
+		{"a": _bone_world(&"right_hip").origin, "b": _bone_world(&"right_knee").origin, "radius": 0.105},
+		{"a": _bone_world(&"left_knee").origin, "b": _bone_world(&"left_boot").origin, "radius": 0.09},
+		{"a": _bone_world(&"right_knee").origin, "b": _bone_world(&"right_boot").origin, "radius": 0.09},
+	]
+	var minimum := INF
+	for capsule: Dictionary in capsules:
+		minimum = minf(minimum, _segment_to_segment_distance(shaft_start, end, capsule.a as Vector3, capsule.b as Vector3) - float(capsule.radius))
+	return minimum
+
+func _pole_side_sign(side: StringName, pivot: Vector3, lateral: Vector3, pelvis: Vector3 = Vector3.INF) -> float:
+	var pelvis_position := _bone_world(&"pelvis").origin if not pelvis.is_finite() else pelvis
+	var hand_lateral := (pivot - pelvis_position).dot(lateral)
+	# Do not let sub-centimeter IK motion flip the pole's presentation side on
+	# consecutive frames while a hand crosses the skier's centerline.
+	if absf(hand_lateral) <= 0.025:
+		return -1.0 if side == &"left" else 1.0
+	return signf(hand_lateral)
+
+func _safest_pole_direction(pivot: Vector3, preferred: Vector3, side_sign: float, down: Vector3, forward: Vector3, lateral: Vector3) -> Vector3:
+	var best_direction := preferred.normalized()
+	var best_score := -INF
+	var lateral_strengths: Array[float] = [0.72, 1.0, 1.35, 1.75, 2.2]
+	var downward_strengths: Array[float] = [0.10, 0.25, 0.5, 0.75, 1.0]
+	var forward_strengths: Array[float] = [-6.0, -5.0, -4.0, -3.0, -2.0, -1.2, -0.65, -0.30, 0.0, 0.30, 0.65, 1.2, 2.0, 3.0, 4.0, 5.0, 6.0]
+	for lateral_strength: float in lateral_strengths:
+		for downward_strength: float in downward_strengths:
+			for forward_strength: float in forward_strengths:
+				var candidate := (lateral * side_sign * lateral_strength + down * downward_strength + forward * forward_strength).normalized()
+				var outward_alignment := candidate.dot(lateral) * side_sign
+				var downward_alignment := candidate.dot(down)
+				if outward_alignment < 0.12 or downward_alignment < 0.12:
+					continue
+				var candidate_tip := pivot + candidate * POLE_SHAFT_LENGTH
+				var body_clearance := _minimum_pole_body_clearance(pivot, candidate_tip)
+				var knee_clearance := _minimum_pole_knee_clearance(pivot, candidate_tip)
+				# Body clearance dominates. The remaining terms choose a downhill,
+				# outward, pose-adjacent result among similarly safe candidates.
+				var score := body_clearance * 8.0 + minf(knee_clearance, 0.25) * 0.7 + downward_alignment * 0.08 + outward_alignment * 0.04 + candidate.dot(preferred) * 0.04
+				if knee_clearance < MIN_POLE_KNEE_CLEARANCE:
+					score -= (MIN_POLE_KNEE_CLEARANCE - knee_clearance) * 12.0
+				if body_clearance < MIN_POLE_BODY_CLEARANCE:
+					score -= (MIN_POLE_BODY_CLEARANCE - body_clearance) * 24.0
+				if score > best_score:
+					best_score = score
+					best_direction = candidate
+	return best_direction
+
+func _segment_to_segment_distance(start_a: Vector3, end_a: Vector3, start_b: Vector3, end_b: Vector3) -> float:
+	var direction_a := end_a - start_a
+	var direction_b := end_b - start_b
+	var offset := start_a - start_b
+	var length_a := direction_a.length_squared()
+	var length_b := direction_b.length_squared()
+	var direction_b_offset := direction_b.dot(offset)
+	var parameter_a := 0.0
+	var parameter_b := 0.0
+	if length_a <= 0.000001 and length_b <= 0.000001:
+		return start_a.distance_to(start_b)
+	if length_a <= 0.000001:
+		parameter_b = clampf(direction_b_offset / length_b, 0.0, 1.0)
+	else:
+		var direction_a_offset := direction_a.dot(offset)
+		if length_b <= 0.000001:
+			parameter_a = clampf(-direction_a_offset / length_a, 0.0, 1.0)
+		else:
+			var directions_dot := direction_a.dot(direction_b)
+			var denominator := length_a * length_b - directions_dot * directions_dot
+			if not is_zero_approx(denominator):
+				parameter_a = clampf((directions_dot * direction_b_offset - direction_a_offset * length_b) / denominator, 0.0, 1.0)
+			var projected_b := directions_dot * parameter_a + direction_b_offset
+			if projected_b < 0.0:
+				parameter_b = 0.0
+				parameter_a = clampf(-direction_a_offset / length_a, 0.0, 1.0)
+			elif projected_b > length_b:
+				parameter_b = 1.0
+				parameter_a = clampf((directions_dot - direction_a_offset) / length_a, 0.0, 1.0)
+			else:
+				parameter_b = projected_b / length_b
+	return (start_a + direction_a * parameter_a).distance_to(start_b + direction_b * parameter_b)
 
 func _point_to_segment_distance(point: Vector3, start: Vector3, end: Vector3) -> float:
 	var segment := end - start

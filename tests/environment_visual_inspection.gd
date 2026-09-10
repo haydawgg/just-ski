@@ -5,6 +5,7 @@ const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 const OutputPathGuard := preload("res://util/output_path_guard.gd")
 const VisualEvidence := preload("res://tests/visual_evidence.gd")
 const MOTION_BEHAVIORS := ["carve", "straight", "landing"]
+const STARTUP_CHARACTER_MIN_PIXELS := 100
 
 const CAPTURE_FILENAMES: Array[String] = [
 	"gameplay_carve.png",
@@ -281,13 +282,37 @@ func _capture_motion_frame(motion_frame: int, capture_slot: int) -> void:
 	if _finish_started or RuntimeEnvironment.is_headless():
 		capture_failed = true
 		return
-	RenderingServer.force_draw(true)
+	if motion_frame == 0:
+		# The first forced draw can precede the renderer's initial camera sync and
+		# read back the construction pose at the world origin. The first completed
+		# render frame is the earliest frame a player can actually see.
+		await RenderingServer.frame_post_draw
+	else:
+		RenderingServer.force_draw(true)
 	var viewport_texture := get_viewport().get_texture()
 	var image := viewport_texture.get_image() if viewport_texture != null else null
 	if image == null or image.is_empty():
 		capture_failed = true
 		return
 	image.resize(1280, 720, Image.INTERPOLATE_BILINEAR)
+	if motion_frame == 0:
+		var startup_character_pixels := _count_startup_character_pixels(image)
+		var startup_character_visible := startup_character_pixels >= STARTUP_CHARACTER_MIN_PIXELS
+		if evidence != null:
+			evidence.record_check(
+				"environment.motion.startup_character_visible",
+				"visual",
+				"pass" if startup_character_visible else "fail",
+				startup_character_pixels,
+				STARTUP_CHARACTER_MIN_PIXELS,
+				"Warm jacket pixels inside the expected center-frame character region"
+			)
+		if not startup_character_visible:
+			capture_failed = true
+			push_error(
+				"ENVIRONMENT_VISUAL_CAPTURE_FAIL: startup frame omitted the skier (%d warm character pixels, expected at least %d)"
+				% [startup_character_pixels, STARTUP_CHARACTER_MIN_PIXELS]
+			)
 	var filename := "motion_%02d_f%04d.png" % [capture_slot, motion_frame]
 	var metadata := {
 		"artifact_filename": filename,
@@ -299,6 +324,21 @@ func _capture_motion_frame(motion_frame: int, capture_slot: int) -> void:
 	}
 	if evidence == null or evidence.capture_image(motion_scenario_id, "motion_frame_%02d" % capture_slot, image, metadata).is_empty():
 		capture_failed = true
+
+func _count_startup_character_pixels(image: Image) -> int:
+	if image == null or image.is_empty():
+		return 0
+	var character_pixels := 0
+	var minimum_x := int(image.get_width() * 0.40)
+	var maximum_x := int(image.get_width() * 0.60)
+	var minimum_y := int(image.get_height() * 0.25)
+	var maximum_y := int(image.get_height() * 0.72)
+	for y: int in range(minimum_y, maximum_y, 2):
+		for x: int in range(minimum_x, maximum_x, 2):
+			var color := image.get_pixel(x, y)
+			if color.r > 0.58 and color.r > color.g * 1.15 and color.g > color.b * 1.05:
+				character_pixels += 1
+	return character_pixels
 
 func _finish_motion_capture() -> void:
 	if _finish_started:

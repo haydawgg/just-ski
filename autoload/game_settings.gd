@@ -81,14 +81,25 @@ static func graphics_preset_allows_gi(preset: int) -> bool:
 	# and Custom may use GI when the environment profile and user setting allow it.
 	return clampi(preset, 0, 4) >= 2
 
-func apply_pending() -> Error:
+func apply_pending(persist: bool = true) -> Error:
 	active = _validated_settings(pending)
 	pending = active.duplicate(true)
 	_apply_display()
 	_apply_audio()
-	var save_error := save_settings(CONFIG_PATH, false)
+	var save_error := save_settings(CONFIG_PATH, false) if persist else OK
 	if save_error != OK:
 		push_warning("GAME_SETTINGS_SAVE_WARNING: Active settings were applied but could not be persisted (%s)" % error_string(save_error))
+	settings_applied.emit()
+	return save_error
+
+func restore_settings(settings: Dictionary, persist: bool = true) -> Error:
+	active = _validated_settings(settings)
+	pending = active.duplicate(true)
+	_apply_display()
+	_apply_audio()
+	var save_error := save_settings(CONFIG_PATH, false) if persist else OK
+	if save_error != OK:
+		push_warning("GAME_SETTINGS_SAVE_WARNING: Restored settings were applied but could not be persisted (%s)" % error_string(save_error))
 	settings_applied.emit()
 	return save_error
 

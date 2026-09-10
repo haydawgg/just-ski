@@ -207,6 +207,7 @@ $sceneShards = [ordered]@{
 		"res://tests/animation_polish_acceptance.tscn",
 		"res://tests/animation_transition_regression_acceptance.tscn",
 		"res://tests/animation_presentation_quality_acceptance.tscn",
+		"res://tests/equipment_collision_acceptance.tscn",
 		"res://tests/crash_recovery_acceptance.tscn"
 	)
 	"tricks-gameplay" = @(
@@ -234,7 +235,11 @@ $sceneShards = [ordered]@{
 		"res://tests/settings_acceptance.tscn",
 		"res://tests/input_manager_acceptance.tscn",
 		"res://tests/skier_input_frame_acceptance.tscn",
-		"res://tests/solver_layer_interface_acceptance.tscn",
+		"res://tests/solver_motion_interface_acceptance.tscn",
+		"res://tests/solver_animation_interface_acceptance.tscn",
+		"res://tests/solver_camera_interface_acceptance.tscn",
+		"res://tests/solver_grab_contract_acceptance.tscn",
+		"res://tests/solver_landing_contract_acceptance.tscn",
 		"res://tests/mp4_encoder_acceptance.tscn",
 		"res://tests/visual_evidence_acceptance.tscn"
 	)
@@ -266,6 +271,7 @@ $shardLabel = if ([string]::IsNullOrWhiteSpace($Shard)) { "all" } else { $Shard 
 Write-Output "RUNTIME_SHARD name=$shardLabel scenes=$($scenes.Count)"
 
 $failures = [System.Collections.Generic.List[string]]::new()
+$sceneErrorPattern = '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
 foreach ($scene in $scenes) {
 	Write-Output "===== $scene ====="
 	$safeName = ($scene -replace '^res://', '') -replace '[^A-Za-z0-9_-]', '_'
@@ -278,7 +284,7 @@ foreach ($scene in $scenes) {
 	$output = [string]$result.Output
 	Write-Output $output.TrimEnd()
 	$sceneDuration = $sceneTimer.Elapsed.TotalSeconds.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture)
-	$sceneHasError = $output -match '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
+	$sceneHasError = $output -match $sceneErrorPattern
 	if ($exitCode -ne 0) {
 		$failures.Add("$scene exited with code $exitCode; logs: $stdoutPath, $stderrPath")
 	}

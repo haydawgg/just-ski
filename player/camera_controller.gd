@@ -141,6 +141,10 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export var landing_yaw_scale := 0.8
 @export var landing_look_ahead := 6.0
 @export var rail_distance_delta := -0.1
+## A shallow orbit reveals the depth-staggered legs in a boardslide while
+## keeping the rail and route ahead visible. 50-50 grinds remain centered.
+@export var rail_boardslide_orbit_offset := 1.2
+@export var rail_boardslide_orbit_response := 4.5
 @export var crash_distance_delta := 0.8
 @export var crash_height_delta := 0.3
 @export var crash_fov_delta := -2.0
@@ -162,6 +166,7 @@ var _smoothed_speed_distance := 0.0
 var _smoothed_speed_height := 0.0
 var _smoothed_look_ahead := look_ahead_min
 var _smoothed_carve_look_ahead_offset := Vector3.ZERO
+var _smoothed_rail_orbit_offset := 0.0
 var _trajectory_dir := Vector3.FORWARD
 var _air_time := 0.0
 var _landing_timer := 0.0
@@ -389,7 +394,9 @@ func reset_immediate() -> void:
 	var horizontal := (forward - up * forward.dot(up))
 	_yaw_dir = horizontal.normalized() if horizontal.length_squared() > 0.001 else Vector3.FORWARD
 	_pitch = atan2(-forward.dot(up), maxf(forward.dot(_yaw_dir), 0.0001))
-	global_position = target.global_position - _yaw_dir * follow_distance + up * follow_height
+	_smoothed_rail_orbit_offset = _rail_orbit_target(skier)
+	var reset_right := _yaw_dir.cross(up).normalized()
+	global_position = target.global_position - _yaw_dir * follow_distance + up * follow_height + reset_right * _smoothed_rail_orbit_offset
 	_last_stable_camera_offset = global_position - target.global_position
 	_desired_camera_position = global_position
 	_debug_horizontal_velocity = target.velocity.slide(up)
@@ -584,7 +591,14 @@ func _physics_process(delta: float) -> void:
 	_smoothed_speed_height = lerpf(_smoothed_speed_height, speed_height_target, 1.0 - exp(-speed_height_response * delta))
 	var distance := follow_distance + _smoothed_speed_distance + _profile_distance
 	var desired_height := follow_height + _smoothed_speed_height + _smoothed_air_height + _profile_height
-	var desired := framing_target - travel * distance + up * desired_height
+	var rail_orbit_target := _rail_orbit_target(skier)
+	_smoothed_rail_orbit_offset = lerpf(
+		_smoothed_rail_orbit_offset,
+		rail_orbit_target,
+		1.0 - exp(-rail_boardslide_orbit_response * delta)
+	)
+	var travel_right := travel.cross(up).normalized()
+	var desired := framing_target - travel * distance + up * desired_height + travel_right * _smoothed_rail_orbit_offset
 	_desired_camera_position = desired
 	if camera_state in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]:
 		desired += _composition_recovery_bias
@@ -1412,8 +1426,14 @@ func debug_snapshot() -> Dictionary:
 		"fov_rate": _last_fov_rate,
 		"speed_distance_offset": _smoothed_speed_distance,
 		"carve_look_ahead_offset": _smoothed_carve_look_ahead_offset,
+		"rail_orbit_offset": _smoothed_rail_orbit_offset,
 		"hockey_heading_hold_active": _ground_heading_hold_timer > 0.0,
 	}
+
+func _rail_orbit_target(skier: SkierController) -> float:
+	if skier == null or skier.state != SkierController.State.GRIND or skier.rail_pose == 0:
+		return 0.0
+	return signf(float(skier.rail_pose)) * rail_boardslide_orbit_offset
 
 func _slerp_direction(from: Vector3, to: Vector3, weight: float) -> Vector3:
 	if from.length_squared() < 0.0001 or to.length_squared() < 0.0001:

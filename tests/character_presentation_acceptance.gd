@@ -29,7 +29,9 @@ func _ready() -> void:
 	_check(adapter != null, "Production visual did not select SkeletonSkierRig")
 	if adapter != null:
 		_check(adapter.outfit_profile != null, "Production rig has no data-driven outfit profile")
+		_check_outfit_contrast(adapter.outfit_profile)
 		_check_body_regions(adapter)
+		_check_clothing_volume(adapter)
 		_check_tailored_hem(adapter)
 		_check_rigid_parts(adapter)
 		_print_inventory(adapter)
@@ -84,6 +86,11 @@ func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 		_check(found.has(region), "Missing explicit skinned region " + region)
 	for shell_region: String in REQUIRED_CLOTHING_SHELLS:
 		_check(int(region_counts.get(shell_region, 0)) >= 2, "Clothing shell surface missing over " + shell_region)
+		if found.has(shell_region):
+			var cloth_surface := found[shell_region] as StandardMaterial3D
+			_check(cloth_surface.albedo_texture != null, shell_region + " has no authored cloth texture")
+			_check(cloth_surface.uv1_triplanar and not cloth_surface.uv1_world_triplanar,
+				shell_region + " must use stable local triplanar cloth projection")
 	if found.has("Outfit_Jacket") and found.has("Outfit_Pants"):
 		var jacket := (found["Outfit_Jacket"] as StandardMaterial3D).albedo_color
 		var pants := (found["Outfit_Pants"] as StandardMaterial3D).albedo_color
@@ -99,6 +106,49 @@ func _check_body_regions(adapter: SkeletonSkierRig) -> void:
 		_check(jacket_surface.roughness > skin_surface.roughness, "Cloth and skin no longer have distinct authored roughness")
 		_check(boot_surface.metallic > jacket_surface.metallic, "Boot underlay no longer has a distinct hardgoods response")
 		_check(jacket_surface.metallic_specular < boot_surface.metallic_specular, "Cloth and hardgoods no longer have distinct specular response")
+
+func _check_outfit_contrast(outfit: SkierOutfitProfile) -> void:
+	if outfit == null:
+		return
+	var jacket := Vector3(outfit.jacket_color.r, outfit.jacket_color.g, outfit.jacket_color.b)
+	var panel := Vector3(outfit.jacket_panel_color.r, outfit.jacket_panel_color.g, outfit.jacket_panel_color.b)
+	var panel_distance := jacket.distance_to(panel)
+	_check(panel_distance >= 0.25, "Jacket panel color is too close to the base jacket to read at gameplay distance (%.3f)" % panel_distance)
+
+func _check_clothing_volume(adapter: SkeletonSkierRig) -> void:
+	var bounds_by_region: Dictionary = {}
+	for node: Node in adapter.body_root.find_children("*", "MeshInstance3D", true, false):
+		var instance := node as MeshInstance3D
+		if instance.skin == null and instance.skeleton.is_empty():
+			continue
+		for surface_index: int in instance.mesh.get_surface_count():
+			var surface := instance.get_surface_override_material(surface_index) as StandardMaterial3D
+			if surface == null or surface.resource_name not in ["Outfit_Jacket", "Outfit_Pants", "Outfit_Gloves"]:
+				continue
+			var arrays := instance.mesh.surface_get_arrays(surface_index)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			if vertices.is_empty():
+				continue
+			var bounds := AABB(vertices[0], Vector3.ZERO)
+			for vertex: Vector3 in vertices:
+				bounds = bounds.expand(vertex)
+			if not bounds_by_region.has(surface.resource_name):
+				bounds_by_region[surface.resource_name] = []
+			(bounds_by_region[surface.resource_name] as Array).append(bounds)
+	for region: String in ["Outfit_Jacket", "Outfit_Pants", "Outfit_Gloves"]:
+		var region_bounds := bounds_by_region.get(region, []) as Array
+		_check(region_bounds.size() >= 2, "%s is missing a separate clothing shell envelope" % region)
+		if region_bounds.size() < 2:
+			continue
+		var narrowest := INF
+		var widest := 0.0
+		for bounds: AABB in region_bounds:
+			narrowest = minf(narrowest, bounds.size.x)
+			widest = maxf(widest, bounds.size.x)
+		var width_gain := widest - narrowest
+		print("CHARACTER_CLOTHING_VOLUME %s width_gain=%.4f" % [region, width_gain])
+		var minimum_gain := 0.045 if region == "Outfit_Jacket" else (0.030 if region == "Outfit_Pants" else 0.008)
+		_check(width_gain >= minimum_gain, "%s shell is too close to the base anatomy to read as layered winter clothing (%.4fm)" % [region, width_gain])
 
 func _check_tailored_hem(adapter: SkeletonSkierRig) -> void:
 	# Inspect the actual imported mesh, not a duplicate of the tailoring math.

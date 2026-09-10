@@ -33,10 +33,14 @@ Processing is performed in this order:
 2. `tools/character/build_skier_clothing.py`
    - appends skinned clothing shells for the jacket, pants, and gloves regions;
    - duplicates the source triangles and offsets them along vertex normals;
-   - uses per-bone volume and geodesic border taper for the shell shape;
+   - uses per-bone insulated-garment volume and geodesic border taper for the
+     shell shape, with a padded jacket/seat and a controlled taper toward the
+     wrists and ski boots;
    - extends the jacket shell above the collar cut (`COLLAR_SKIRT_TOP_Y`)
      with a guaranteed minimum offset (`COLLAR_SKIRT_MIN_OFFSET`) so the
      shell overlaps the jacket/skin seam as a turtleneck lip;
+   - applies the project-owned neutral technical-ripstop albedo documented in
+     `assets/materials/skier_cloth/SOURCE.md` with local triplanar projection;
    - copies `JOINTS_0` and `WEIGHTS_0` directly so the added shells deform with the original body.
 
 The project file is therefore not a pristine byte-for-byte copy of the upstream GLB. The skeleton and skinning contract are preserved while the visible body is prepared for the prototype's outfit system.

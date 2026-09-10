@@ -624,6 +624,9 @@ func equipment_attachment_snapshot() -> Dictionary:
 		"pole_knee_clearance_m": minf(left_pole_clearance, right_pole_clearance),
 		"left_pole_outward_dot": pole_clearance.get("left_pole_outward_dot", 0.0),
 		"right_pole_outward_dot": pole_clearance.get("right_pole_outward_dot", 0.0),
+		"left_pole_body_clearance_m": pole_clearance.get("left_pole_body_clearance_m", INF),
+		"right_pole_body_clearance_m": pole_clearance.get("right_pole_body_clearance_m", INF),
+		"pole_body_clearance_m": pole_clearance.get("pole_body_clearance_m", INF),
 		"poles_outward": bool(pole_clearance.get("poles_outward", _poles_outward())),
 		"ski_separation_in_range": ski_separation >= 0.18 and ski_separation <= 2.5,
 		"poles_attached": left_pole_offset <= 1.6 and right_pole_offset <= 1.6,
@@ -839,8 +842,11 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 	var right_direction := right_boot_target.origin - right_hip.global_position
 	# Contact flexion stays in the skier's sagittal plane. A free-pose knee
 	# direction can reverse/twist the hinge as the landing pelvis drops past it.
-	var left_pole := global_basis.z
-	var right_pole := global_basis.z
+	var boardslide_knee_open := 0.0
+	if frame.locomotion_state == STATE_GRIND:
+		boardslide_knee_open = absf(_rail_slide_angle / maxf(profile.rail_slide_max_angle, 0.01)) * profile.rail_boardslide_knee_open
+	var left_pole := global_basis.z - global_basis.x * boardslide_knee_open
+	var right_pole := global_basis.z + global_basis.x * boardslide_knee_open
 	if left_direction.length_squared() > 0.0001:
 		left_pole = left_pole.slide(left_direction.normalized())
 	if right_direction.length_squared() > 0.0001:

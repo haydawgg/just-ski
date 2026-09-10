@@ -144,6 +144,30 @@ func _test_game_ui_teaching_surfaces() -> void:
 			break
 	if not settings_title_found:
 		failures.append("In-game settings panel is missing its Settings title")
+	var original_resolution := GameSettings.active["resolution"] as Vector2i
+	ui._open_options()
+	var staged_resolution := Vector2i(1280, 720) if original_resolution != Vector2i(1280, 720) else Vector2i(1600, 900)
+	GameSettings.set_pending("resolution", staged_resolution)
+	ui._apply_options()
+	if ui.display_confirmation_panel == null or not ui.display_confirmation_panel.visible:
+		failures.append("Risky display Apply did not open the timed confirmation panel")
+	if GameSettings.active["resolution"] != staged_resolution:
+		failures.append("Display confirmation did not preview the staged resolution")
+	var persisted_preview := ConfigFile.new()
+	if persisted_preview.load(GameSettings.CONFIG_PATH) == OK and persisted_preview.get_value("settings", "resolution", original_resolution) == staged_resolution:
+		failures.append("Unconfirmed display preview was persisted before the player kept it")
+	ui._revert_display_settings()
+	if GameSettings.active["resolution"] != original_resolution:
+		failures.append("Display confirmation Revert did not restore the previous resolution")
+	if not ui.pause_panel.visible:
+		failures.append("Display confirmation Revert did not return to the pause menu")
+	ui._open_options()
+	GameSettings.set_pending("resolution", staged_resolution)
+	ui._apply_options()
+	ui._display_confirmation_seconds = 0.01
+	ui._process(0.02)
+	if GameSettings.active["resolution"] != original_resolution or ui.display_confirmation_panel.visible:
+		failures.append("Display confirmation timeout did not automatically restore the previous resolution")
 	ui._set_menu_visible(ui.results_panel)
 	get_tree().paused = true
 	var cancel_event := InputEventAction.new()
