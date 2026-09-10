@@ -103,6 +103,9 @@ function Test-IgnoredGodotWindowsTeardownCrash {
 	# -1073741819) during process teardown after a solver-interface acceptance
 	# already printed its PASS marker. Assertions finished; do not fail the
 	# shard for that engine crash.
+	# (Merged with origin PR #57: that fix covered solver_layer acceptance,
+	# which 1df31b1 refactored into the five scenes below, so only the
+	# five live markers are kept.)
 	if ($SceneHasError) {
 		return $false
 	}
