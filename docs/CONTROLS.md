@@ -21,7 +21,7 @@ Summit Sessions is designed around a standard gamepad, with keyboard bindings ke
 | Debug overlay | — | F3 |
 | Debug run capture | — | F9 |
 
-The HUD changes prompt families based on the most recently used input device.
+The HUD changes prompt families based on the most recently used input device. `InputManager` also tracks an active connected controller for glyphs and rumble, but gameplay actions currently read Godot's aggregate InputMap state across connected pads. Multi-controller gameplay isolation and low-level stick-drift ownership are therefore still open issues; see [Known Issues](KNOWN_ISSUES.md) and [Controller Validation](CONTROLLER_VALIDATION.md).
 
 ## Left stick
 
@@ -102,7 +102,7 @@ Rails can be traversed in either direction when the spline and momentum allow it
 
 ## Session controls
 
-A marker can only be saved while grounded on valid snow contact. Returning to the marker uses the normal session respawn path, which clears transient crash, rail, landing, and motion state.
+The intended marker contract is grounded contact on valid snow, and every marker-entry path should use the same eligibility rule. The current implementation does not enforce that contract consistently: the gameplay hotkey can use stale/feature contact state and the pause-menu path is weaker. See [Known Issues](KNOWN_ISSUES.md) for the active defect. Returning to a marker uses the normal session respawn path, which clears transient crash, rail, landing, and motion state; retry-cost/accounting defects are also tracked there.
 
 The pause menu is controller navigable and includes an in-game trick guide.
 
@@ -129,4 +129,4 @@ Capture format:
 - saved as `ski_clip_<timestamp>.mp4`
 - Downloads folder when available, otherwise the Godot user-data directory
 
-The recorder will not start a new capture while the previous clip is still being encoded. Browser/Discord compatibility, H.264 output, platform-native codecs, and synchronized audio muxing are outside the current release contract; see `docs/CLIP_CAPTURE.md`.
+The recorder will not start a new capture while the previous clip is still being encoded. Under heavy JPEG-worker back-pressure, the current minimum-duration check can incorrectly reject a capture as too short because it counts encoded frames before timeline expansion; see [Known Issues](KNOWN_ISSUES.md). Browser/Discord compatibility, H.264 output, platform-native codecs, and synchronized audio muxing are outside the current release contract; see [Clip Capture](CLIP_CAPTURE.md).

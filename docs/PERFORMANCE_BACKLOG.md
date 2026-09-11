@@ -1,14 +1,20 @@
 # Performance backlog
 
-This file is the active performance worklist for Summit Sessions. The reproducible measurement contract and recorded results live in [Performance Baseline 1080p](PERFORMANCE_BASELINE_1080P.md).
+This file is the active performance worklist for Summit Sessions. The reproducible measurement contract and retained reference measurements live in [Performance Baseline 1080p](PERFORMANCE_BASELINE_1080P.md).
 
 ## Current contract
 
 - Target output: 1920×1080 at 60 FPS where the selected hardware tier is expected to support it.
-- Medium has met the recorded 16.67 ms p95 target on the locally tested Intel UHD adapter at 0.65 render scale for daytime and sunset scenarios.
+- The retained September 2 evidence showed Medium below the 16.67 ms p95 target on the locally tested Intel UHD adapter at 0.65 render scale for daytime and sunset scenarios, but that capture came from an older dirty source state and is not a current-master benchmark.
 - High should be validated on representative discrete-GPU release hardware at 1.0 render scale.
 - Ultra is best-effort rather than a release baseline.
 - Performance changes must be measured against the maintained deterministic scenario matrix. Do not infer wins from source size, object count, or FPS alone.
+
+## P0 — refresh the clean reference
+
+- [ ] Record a clean-tree 1080p baseline from current `master` on the established reference host before using the September 2 evidence as a regression gate for later work.
+- [ ] Preserve the exact commit, dirty state, OS, CPU, GPU, driver, Godot version, preset, render scale, snow tier, and effective GI state with the machine-readable output.
+- [ ] Keep old machine-readable captures only as dated evidence; do not rename them to imply they represent the current tree.
 
 ## P0 — release-hardware validation
 
@@ -77,7 +83,7 @@ Every performance change affecting runtime rendering, world construction, VFX, m
 
 ## Related documents
 
-- [Performance Baseline 1080p](PERFORMANCE_BASELINE_1080P.md) — reproducible measurements and scenario contract.
+- [Performance Baseline 1080p](PERFORMANCE_BASELINE_1080P.md) — measurement contract and dated reference evidence.
 - [Known Issues](KNOWN_ISSUES.md) — unresolved production/performance validation items.
 - [Content Design](CONTENT_DESIGN_PLAN.md) — active course/content work; recheck performance as course density changes.
 - [Graphics](GRAPHICS.md) — renderer/settings architecture and visual validation boundary.
