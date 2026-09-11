@@ -9,7 +9,3 @@ This file tracks concrete, actionable bugs and missing functionality. Resolved i
 ## Ski and pole IK
 
 - **Equipment collision coverage is not yet universal.** Pole shafts now clear torso/leg envelopes and each other (grab-aware), grounded pole tips are floor-bounded, boot targets are stance-separated, ski nose/tail pairs hold span, crash equipment is constrained, swept visual ski segments stop at solid park features, blocked AIR pole shafts retract preview IK, and pole strikes on solid features (plus steep snow faces far from touchdown) bail through the crash evaluator with grab, landing-window, and speed exemptions. There is still no general solver for arbitrary combinations of equipment and body geometry.
-
-## Graphics and performance
-
-- **HDR output is not exposed in the menu.** The current settings cover render scale, upscaling (Bilinear/FSR 1.0/FSR 2.2) with sharpness, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, reflection quality, fog, display mode, resolution with timed Keep/Revert confirmation, VSync, FPS cap, and a profile-gated GI toggle. HDR output remains unimplemented: it needs an HDR-capable tonemapper (Filmic/ACES are SDR-only), the `request_hdr_output` chain, and platform capability gates.

@@ -16,6 +16,7 @@ const RENDERER_SETTING_KEYS := [
 	"ssil_enabled",
 	"ssr_enabled",
 	"reflection_quality",
+	"hdr_output",
 	"fog_enabled",
 	"gi_enabled",
 ]
@@ -35,6 +36,7 @@ const DEFAULTS := {
 	"ssil_enabled": false,
 	"ssr_enabled": true,
 	"reflection_quality": 2,
+	"hdr_output": false,
 	"fog_enabled": true,
 	"gi_enabled": true,
 	"environment_preset": 0,
@@ -128,6 +130,9 @@ func apply_preset(preset: int) -> void:
 	pending["ssil_enabled"] = selected_preset >= 3
 	pending["ssr_enabled"] = selected_preset >= 2
 	pending["reflection_quality"] = 0 if selected_preset == 0 else (1 if selected_preset == 1 else 2)
+	# HDR output stays opt-in on every tier: it needs a capable display and
+	# can blank the output on mode switch, so presets never enable it.
+	pending["hdr_output"] = false
 	pending["fog_enabled"] = selected_preset >= 1
 	pending["gi_enabled"] = graphics_preset_allows_gi(selected_preset)
 
@@ -163,7 +168,7 @@ func _validated(key: String, value: Variant) -> Variant:
 		"stick_deadzone": return _validated_float(key, value, 0.0, 0.45)
 		"stick_outer_deadzone": return _validated_float(key, value, 0.0, 0.25)
 		"stick_response": return _validated_float(key, value, 0.5, 3.0)
-		"ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled", "gi_enabled", "units_mph", "trick_visualizer_enabled":
+		"ssao_enabled", "ssil_enabled", "ssr_enabled", "fog_enabled", "gi_enabled", "units_mph", "trick_visualizer_enabled", "hdr_output":
 			return value if typeof(value) == TYPE_BOOL else DEFAULTS[key]
 		"resolution":
 			if typeof(value) != TYPE_VECTOR2I:
@@ -212,6 +217,14 @@ func _apply_display() -> void:
 	get_viewport().scaling_3d_mode = scaling_mode
 	get_viewport().fsr_sharpness = float(active["fsr_sharpness"])
 	get_viewport().use_taa = int(active["anti_aliasing"]) > 0 and scaling_mode != Viewport.SCALING_3D_MODE_FSR2
+	# HDR output request plus the 16F 2D pipeline it grades through. The
+	# window request warns and no-ops on headless/dummy displays, so it only
+	# runs where a real display server exists; the 2D pipeline flag is
+	# harmless everywhere and stays unconditional for consistent captures.
+	var hdr_enabled := bool(active["hdr_output"])
+	if not RuntimeEnvironment.is_headless():
+		get_window().hdr_output_requested = hdr_enabled
+	get_viewport().use_hdr_2d = hdr_enabled
 
 func _apply_audio() -> void:
 	for bus_name: String in ["Master", "Music", "SFX"]:

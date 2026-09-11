@@ -1023,6 +1023,7 @@ func _apply_graphics_settings() -> void:
 	env.sdfgi_enabled = effective_gi_enabled()
 	_apply_shadow_quality(int(GameSettings.active.get("shadow_quality", 2)))
 	_apply_reflection_quality(int(GameSettings.active.get("reflection_quality", 2)))
+	_apply_hdr_presentation()
 
 static func resolve_effective_gi(profile: ResortEnvironmentProfile, user_enabled: bool, graphics_preset: int) -> bool:
 	return profile != null and profile.gi_enabled and user_enabled and GameSettings.graphics_preset_allows_gi(graphics_preset)
@@ -1072,3 +1073,19 @@ func _apply_reflection_quality(level: int) -> void:
 	if player_probe != null:
 		player_probe.intensity = [0.4, 0.5, PLAYER_PROBE_INTENSITY][quality]
 		player_probe.max_distance = [30.0, 40.0, PLAYER_PROBE_MAX_DISTANCE][quality]
+
+func _apply_hdr_presentation() -> void:
+	# Filmic and ACES are SDR-only curves: on an HDR output they ignore the
+	# display peak and crush highlights. AgX grades through the peak instead,
+	# so it follows the output request. Everything else (exposure, glow,
+	# adjustment) stays profile-owned; unsupported displays fall back to SDR
+	# output while the scene still grades legally.
+	if environment == null or environment.environment == null:
+		return
+	if effective_hdr_enabled():
+		environment.environment.tonemap_mode = Environment.TONE_MAPPER_AGX
+	else:
+		environment.environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+
+func effective_hdr_enabled() -> bool:
+	return bool(GameSettings.active.get("hdr_output", false)) and not RuntimeEnvironment.is_headless()

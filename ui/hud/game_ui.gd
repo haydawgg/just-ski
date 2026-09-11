@@ -517,6 +517,11 @@ func _build_options_menu() -> void:
 	fps_cap.suffix = " fps (0 = unlimited)"
 	display_tab.add_child(_row("Frame-rate cap", fps_cap))
 	fps_cap.value_changed.connect(func(value: float) -> void: GameSettings.set_pending("fps_cap", int(value)))
+	var hdr_output := CheckButton.new()
+	hdr_output.name = "HDROutput"
+	hdr_output.text = "Enabled"
+	display_tab.add_child(_row("HDR output", hdr_output))
+	hdr_output.toggled.connect(func(value: bool) -> void: GameSettings.set_pending("hdr_output", value))
 
 	var graphics_tab := VBoxContainer.new()
 	graphics_tab.name = "Graphics"
@@ -983,6 +988,7 @@ func _sync_options() -> void:
 			break
 	(options_panel.find_child("VSync", true, false) as OptionButton).select(clampi(int(GameSettings.pending["vsync_mode"]), 0, 2))
 	(options_panel.find_child("FPSCap", true, false) as SpinBox).set_value_no_signal(float(GameSettings.pending["fps_cap"]))
+	(options_panel.find_child("HDROutput", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["hdr_output"]))
 	(options_panel.find_child("Preset", true, false) as OptionButton).select(int(GameSettings.pending["graphics_preset"]))
 	(options_panel.find_child("EnvironmentPreset", true, false) as OptionButton).select(clampi(int(GameSettings.pending["environment_preset"]), 0, 2))
 	(options_panel.find_child("RenderScale", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["render_scale"]))
@@ -1021,6 +1027,7 @@ func _apply_options() -> void:
 	var display_changed: bool = (
 		int(GameSettings.pending["display_mode"]) != int(GameSettings.active["display_mode"])
 		or GameSettings.pending["resolution"] != GameSettings.active["resolution"]
+		or bool(GameSettings.pending["hdr_output"]) != bool(GameSettings.active["hdr_output"])
 	)
 	if display_changed:
 		_display_rollback = previous

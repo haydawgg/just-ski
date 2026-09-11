@@ -48,11 +48,18 @@ func _ready() -> void:
 	GameSettings.set_pending("scaling_mode", 2)
 	GameSettings.set_pending("fsr_sharpness", 0.6)
 	GameSettings.set_pending("reflection_quality", 1)
+	GameSettings.set_pending("hdr_output", true)
 	GameSettings.apply_pending()
 	_check(int(get_viewport().scaling_3d_mode) == 2, "Apply did not promote the upscaling mode")
 	_check(is_equal_approx(get_viewport().fsr_sharpness, 0.6), "Apply did not promote FSR sharpness")
 	_check(not get_viewport().use_taa, "FSR2 did not take over temporal anti-aliasing")
 	_check(int(GameSettings.active["reflection_quality"]) == 1, "Apply did not promote reflection quality")
+	_check(bool(GameSettings.active["hdr_output"]), "Apply did not promote HDR output")
+	_check(get_viewport().use_hdr_2d, "Apply did not enable the HDR 2D pipeline")
+	# The window request only runs on real displays; headless/dummy servers
+	# warn and ignore it, so the readback is asserted there only.
+	if not RuntimeEnvironment.is_headless():
+		_check(get_window().hdr_output_requested, "Apply did not request HDR output on the window")
 
 	GameSettings.active = {}
 	GameSettings.pending = {}
@@ -65,6 +72,7 @@ func _ready() -> void:
 	_check(int(GameSettings.active["scaling_mode"]) == 2, "Saved upscaling mode did not survive reload")
 	_check(is_equal_approx(float(GameSettings.active["fsr_sharpness"]), 0.6), "Saved FSR sharpness did not survive reload")
 	_check(int(GameSettings.active["reflection_quality"]) == 1, "Saved reflection quality did not survive reload")
+	_check(bool(GameSettings.active["hdr_output"]), "Saved HDR output did not survive reload")
 
 	GameSettings.pending = original.duplicate(true)
 	GameSettings.apply_pending()
@@ -84,6 +92,7 @@ func _test_validation_schema() -> void:
 	_check(GameSettings._validated("resolution", Vector2i(1, 99999)) == Vector2i(960, 4320), "Resolution did not clamp each axis to the safe range")
 	_check(GameSettings._validated("ssao_enabled", "true") == GameSettings.DEFAULTS["ssao_enabled"], "Malformed boolean did not fall back to its default")
 	_check(GameSettings._validated("gi_enabled", "true") == GameSettings.DEFAULTS["gi_enabled"], "Malformed GI boolean did not fall back to its default")
+	_check(GameSettings._validated("hdr_output", "true") == GameSettings.DEFAULTS["hdr_output"], "Malformed HDR boolean did not fall back to its default")
 	_check(GameSettings._validated("environment_preset", -1) == 0, "Time of day did not clamp to Day")
 	_check(GameSettings._validated("environment_preset", 99) == 2, "Time of day did not clamp to Sunset")
 	_check(GameSettings._validated("display_mode", "fullscreen") == GameSettings.DEFAULTS["display_mode"], "Malformed integer did not fall back to its default")
