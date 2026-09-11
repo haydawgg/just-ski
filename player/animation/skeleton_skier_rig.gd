@@ -236,6 +236,21 @@ func grab_reach_error(side: StringName) -> float:
 func grab_target_world(side: StringName) -> Vector3:
 	return _grab_target_world.get(side, Vector3.ZERO) as Vector3
 
+func pole_shaft_segments() -> Dictionary:
+	if skeleton == null:
+		return {}
+	var segments := {}
+	for side: StringName in [&"left", &"right"]:
+		var pivot := equipment_nodes.get(StringName(side + "_pole")) as Node3D
+		var tip := equipment_tips.get(side) as Node3D
+		if pivot == null or tip == null:
+			continue
+		segments[side] = {
+			"start": pivot.global_position.lerp(tip.global_position, POLE_HAND_EXCLUSION_RATIO),
+			"end": tip.global_position,
+		}
+	return segments
+
 func grab_debug_snapshot() -> Dictionary:
 	var left_shoulder_transform := _bone_world(&"left_shoulder") if skeleton != null else Transform3D.IDENTITY
 	var left_elbow_transform := _bone_world(&"left_elbow") if skeleton != null else Transform3D.IDENTITY

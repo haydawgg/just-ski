@@ -11,6 +11,8 @@ func _ready() -> void:
 	_check_pole_body_and_snow_clearance()
 	_check_ski_span_separation()
 	await _check_airborne_pole_obstruction()
+	await _check_airborne_pole_feature_crash()
+	await _check_airborne_pole_crash_exemptions()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
 		print("EQUIPMENT_COLLISION_PASS: visual skis stop at solid features, pole shafts clear the body and snow envelopes, and ski nose/tail pairs hold separation")
@@ -194,6 +196,160 @@ func _check_airborne_pole_obstruction() -> void:
 		failures.append("AIR preview ignored a solid feature on the pole shaft (%.3f)" % blocked_scale)
 	_remove_now(obstacle)
 	_remove_now(rig)
+
+func _check_airborne_pole_feature_crash() -> void:
+	# A pole spearing a solid feature mid-flight at speed must bail through
+	# the existing crash path, tagged as pole equipment.
+	var skier := SkierController.new()
+	skier.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(skier)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(0.0, 0.0, -12.0))
+	skier.predicted_landing_time = -1.0
+	await get_tree().process_frame
+	var segments := skier.animation_controller.rig_adapter.pole_shaft_segments()
+	if segments.is_empty() or not (segments.has(&"left") or segments.has(&"right")):
+		failures.append("Production rig did not expose pole shaft segments")
+		_remove_now(skier)
+		return
+	var side := &"left" if segments.has(&"left") else &"right"
+	var segment := segments[side] as Dictionary
+	var midpoint := ((segment.start as Vector3) + (segment.end as Vector3)) * 0.5
+	var obstacle := _feature_fixture(midpoint + Vector3(0.0, 0.0, -0.24))
+	await get_tree().physics_frame
+	var speed_before := skier.velocity.length()
+	var result := skier.resolve_airborne_pole_feature_sweep(STEP, skier.velocity) as Dictionary
+	if not bool(result.get("hit", false)):
+		failures.append("Airborne pole sweep missed a solid feature on the shaft path")
+	if float(result.get("safe_fraction", 1.0)) >= 0.99:
+		failures.append("Airborne pole sweep did not limit travel before overlap")
+	if skier.state != SkierController.State.BAIL:
+		failures.append("Airborne pole impact did not enter the existing bail path")
+	if skier.velocity.length() >= speed_before * 0.9:
+		failures.append("Airborne pole impact retained enough speed to penetrate on the same tick")
+	if skier.last_collision_diagnostics.is_empty():
+		failures.append("Airborne pole impact emitted no collision diagnostic")
+	else:
+		var diagnostic := skier.last_collision_diagnostics.back() as Dictionary
+		if str(diagnostic.get("equipment_kind", "")) != "pole":
+			failures.append("Airborne pole impact diagnostic was not tagged as pole equipment")
+	_remove_now(obstacle)
+	_remove_now(skier)
+
+func _check_airborne_pole_crash_exemptions() -> void:
+	# Below-threshold speed, held grabs, and the landing window must never
+	# convert a pole/feature overlap into a bail.
+	var slow := SkierController.new()
+	slow.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(slow)
+	slow.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(0.0, 0.0, -5.5))
+	slow.predicted_landing_time = -1.0
+	await get_tree().process_frame
+	var slow_segments := slow.animation_controller.rig_adapter.pole_shaft_segments()
+	if not slow_segments.is_empty():
+		var slow_side := &"left" if slow_segments.has(&"left") else &"right"
+		var slow_segment := slow_segments[slow_side] as Dictionary
+		# Anchor the fixture to the pole TIP along the travel direction: the
+		# tip cap is equidistant by construction for any shaft orientation,
+		# unlike a midpoint offset when poles splay sideways. A sphere has no
+		# corners, so the margin window stays valid at any travel length.
+		var slow_tip := slow_segment.end as Vector3
+		var slow_travel := slow.velocity.length() * STEP
+		var slow_obstacle := _sphere_fixture(slow_tip + Vector3(0.0, 0.0, -1.0) * (0.165 + slow_travel * 0.5), 0.09)
+		await get_tree().physics_frame
+		var slow_result := slow.resolve_airborne_pole_feature_sweep(STEP, slow.velocity) as Dictionary
+		if not bool(slow_result.get("hit", false)):
+			failures.append("Low-speed pole overlap did not register a sweep hit")
+		if slow.state == SkierController.State.BAIL:
+			failures.append("Low-speed pole overlap incorrectly entered the bail path")
+		_remove_now(slow_obstacle)
+	_remove_now(slow)
+	var landing := SkierController.new()
+	landing.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(landing)
+	landing.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(0.0, 0.0, -12.0))
+	landing.predicted_landing_time = 0.1
+	await get_tree().process_frame
+	var landing_segments := landing.animation_controller.rig_adapter.pole_shaft_segments()
+	if not landing_segments.is_empty():
+		var landing_side := &"left" if landing_segments.has(&"left") else &"right"
+		var landing_segment := landing_segments[landing_side] as Dictionary
+		var landing_mid := ((landing_segment.start as Vector3) + (landing_segment.end as Vector3)) * 0.5
+		var landing_obstacle := _feature_fixture(landing_mid)
+		await get_tree().physics_frame
+		var landing_result := landing.resolve_airborne_pole_feature_sweep(STEP, landing.velocity) as Dictionary
+		if bool(landing_result.get("hit", false)):
+			failures.append("Landing-window pole overlap was swept instead of exempted")
+		if landing.state == SkierController.State.BAIL:
+			failures.append("Landing-window pole overlap incorrectly entered the bail path")
+		_remove_now(landing_obstacle)
+	_remove_now(landing)
+	var grab := SkierController.new()
+	grab.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(grab)
+	grab.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0)), Vector3(0.0, 0.0, -12.0))
+	grab.predicted_landing_time = -1.0
+	await get_tree().process_frame
+	var grab_frame := _air_frame()
+	grab_frame.grab_pose = 1
+	grab_frame.grab_amount = 1.0
+	grab_frame.grab_input_strength = 1.0
+	grab_frame.grab_hold_time = 0.65
+	grab_frame.trick_phase = TrickCommand.PresentationPhase.GRAB
+	for _index: int in 90:
+		grab.animation_controller.apply_frame(grab_frame, STEP)
+	var grab_left := grab.animation_controller.rig_adapter.grab_target_world(&"left") as Vector3
+	var grab_right := grab.animation_controller.rig_adapter.grab_target_world(&"right") as Vector3
+	if grab_left == Vector3.ZERO and grab_right == Vector3.ZERO:
+		failures.append("Grab fixture did not engage a hand target for the exemption check")
+	else:
+		var grab_segments := grab.animation_controller.rig_adapter.pole_shaft_segments()
+		if not grab_segments.is_empty():
+			var grab_side := &"left" if grab_segments.has(&"left") else &"right"
+			var grab_segment := grab_segments[grab_side] as Dictionary
+			var grab_mid := ((grab_segment.start as Vector3) + (grab_segment.end as Vector3)) * 0.5
+			var grab_obstacle := _feature_fixture(grab_mid)
+			await get_tree().physics_frame
+			var grab_result := grab.resolve_airborne_pole_feature_sweep(STEP, grab.velocity) as Dictionary
+			if bool(grab_result.get("hit", false)):
+				failures.append("Held-grab pole overlap was swept instead of exempted")
+			if grab.state == SkierController.State.BAIL:
+				failures.append("Held-grab pole overlap incorrectly entered the bail path")
+			_remove_now(grab_obstacle)
+	_remove_now(grab)
+
+func _feature_fixture(position: Vector3) -> StaticBody3D:
+	var obstacle := StaticBody3D.new()
+	obstacle.name = "PoleShaftFixture"
+	obstacle.collision_layer = 4
+	obstacle.collision_mask = 0
+	obstacle.set_meta("asset_id", "pole_shaft_fixture")
+	obstacle.set_meta("asset_class", "solid_feature")
+	obstacle.set_meta("collision_policy", "crash")
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.18, 0.22, 0.18)
+	shape_node.shape = shape
+	obstacle.add_child(shape_node)
+	add_child(obstacle)
+	obstacle.global_position = position
+	return obstacle
+
+func _sphere_fixture(position: Vector3, radius: float) -> StaticBody3D:
+	var obstacle := StaticBody3D.new()
+	obstacle.name = "PoleTipFixture"
+	obstacle.collision_layer = 4
+	obstacle.collision_mask = 0
+	obstacle.set_meta("asset_id", "pole_tip_fixture")
+	obstacle.set_meta("asset_class", "solid_feature")
+	obstacle.set_meta("collision_policy", "crash")
+	var shape_node := CollisionShape3D.new()
+	var shape := SphereShape3D.new()
+	shape.radius = radius
+	shape_node.shape = shape
+	obstacle.add_child(shape_node)
+	add_child(obstacle)
+	obstacle.global_position = position
+	return obstacle
 
 func _point_to_segment(point: Vector3, start: Vector3, end: Vector3) -> float:
 	var segment := end - start
