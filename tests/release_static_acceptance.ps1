@@ -41,7 +41,7 @@ if (-not (Test-Path -LiteralPath $releasePath -PathType Leaf)) {
 }
 else {
 	$release = Get-Content -Raw $releasePath
-	foreach ($requiredText in @("4.7.2.stable.official.ed1daf0bf", "Windows Desktop", "--export-release", "--quit-after 120", "docs/EXPORT_CONTENT.md", "repository-root `LICENSE` (MIT)")) {
+	foreach ($requiredText in @("4.7.2.stable.official.ed1daf0bf", "Windows Desktop", "--export-release", "--quit-after 120", "docs/EXPORT_CONTENT.md", 'repository-root `LICENSE` (MIT)')) {
 		if ($release -notmatch [regex]::Escape($requiredText)) {
 			$failures.Add("docs/RELEASE.md is missing: $requiredText")
 		}
