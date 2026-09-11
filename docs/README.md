@@ -2,6 +2,8 @@
 
 The `docs/` directory contains maintained project contracts, active worklists, and release/validation procedures. It is not an archive of implementation history.
 
+When a maintained contract describes intended behavior that the current implementation does not yet satisfy, [Known Issues](KNOWN_ISSUES.md) is authoritative for the active defect until the code and documentation converge.
+
 ## Product and gameplay
 
 - [Content design](CONTENT_DESIGN_PLAN.md) — current course goals, spot structure, design rules, and remaining human gates.
@@ -22,8 +24,10 @@ The `docs/` directory contains maintained project contracts, active worklists, a
 - [Controller validation](CONTROLLER_VALIDATION.md) — physical-device validation matrix.
 - [Production ski-run QA](PRODUCTION_SKI_RUN_QA.md) — end-to-end human gameplay and visual checks.
 - [Performance backlog](PERFORMANCE_BACKLOG.md) — active measured performance work.
-- [1080p performance baseline](PERFORMANCE_BASELINE_1080P.md) — current reproducible measurement contract and recorded results.
+- [1080p performance baseline](PERFORMANCE_BASELINE_1080P.md) — reproducible measurement contract and retained reference measurements; it does not imply the recorded source commit is current `master`.
 - [Visual evidence](VISUAL_EVIDENCE.md) — deterministic GPU capture/review workflow.
+
+Machine-readable performance captures under `docs/performance/` are retained evidence snapshots for the baseline document. Their dated filenames identify the measured run; they are not a statement about current repository state.
 
 ## Build, media, and assets
 
@@ -45,4 +49,4 @@ Keep a document here only when it remains useful as one of the following:
 
 Do not add dated postmortems, completed implementation plans, root-cause notes, one-off visual-fix reports, or superseded roadmaps as permanent docs. Put that context in the relevant issue, pull request, commit history, or release notes. If a temporary investigation document is necessary while work is active, remove it or fold its durable conclusions into the maintained reference when the work closes.
 
-Documentation should describe stable behavior and current status. Exact tuning values belong in the owning resources unless they are part of a deliberate external contract.
+Documentation should describe stable behavior and current status. Exact tuning values belong in the owning resources unless they are part of a deliberate external contract. Avoid wording such as “current tree” or “this dirty worktree” for retained evidence; identify the exact source commit/date instead.
