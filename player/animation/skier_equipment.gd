@@ -2,7 +2,9 @@ class_name SkierEquipment
 extends RefCounted
 
 const SKI_SIZE := Vector3(0.126, 0.025, 1.82)
-const POLE_SHAFT_RADIUS := 0.018
+# A 16 mm shaft reads as an aluminum ski pole instead of a handrail at the
+# gameplay camera distance while remaining thick enough for stable rasterization.
+const POLE_SHAFT_RADIUS := 0.008
 const POLE_SHAFT_LENGTH := 1.15
 const POLE_BASKET_RADIUS := 0.042
 const POLE_BASKET_THICKNESS := 0.012

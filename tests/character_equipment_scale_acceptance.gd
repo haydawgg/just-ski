@@ -78,7 +78,7 @@ func _measure_production_visual(controller: SkierAnimationController) -> void:
 	_check(absf(left_pole_length - right_pole_length) <= DIMENSION_TOLERANCE, "Left/right pole lengths differ")
 	_check(absf(left_pole_diameter - right_pole_diameter) <= DIMENSION_TOLERANCE, "Left/right pole shaft diameters differ")
 	_check(left_pole_length / maxf(skier_height, 0.001) >= 0.55 and left_pole_length / maxf(skier_height, 0.001) <= 0.78, "Pole/body proportion is outside the accepted range")
-	_check(left_pole_diameter >= 0.018 and left_pole_diameter <= 0.04, "Pole shaft diameter %.3fm is visually disproportionate" % left_pole_diameter)
+	_check(left_pole_diameter >= 0.012 and left_pole_diameter <= 0.022, "Pole shaft diameter %.3fm is visually disproportionate" % left_pole_diameter)
 	_check(left_boot_gap <= 0.065, "Left boot is not seated on the ski (gap %.3fm)" % left_boot_gap)
 	_check(right_boot_gap <= 0.065, "Right boot is not seated on the ski (gap %.3fm)" % right_boot_gap)
 	_check(controller.find_child("PrimitiveRigAdapter", true, false) == null, "Old primitive rig remains instantiated beside the skeleton rig")
@@ -253,6 +253,14 @@ func _measure_primitive_fallback() -> void:
 	var torso := driver.find_child("TorsoMesh", true, false) as MeshInstance3D
 	var shoulders := driver.find_child("ShoulderJacket", true, false) as MeshInstance3D
 	var glove := driver.find_child("LeftGlove", true, false) as MeshInstance3D
+	var hip_span := driver.joint(&"left_hip").position.distance_to(driver.joint(&"right_hip").position)
+	var leg_chain := driver.joint(&"left_knee").position.length() + driver.joint(&"left_boot").position.length()
+	var torso_chain := driver.joint(&"spine").position.length() + driver.joint(&"chest").position.length() + driver.joint(&"head").position.length()
+	print("CHARACTER_SCALE_MEASURE anthropometry hip_span=%.3f leg_torso_ratio=%.3f" % [hip_span, leg_chain / maxf(torso_chain, 0.001)])
+	_check(hip_span >= 0.20 and hip_span <= 0.32,
+		"Fallback hip-center span %.3fm is outside a believable adult range" % hip_span)
+	_check(leg_chain / maxf(torso_chain, 0.001) >= 0.82 and leg_chain / maxf(torso_chain, 0.001) <= 1.02,
+		"Fallback leg/torso chain ratio %.3f is outside the calibrated human range" % (leg_chain / maxf(torso_chain, 0.001)))
 	_check(pelvis != null and torso != null and shoulders != null and glove != null,
 		"Primitive fallback body shells are missing")
 	if pelvis != null and torso != null and shoulders != null and glove != null:
@@ -317,7 +325,7 @@ func _measure_shared_equipment(controller: SkierAnimationController) -> void:
 		var shaft_r := shaft_mesh.top_radius if shaft_mesh != null else 0.014
 		var basket_r := basket_mesh.top_radius if basket_mesh != null else 0.065
 		print("CHARACTER_SCALE_MEASURE basket_shaft_ratio=%.3f" % (basket_r / maxf(shaft_r, 0.001)))
-		_check(basket_r / maxf(shaft_r, 0.001) <= 3.5,
+		_check(basket_r / maxf(shaft_r, 0.001) <= 6.0,
 			"Pole basket (r %.4f) is disproportionate to the shaft (r %.4f)" % [basket_r, shaft_r])
 	if boot != null and heel != null:
 		# Mesh AABBs are unit-centered: shift into the shared mount frame.

@@ -1974,12 +1974,12 @@ func _reset_targets() -> void:
 	_rotation_targets[right_hand] = Vector3.ZERO
 	_rotation_targets[left_pole] = Vector3.ZERO
 	_rotation_targets[right_pole] = Vector3.ZERO
-	_position_targets[pelvis] = Vector3(0.0, 0.96, 0.0)
-	_position_targets[chest] = Vector3(0.0, 0.42, 0.0)
-	_position_targets[left_hip] = Vector3(-0.20, -0.04, 0.0)
-	_position_targets[right_hip] = Vector3(0.20, -0.04, 0.0)
-	_position_targets[left_shoulder] = Vector3(-0.4, 0.24, 0.0)
-	_position_targets[right_shoulder] = Vector3(0.4, 0.24, 0.0)
+	_position_targets[pelvis] = pose_driver.rest_position(&"pelvis")
+	_position_targets[chest] = pose_driver.rest_position(&"chest")
+	_position_targets[left_hip] = pose_driver.rest_position(&"left_hip")
+	_position_targets[right_hip] = pose_driver.rest_position(&"right_hip")
+	_position_targets[left_shoulder] = pose_driver.rest_position(&"left_shoulder")
+	_position_targets[right_shoulder] = pose_driver.rest_position(&"right_shoulder")
 
 func _apply_ground_pose(frame: SkierAnimationFrame) -> void:
 	var speed_flex := profile.speed_knee_flex * _crouch_amount
@@ -2024,7 +2024,7 @@ func _apply_ground_pose(frame: SkierAnimationFrame) -> void:
 	_apply_terrain_foot_orientation()
 	_position_targets[pelvis] = Vector3(
 		_pelvis_carve * profile.carve_pelvis_shift,
-		0.96 - profile.neutral_pelvis_drop - flex * profile.pelvis_flex_depth - _jump_anticipation * profile.jump_anticipation_pelvis_drop - load * profile.carve_pelvis_drop + crossover_release * profile.crossover_extension * 0.36 + _terrain_pelvis_offset,
+		pose_driver.rest_position(&"pelvis").y - profile.neutral_pelvis_drop - flex * profile.pelvis_flex_depth - _jump_anticipation * profile.jump_anticipation_pelvis_drop - load * profile.carve_pelvis_drop + crossover_release * profile.crossover_extension * 0.36 + _terrain_pelvis_offset,
 		profile.neutral_pelvis_offset
 	)
 	_pelvis_target_world = balance_root.to_global(_position_targets[pelvis] as Vector3)
