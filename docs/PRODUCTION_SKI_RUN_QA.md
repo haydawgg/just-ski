@@ -1,6 +1,6 @@
 # Production ski-run QA checklist
 
-Use this checklist when changing or replacing scenes in the environment asset catalog. The checked automated items are covered by the runtime suite or the standalone GPU visual gate; the hands-on play pass remains a release activity.
+Use this checklist for release-facing gameplay, environment, rendering, recovery, and export changes. Environment-asset replacements are one trigger for the pass, but the checklist is broader than the asset catalog. Checked automated items are covered by the runtime suite or standalone GPU visual gates; the hands-on play pass remains a release activity.
 
 ## Automated gates
 
@@ -22,6 +22,8 @@ Use this checklist when changing or replacing scenes in the environment asset ca
 - [x] `visual_analysis_bundle.ps1 -IncludeMotion` can sweep Day/Golden/Sunset at the requested render scales with fixed-rate motion telemetry and contact sheets.
 - [x] `visual_analysis_bundle.ps1 -IncludeRecovery` captures the out-of-bounds fade, respawn, camera reset, and completed lifecycle as reviewable phase artifacts.
 
+Automated coverage proves the stated deterministic contracts, not the absence of all player-facing defects. Review [Known Issues](KNOWN_ISSUES.md) before treating a green gate as release readiness.
+
 ## Human visual pass
 
 - [ ] Replay the supplied route at 30, 60, and 120 Hz with keyboard and controller.
@@ -29,7 +31,7 @@ Use this checklist when changing or replacing scenes in the environment asset ca
 - [ ] Contact every reachable solid feature and confirm the visual surface and collider agree; pass through route guides to confirm they never produce an invisible impact.
 - [ ] Grind rails and boxes capture only through the grind affordance and never bounce the skier capsule.
 - [ ] Trigger high-speed landings, rail exits, boundary recoveries, and the supplied crash. Confirm the HUD identifies the reason and the camera keeps the pelvis/upper body readable.
-- [ ] Confirm fade-out → respawn → camera reset → fade-in occurs once, combo/link clears, and total score remains unchanged.
+- [ ] Confirm fade-out → respawn → camera reset → fade-in occurs once, combo/link clears, and total score remains unchanged. If a saved marker exists, also verify the known course-recovery/retry-cost issue has been resolved before treating this as a release pass.
 - [ ] Install Godot 4.7.2 export templates, create the platform release export used for the target build, and smoke-test that exported build with the same route.
 - [ ] Compare the daytime and sunset scenes at near, mid, and horizon distances; tune glare, shadow density, and snow readability on the target display.
 - [ ] Review the seven ramp-surface shots in Day and Sunset; confirm the Snow 02 texture remains readable through the approach, rotated lip/deck/landing, roller, berm, and side hit, with no visible UV-dependent tiling or pop against adjacent piste.
@@ -60,4 +62,4 @@ For daytime snow and landing review, run:
 Both GPU gates wait for the capture process, inspect its exit code and logs,
 require fresh output files, and fail when a renderer shutdown leak is reported.
 
-For the complete Codex-facing review bundle, run `.\tests\visual_analysis_bundle.ps1` after the headless gate. Do not update baselines from this dirty worktree; baseline seeding must use an explicitly reviewed clean reference capture.
+For the complete Codex-facing review bundle, run `.\tests\visual_analysis_bundle.ps1` after the headless gate. Baseline seeding must use an explicitly reviewed clean reference capture from the intended source commit; do not update curated baselines from an unrelated or dirty working tree.
