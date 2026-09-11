@@ -1,6 +1,6 @@
 # Graphics and Settings
 
-This document describes the current visual and settings architecture. Renderer behavior is owned by `project.godot`, `autoload/game_settings.gd`, environment/profile resources, shader resources, and the scene code that applies them.
+This document describes the current visual and settings architecture. Renderer behavior is owned by `project.godot`, `autoload/game_settings.gd`, environment/profile resources, shader resources, and the scene code that applies them. Where the intended settings contract differs from current runtime behavior, [Known Issues](KNOWN_ISSUES.md) records the defect.
 
 ## Renderer and viewport
 
@@ -18,6 +18,8 @@ Summit Sessions targets Godot 4.7 Forward+.
 Open Pause → Settings during a run to edit these values. Apply promotes pending values, changes the display/renderer/audio state immediately, and saves `user://settings.cfg`; a successful apply shows `SETTINGS SAVED`. Cancel restores pending from active. Reset Defaults replaces pending values with defaults but does not apply them until the user chooses Apply.
 
 The settings loader validates maintained numeric ranges and falls back to defaults for invalid values.
+
+Resolution is currently applied with `DisplayServer.window_set_size()` only in Windowed mode. The Settings UI still allows selecting and confirming a resolution in Fullscreen and Exclusive Fullscreen even though that selection does not change the fullscreen output size. Treat fullscreen resolution selection as a known UI/behavior defect rather than a supported display-mode contract.
 
 ## Graphics presets
 
@@ -43,7 +45,7 @@ The current Settings menu intentionally exposes a practical subset of Godot's re
 
 Time of day follows the same staged settings model. `environment_preset` selects one of three authored `ResortEnvironmentProfile` resources: Day, Golden Hour, or Sunset. `resort.gd` owns the small preset-to-resource seam and applies the selected profile to the existing sky, sun, fill, fog, post-processing, and GI configuration without another autoload. Dedicated QA scenes such as `sunset_resort.tscn` opt out of the user preference so their authored lighting remains deterministic.
 
-HDR output is opt-in on every preset and defaults off. Enabling it requests HDR on the window, enables the 16F 2D pipeline, and switches the resort tonemapper from Filmic to AgX (Filmic/ACES are SDR-only curves and would crush highlights against a display peak); exposure, glow, and adjustment stay profile-owned. The window request no-ops on headless/dummy servers and SDR outputs fall back gracefully. Because an HDR mode switch can blank the display, it routes through the same timed Keep/Revert confirmation as display mode and resolution. HDR grading still requires human review on a capable display; automated captures run SDR.
+HDR output is opt-in on every preset and defaults off. Enabling it requests HDR on the window, enables the 16F 2D pipeline, and routes through the same timed Keep/Revert confirmation as display mode and resolution. The current resort presentation gate uses the saved/requested `hdr_output` preference (except in headless mode) to select the AgX path; it does **not** yet verify the window's actual active HDR state. On an SDR or HDR-incapable output, the request may therefore fail while the resort still selects HDR-oriented grading. Actual-output-state gating and dynamic display changes remain a known issue. HDR grading still requires human review on a capable display; automated captures run SDR.
 
 ## Snow shading
 
@@ -153,7 +155,7 @@ scored trick name or degrees. The trick UI suite guards the separation.
 
 The built-in recorder captures the viewport at 960×540 and 30 fps, JPEG-encodes frames, and muxes them into an MJPEG-in-MP4 file. Encoding occurs after capture on a worker thread so the gameplay loop is not responsible for muxing each frame. Capture slots are retained when the bounded JPEG queue is saturated and missing slots repeat the nearest encoded frame, preserving presentation duration. The long-capture mux streams MP4 samples to a temporary file rather than building a second complete payload in memory; see [Clip capture](CLIP_CAPTURE.md).
 
-The capture contains video only. See [Controls](CONTROLS.md) for recorder behavior.
+The capture contains video only. See [Controls](CONTROLS.md) for recorder behavior and [Known Issues](KNOWN_ISSUES.md) for the current minimum-duration/back-pressure defect.
 
 ## Verification
 
