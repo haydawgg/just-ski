@@ -144,6 +144,36 @@ Do not add a geometry kind because the feature list looks incomplete. Add one on
 
 The current vocabulary already covers tabletop/hip/roller/berm/side-hit forms, boxes, tubes, multi-point rails, wall features, bonks, cannons, gates, moguls, and butter/setup terrain. A true two-face spine, dedicated transfer bank, stair set, or richer curved-rail authoring remains valid future work only if playtesting demonstrates a specific missing skiing decision.
 
+## M1 validation gate
+
+**M1 is the product-validation gate for this phase.** Do not proceed into substantial M2–M4 implementation merely because the planned geometry exists. First demonstrate through human play that the redesigned resort creates voluntary retries, readable choices, memorable spots, and useful recovery behavior. Minimal diagnostic metadata needed to observe M1 is allowed, but new feature systems, challenge infrastructure, and authoring migrations remain downstream of this gate.
+
+### Human playtest scorecard
+
+Use these as directional prototype targets, not telemetry-driven progression requirements:
+
+| Measure | Target signal |
+|---|---|
+| Marker reuse | Players intentionally return to at least two spots during a session. |
+| Voluntary retries | A player makes at least three attempts at a favored spot without being instructed to do so. |
+| Route diversity | Different routes or techniques appear across players or repeated attempts without prompting. |
+| Discovery | At least one advanced or unintended line/approach is discovered during skilled play. |
+| Failure recovery | Missed transfers/features often allow continued skiing when physically plausible instead of forcing a reset. |
+| Spot recall | After a run, players can identify or describe at least two memorable spots. |
+| Beginner readability | A safe route is recognizable without requiring an explanation of the intended line. |
+| Expert depth | Skilled players find a reason to revisit at least one spot after successfully traversing it. |
+
+Do not treat one player's exact counts as a pass/fail statistic. Look for repeated evidence across sessions. If players consistently traverse a spot once and move on, revise geometry before adding systems intended to direct them back to it.
+
+### Performance regression checkpoints
+
+M1 deliberately increases local course density and visual overlap, so performance should be checked while the layout is still cheap to change.
+
+- After **Technical Yard**, run the maintained quality gate and benchmark the dense-feature view on the normal reference hardware/settings. Compare against an ancestry-compatible baseline on the same machine.
+- After **Lower Hero Spot + Finale**, repeat the maintained deterministic 1080p scenario matrix used for active performance work.
+- Treat these checks as regression detection, not invitations to speculative optimization. If a meaningful regression appears, identify the CPU/GPU/submission/memory bound before changing content or rendering systems.
+- Preserve matched visual review when a performance fix changes feature readability, snow, environment presentation, or sight lines.
+
 ## Human validation priority
 
 The next content work should be observation and tuning rather than another structural implementation pass.

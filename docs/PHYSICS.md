@@ -76,9 +76,12 @@ All fall entry passes through a guarded gameplay boundary that records the sourc
 Solid-feature contact becomes a bail only when the profile's impact conditions are met. Low-speed brushes remain ordinary collisions.
 
 Unsupported bail rotation follows damped angular momentum without a world-up
-correction. Snow contact owns alignment. Grounded `FALL` couples residual crash
-spin toward surface roll around `ground_normal × travel`, using planar speed
-over an effective body radius, then profile-limited coupling, cap, and fade.
+correction. Snow contact owns alignment. Airborne and grounded angular damping
+are tuned separately, while linear damping is unchanged so softer rotation does
+not shorten the post-impact slide or move the eventual recovery point. Grounded
+`FALL` couples residual crash spin toward surface roll around `ground_normal ×
+travel`, using planar speed over an effective body radius, then profile-limited
+coupling, cap, and fade.
 Alignment is a speed-aware slerp toward a snow pose: weak while sliding quickly,
 stronger as speed falls, and strongest in `REST`/`RECOVERY`. It never strengthens
 just because travel sped up. Degenerate normals or travel keep the existing
@@ -86,11 +89,11 @@ damped angular momentum instead of inventing an axis. Crash presentation treats
 zero stage time/progress as the start of a stage, including the first recovery
 frame, so total crash time cannot prematurely complete the get-up pose or
 contact IK. `crash_recovery_acceptance.tscn` covers inverted pitch/roll
-continuity, ground-coupled roll axes, travel-direction sprawl, per-frame
-rotation bounds, airborne bit-for-behavior continuity, stage handoffs through
-the real controller, and the complete rest/recovery lifecycle. These checks do
-not replace a human visual pass on tumble choreography; remaining equipment and
-recovery-pose issues stay in [Known Issues](KNOWN_ISSUES.md).
+continuity, ground-coupled roll axes, unchanged linear slide damping,
+travel-direction sprawl, multi-rate rotation bounds, stage handoffs through the
+real controller, and the complete rest/recovery lifecycle. The event-driven
+crash viewport diagnostic additionally bounds grounded ski angle against the
+live snow plane and records a GPU clip for choreography review.
 
 Crash entry clears downhill locomotion channels (edge, steering, carve, tuck,
 pressure, skid) while preserving linear/angular momentum, so no pre-crash skiing
@@ -119,7 +122,7 @@ orientation suite guards the spawn-settle lifecycle at 30, 60, and 120 Hz.
 
 `GrindRail3D` owns a `Curve3D` used for gameplay travel. Capture checks approach speed, proximity, vertical gap, and tangent plausibility.
 
-After capture, momentum is projected onto the spline tangent, entry blends toward the rail, gravity and friction act along the spline, and travel may reverse if the geometry and momentum allow it. Each requested rail translation is independently swept against solid Features; qualifying impacts enter `BAIL` without enabling rail collision or a second root-motion pass. Left-stick X counters balance drift.
+After capture, momentum is projected onto the spline tangent, entry blends toward the rail, gravity and friction act along the spline, and travel may reverse if the geometry and momentum allow it. Signed speed integrates through zero when the slope opposes travel, so an uphill grind decelerates, stops, and reverses instead of being held at a crawl. The 0.35 m/s crawl floor only sustains travel while gravity assists the current direction; on a flat rail friction decays the speed to a stall, and a sustained stall releases the rail into a gentle drop after the profile's `rail_stall_release_time`. Each requested rail translation is independently swept against solid Features; qualifying impacts enter `BAIL` without enabling rail collision or a second root-motion pass. Left-stick X counters balance drift.
 
 Kinks, slide stance, authored drift bias, and the initial capture offset can increase balance demand. The same contact point, tangent, slope, kink, balance, and balance-rate values are forwarded to presentation. Crossing the balance limit atomically releases rail ownership and enters `AIR` with bounded inherited angular state; a subsequent failed landing uses that state when entering bail.
 
@@ -137,7 +140,7 @@ Jump construction can read the active physics profile so feature sizing remains 
 
 `RunScoring` owns run score, combo timing, line links, best-trick information, and clean/bail accounting. Air and rail outcomes feed scoring only after gameplay resolves the movement result.
 
-The finish flow summarizes the run and persists the personal best. Marker returns clear pending line-link state, while a summit restart clears the run state. Respawning a run that is already finished also clears the scoring run so the next trick is scorable.
+The finish flow summarizes the run and persists the personal best. An active-run marker retry applies the configured retry cost, while automatic course recovery preserves run totals and retry count but clears transient combo/link state. Summit restart and Return to Marker from the results screen start a clean scoring run. Respawning any run that is already finished also clears the scoring run so the next trick is scorable.
 
 ## Tuning
 

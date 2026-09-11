@@ -145,6 +145,11 @@ func handle_session_respawn(reason: StringName) -> void:
 	if _shutting_down:
 		return
 	if reason == SessionManager.RESPAWN_SUMMIT_RESTART:
+		# Resolve any active capture first: a summit restart closes the run
+		# capture (saved if long enough, discarded if too short) before an
+		# explicitly armed restart begins a fresh capture.
+		if is_recording():
+			end_run_capture()
 		if armed:
 			begin_run_capture()
 		return

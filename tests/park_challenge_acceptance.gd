@@ -14,6 +14,8 @@ func _ready() -> void:
 	_validate_sequence_and_route(tracker)
 	_validate_bail_blocks_clean_attempt(tracker)
 	_validate_any_rail(tracker)
+	_validate_ordered_grab_after_grind(tracker)
+	_validate_attempt_local_score(tracker)
 	if failures.is_empty():
 		print("PARK_CHALLENGE_ACCEPTANCE_PASS: data-driven challenges evaluate authoritative outcomes without gameplay mutation")
 		AudioManager.shutdown_audio()
@@ -102,3 +104,38 @@ func _validate_any_rail(tracker: ParkChallengeTracker) -> void:
 	tracker.record_event(&"landing", {"outcome": LandingSolver.Outcome.CLEAN})
 	if not _completed(tracker, &"yard_any_rail"):
 		failures.append("any-rail challenge did not complete")
+
+func _validate_ordered_grab_after_grind(tracker: ParkChallengeTracker) -> void:
+	# Rainbow Style: grab and land BEFORE grinding must not satisfy the chain.
+	tracker.configure(ParkCourseProfile.new().challenge_specs())
+	tracker.begin_attempt(&"lower_hero")
+	tracker.record_event(&"grab", {"active": true})
+	tracker.record_event(&"landing", {"outcome": LandingSolver.Outcome.CLEAN})
+	tracker.record_event(&"rail_capture", {"feature_id": &"rainbow", "captured": true})
+	if _completed(tracker, &"lower_rainbow_grab"):
+		failures.append("Rainbow Style completed with the grab before the grind")
+	# Correct order completes the same chain within one attempt.
+	tracker.begin_attempt(&"lower_hero")
+	tracker.record_event(&"rail_capture", {"feature_id": &"rainbow", "captured": true})
+	tracker.record_event(&"grab", {"active": true})
+	tracker.record_event(&"landing", {"outcome": LandingSolver.Outcome.CLEAN})
+	if not _completed(tracker, &"lower_rainbow_grab"):
+		failures.append("Rainbow Style did not complete with grind-then-grab order")
+
+func _validate_attempt_local_score(tracker: ParkChallengeTracker) -> void:
+	# Points earned before entering the spot must not satisfy the local target.
+	tracker.begin_attempt(&"transfer_zone", 1000)
+	tracker.record_event(&"feature_complete", {"feature_id": &"hip_transfer"})
+	tracker.record_event(&"feature_complete", {"feature_id": &"transfer_box"})
+	tracker.record_event(&"score", {"total_score": 1400})
+	tracker.record_event(&"route_complete", {"route": &"expert"})
+	if _completed(tracker, &"transfer_expert_link"):
+		failures.append("transfer challenge satisfied its score target with pre-earned points")
+	# The same events with an attempt-local 1,400 do complete it.
+	tracker.begin_attempt(&"transfer_zone", 0)
+	tracker.record_event(&"feature_complete", {"feature_id": &"hip_transfer"})
+	tracker.record_event(&"feature_complete", {"feature_id": &"transfer_box"})
+	tracker.record_event(&"score", {"total_score": 1400})
+	tracker.record_event(&"route_complete", {"route": &"expert"})
+	if not _completed(tracker, &"transfer_expert_link"):
+		failures.append("transfer challenge did not complete from attempt-local score")

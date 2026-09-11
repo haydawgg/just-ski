@@ -1,4 +1,4 @@
-param(
+﻿param(
 	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -131,9 +131,9 @@ Require-Match $grindCollisionResult 'var safe_fraction' "GRIND collision results
 Require-Match $controller 'state_before_motion\s*!=\s*State\.GRIND' "GRIND must not receive a second CharacterBody motion pass."
 Require-Match $controller '_evaluate_grind_collision' "GRIND feature impacts must reuse the crash evaluator seam."
 Require-Match $controller 'State\.GRIND,\s*\r?\n\s*profile\.feature_collision_min_speed' "GRIND feature impacts must be evaluated as GRIND-origin collisions."
-Require-Match $controller 'func respawn_at\(value:\s*Transform3D,\s*_reason:\s*StringName' "Skier respawn must accept the session respawn reason from the signal."
+Require-Match $controller 'func respawn_at\(value:\s*Transform3D,\s*reason:\s*StringName' "Skier respawn must accept the session respawn reason from the signal."
 Require-Match $controller 'var was_finished\s*:=\s*scoring != null and scoring\.finished' "Respawn must snapshot finished-run state before clearing locomotion."
-Require-Match $controller 'if was_finished:\s*\r?\n\s*scoring\.reset_run\(\)' "Respawn after finish must start a new scoring run."
+Require-Match $controller 'if was_finished\s+or[^:]+:\s*\r?\n\s*scoring\.reset_run\(\)' "Respawn after finish or an explicit new-run intent must reset scoring."
 Require-Match $contact 'average_normal\s*=\s*Vector3\.UP' "Contact sampling must reset the current average normal before each sample."
 Require-Match $contact 'if normal_sum\.length_squared\(\)\s*>\s*0\.0001' "Contact sampling must refresh the average normal from any valid hit."
 
@@ -282,6 +282,23 @@ Require-Match $controller '"grab_qualified"' "Telemetry must expose grab qualifi
 Require-Match $contentTracker 'grab_qualified' "Challenge grab observation must require a qualified visual contact latch."
 Require-Match $controller '(?s)func _physics_process.*if recovery_frozen:.*if input_frame\.respawn_pressed:' "Frozen recovery must ignore session input."
 Reject-Match $controller '(?s)func _physics_process.*if input_frame\.respawn_pressed:.*if recovery_frozen:' "Frozen recovery cannot handle respawn before the freeze guard."
+$physicsStep = [regex]::Match($controller, 'func _physics_process\([\s\S]*?\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($physicsStep.Success) {
+	$stepBody = $physicsStep.Groups["body"].Value
+	$sampleIndex = $stepBody.IndexOf("contact.sample(")
+	$markerIndex = $stepBody.IndexOf("input_frame.marker_pressed")
+	if ($sampleIndex -lt 0 -or $markerIndex -lt 0) {
+		$failures.Add("Could not locate contact sampling and marker hotkey handling in the physics step.")
+	}
+	elseif ($markerIndex -lt $sampleIndex) {
+		$failures.Add("Marker hotkey cannot consume pre-sample contact state.")
+	}
+} else {
+	$failures.Add("Could not locate _physics_process.")
+}
+Require-Match $controller 'func can_set_marker' "Marker eligibility must be centralized on the controller."
+Require-Match $controller 'func _marker_transform[\s\S]*?contact\.average_normal' "Stored marker basis must be sanitized against the sampled snow plane."
+Require-Match $ui 'func _set_marker_from_menu[\s\S]*?player\.can_set_marker\(\)' "Menu marker saving must use the centralized eligibility predicate."
 Require-Match $flickInterpreter '(?s)func _step_grind.*_command\.kind != TrickCommand\.Kind\.RAIL_POP' "Off-axis grind setup releases must not keep a deferred takeoff."
 Require-Match $controller 'func _close_inbound_air_trick' "Rail capture must close inbound air as its own interrupted trick."
 $railCapture = [regex]::Match($controller, 'func _try_capture_rail\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
@@ -314,14 +331,26 @@ Reject-Match $controller 'retain_trick_history' "Inbound air history cannot be r
 Require-Match $sessionManager 'func request_summit_restart\(\) -> void' "Summit restart must be an explicit session intent."
 Require-Match $sessionManager 'RESPAWN_SUMMIT_RESTART' "Summit restart must have a dedicated respawn reason."
 Require-Match $sessionManager 'RESPAWN_COURSE_RECOVERY' "Course recovery must have a dedicated respawn reason."
+Require-Match $sessionManager 'RESPAWN_NEW_RUN_MARKER' "A fresh run from a marker must have a dedicated respawn reason."
+Require-Match $sessionManager 'func request_new_run_from_marker\(\) -> void' "A fresh marker run must use an explicit session intent."
 Require-Match $clipRecorder 'func handle_session_respawn\(' "Clip recorder must gate start/stop on session respawn reason."
 Require-Match $clipRecorder 'RESPAWN_SUMMIT_RESTART' "Clip capture start must require an explicit summit restart."
 Require-Match $ui 'SessionManager\.request_summit_restart\(\)' "Restart from Summit must use the explicit summit-restart intent."
+Require-Match $ui 'SessionManager\.request_new_run_from_marker\(\)' "Results Return to Marker must use the fresh-run marker intent."
+Require-Match $controller 'reason\s*==\s*SessionManager\.RESPAWN_SESSION\s*and\s*SessionManager\.has_marker' "Only an active session marker retry may apply the retry cost."
 $restartSummit = [regex]::Match($ui, 'func _restart_summit\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
 if ($restartSummit.Success) {
 	Reject-Match $restartSummit.Groups["body"].Value 'request_respawn\(\)' "Restart from Summit cannot use an unqualified session respawn."
+	Reject-Match $restartSummit.Groups["body"].Value 'scoring\.reset_run\(\)' "Respawn scoring policy must not be duplicated in the summit UI handler."
 } else {
 	$failures.Add("Could not locate _restart_summit.")
+}
+$resultsReturnMarker = [regex]::Match($ui, 'func _results_return_marker\(\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($resultsReturnMarker.Success) {
+	Reject-Match $resultsReturnMarker.Groups["body"].Value 'request_respawn\(\)' "Results Return to Marker cannot use the active-run retry intent."
+	Reject-Match $resultsReturnMarker.Groups["body"].Value 'scoring\.reset_run\(\)' "Respawn scoring policy must not be duplicated in the results UI handler."
+} else {
+	$failures.Add("Could not locate _results_return_marker.")
 }
 Require-Match $resort 'ClipRecorder\.handle_session_respawn\(reason\)' "Resort clip wiring must pass the respawn reason."
 Reject-Match $resort 'func _on_respawn_requested_recorder[\s\S]*?SessionManager\.default_spawn' "Clip start/stop cannot match the default spawn transform."
@@ -338,6 +367,20 @@ foreach ($telemetryKey in @(
 )) {
 	Require-Match $controller ('"' + [regex]::Escape($telemetryKey) + '"\s*:') "Missing handling telemetry: $telemetryKey"
 	Require-Match $ui ([regex]::Escape($telemetryKey)) "Debug HUD does not display handling telemetry: $telemetryKey"
+}
+$uiTelemetryHandler = [regex]::Match($ui, 'func _on_telemetry\([\s\S]*?\) -> void:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($uiTelemetryHandler.Success) {
+	Reject-Match $uiTelemetryHandler.Groups["body"].Value 'debug_label\.text' "The telemetry handler must not format debug text at tick rate."
+} else {
+	$failures.Add("Could not locate the UI telemetry handler.")
+}
+Require-Match $ui '_refresh_debug_text\(player\.telemetry\(\)\)' "The debug HUD must pull the full snapshot only while F3 is visible."
+Require-Match $controller 'func gameplay_telemetry' "Gameplay telemetry must be split from the debug snapshot."
+$gameplayTelemetry = [regex]::Match($controller, 'func gameplay_telemetry\([\s\S]*?\) -> Dictionary:\r?\n(?<body>[\s\S]*?)(?=\r?\nfunc )')
+if ($gameplayTelemetry.Success) {
+	Reject-Match $gameplayTelemetry.Groups["body"].Value 'debug_snapshot\(\)' "Per-tick gameplay telemetry cannot build the animation debug snapshot."
+} else {
+	$failures.Add("Could not locate gameplay_telemetry.")
 }
 
 Require-Match $profile 'landing_control_penalty_max' "Landing steering softness must remain profile-owned."

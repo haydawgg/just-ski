@@ -162,7 +162,7 @@ func challenge_specs() -> Array[ParkChallengeSpec]:
 			{"kind": &"feature_sequence", "feature_ids": [&"hip_transfer", &"transfer_box"]}, {"kind": &"minimum_score", "points": 1400}, {"kind": &"finish_route", "route": &"expert"}, {"kind": &"no_bail"},
 		]),
 		ParkChallengeSpec.create(&"lower_rainbow_grab", "Rainbow Style", "Grind the Rainbow, then grab and land the follow-up.", &"lower_hero", _feature_ids(["Rainbow"]), [
-			{"kind": &"grind", "feature_id": &"rainbow"}, {"kind": &"grab_and_land"}, {"kind": &"no_bail"},
+			{"kind": &"grind", "feature_id": &"rainbow"}, {"kind": &"grab_and_land", "after": {"kind": &"grind", "feature_id": &"rainbow"}}, {"kind": &"no_bail"},
 		]),
 		ParkChallengeSpec.create(&"finale_clean_360", "Finale 360", "Rotate at least 360 degrees, land clean, and finish through the expert route without bailing.", &"finale", _feature_ids(["FinalCannon"]), [
 			{"kind": &"air_rotation", "minimum_degrees": 360.0}, {"kind": &"clean_landing"}, {"kind": &"no_bail"}, {"kind": &"finish_route", "route": &"expert"},

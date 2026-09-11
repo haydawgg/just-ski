@@ -46,6 +46,7 @@ var onboarding_remaining := 8.0
 var clean_capture_mode := false
 const ONBOARDING_FADE_TIME := 2.5
 var _stored_mouse_mode := Input.MOUSE_MODE_VISIBLE
+var _recovery_active := false
 var _bound_player: SkierController
 var _bound_content_tracker: ParkContentTracker
 var _display_rollback: Dictionary = {}
@@ -200,6 +201,7 @@ func _process(delta: float) -> void:
 		recording_label.modulate.a = 0.55 + 0.45 * sin(recording_pulse)
 	if player != null and player.debug_enabled:
 		debug_label.visible = true
+		_refresh_debug_text(player.telemetry())
 	else:
 		debug_label.visible = false
 
@@ -858,6 +860,7 @@ func _pause() -> void:
 	get_tree().paused = true
 	AudioManager.stop_feedback()
 	_set_menu_visible(pause_panel)
+	_update_recovery_menu_lock()
 	_focus_first_pause_button()
 
 func _resume() -> void:
@@ -876,6 +879,10 @@ func _resume() -> void:
 	Input.mouse_mode = _stored_mouse_mode
 
 func _respawn_from_menu() -> void:
+	if _recovery_active:
+		_show_notice("RECOVERY IN PROGRESS")
+		_focus_first_pause_button()
+		return
 	if not SessionManager.has_marker:
 		_show_notice("NO MARKER SET")
 		_focus_first_pause_button()
@@ -885,7 +892,13 @@ func _respawn_from_menu() -> void:
 	_resume()
 
 func _set_marker_from_menu() -> void:
-	if player == null or not player.contact.grounded:
+	if _recovery_active:
+		_show_notice("RECOVERY IN PROGRESS")
+		_focus_first_pause_button()
+		return
+	# Physics is paused here, so the controller's last sampled contact is the
+	# authoritative frozen state; eligibility must match the gameplay hotkey.
+	if player == null or not player.can_set_marker():
 		_show_notice("NEED SNOW CONTACT")
 		_focus_first_pause_button()
 		return
@@ -893,10 +906,12 @@ func _set_marker_from_menu() -> void:
 	_resume()
 
 func _restart_summit() -> void:
+	if _recovery_active:
+		_show_notice("RECOVERY IN PROGRESS")
+		_focus_first_pause_button()
+		return
 	SessionManager.clear_marker()
-	if player != null and player.scoring != null:
-		player.scoring.reset_run()
-	else:
+	if player == null or player.scoring == null:
 		total_score = 0
 		_reset_combo()
 		score_label.text = "SCORE 000000"
@@ -908,9 +923,7 @@ func _results_return_marker() -> void:
 	if not SessionManager.has_marker:
 		_show_notice("NO MARKER SET")
 		return
-	if player != null and player.scoring != null:
-		player.scoring.reset_run()
-	SessionManager.request_respawn()
+	SessionManager.request_new_run_from_marker()
 	_show_notice("NEW RUN FROM MARKER")
 	_resume()
 
@@ -1094,12 +1107,11 @@ func _on_telemetry(data: Dictionary) -> void:
 	_update_notice()
 	var speed := float(data.speed_mps) * (2.23694 if bool(GameSettings.active["units_mph"]) else 3.6)
 	speed_label.text = "%d %s" % [roundi(speed), "mph" if bool(GameSettings.active["units_mph"]) else "km/h"]
-	var animation: Dictionary = data.get("animation", {})
+	var landing_cue: Dictionary = data.get("landing_cue", {})
 	var flick_data: Dictionary = data.get("flick", {})
-	var crash_data: Dictionary = data.get("crash", {})
 	var landing_time := float(data.get("predicted_landing_time", -1.0))
-	var landing_readiness_valid := bool(animation.get("landing_readiness_valid", false))
-	var pre_bail_weight := float(animation.get("pre_bail_weight", 0.0))
+	var landing_readiness_valid := bool(landing_cue.get("readiness_valid", false))
+	var pre_bail_weight := float(landing_cue.get("pre_bail_weight", 0.0))
 	var landing_imminent := (
 		bool(data.get("landing_feedback_armed", false))
 		and bool(data.get("predicted_landing_valid", false))
@@ -1111,7 +1123,7 @@ func _on_telemetry(data: Dictionary) -> void:
 	)
 	landing_cue_label.visible = landing_imminent
 	if landing_imminent:
-		var ready := bool(animation.get("landing_ready", false))
+		var ready := bool(landing_cue.get("ready", false))
 		landing_cue_label.text = "LANDING SET" if ready else "PREPARE LANDING"
 		landing_cue_label.add_theme_color_override("font_color", Color("#8fd5cd") if ready else Color("#e4c37b"))
 	if trick_visualizer != null:
@@ -1124,6 +1136,13 @@ func _on_telemetry(data: Dictionary) -> void:
 	if rail_balance_bar != null:
 		rail_balance_bar.value = float(data.get("rail_balance", 0.0))
 		rail_balance_bar.visible = str(data.state) == "GRIND"
+
+func _refresh_debug_text(data: Dictionary) -> void:
+	# The F3 snapshot is pulled once per rendered frame while visible; hidden
+	# diagnostics never build or format this payload.
+	var animation: Dictionary = data.get("animation", {})
+	var flick_data: Dictionary = data.get("flick", {})
+	var crash_data: Dictionary = data.get("crash", {})
 	debug_label.text = "FPS %d\nPhysics %d Hz\nState %s\nGrounded %s (%.2f)\nSurface %s\nSpeed %.2f m/s  Slope %.1f°\nNormal %s\nSteer raw %.2f  shaped %.2f  rate %.2f\nHeading/travel %.1f°\nEdge %.2f  carve %.2f  skid %.2f\nGrip %.2f  demand %.2f\nBrake %.2f  pressure %.2f  landing ctrl %.2f\nLateral slip %.2f  carve force %.2f\nAngular %s\nRail %s (bal %.2f prog %.2f toEnd %.1f)\nFlick %s / %s\nAnim %s\nPose %s\nAnim blend %.2f\nAir %s size %.2f anticip %.2f\nLand %s sev %.2f bal %.2f cmp %.2f\nRailAnim %s inf %.2f appr %.2f entrySev %.2f cmp %.2f slide %.2f exit %.2f" % [
 		Engine.get_frames_per_second(), Engine.physics_ticks_per_second, data.state, data.grounded, data.contact_confidence,
 		data.get("surface", "Powder"), data.speed_mps, data.get("slope_angle_degrees", 0.0), data.surface_normal,
@@ -1217,7 +1236,7 @@ func _on_score_changed(snapshot: Dictionary) -> void:
 func _on_run_finished(snapshot: Dictionary) -> void:
 	var score := int(snapshot.get("total_score", 0))
 	var previous_best := SessionManager.best_score
-	var personal_best := SessionManager.submit_score(score)
+	var record_result := SessionManager.submit_score(score)
 	var medal := _medal_for_score(score)
 	var next_target := _next_medal_target(score)
 	var best_name := str(snapshot.get("best_trick_name", ""))
@@ -1225,7 +1244,16 @@ func _on_run_finished(snapshot: Dictionary) -> void:
 	if best_name.is_empty():
 		best_name = "No scored trick"
 	results_score_label.text = "SCORE %06d  •  %s" % [score, medal]
-	var record_line := "NEW PERSONAL BEST" if personal_best else "PERSONAL BEST %06d" % maxi(previous_best, SessionManager.best_score)
+	var record_line: String
+	match record_result:
+		SessionManager.ScoreResult.SAVED:
+			record_line = "NEW PERSONAL BEST"
+		SessionManager.ScoreResult.LOAD_FAILED:
+			record_line = "NEW PERSONAL BEST — CORRUPT RECORDS REBUILT"
+		SessionManager.ScoreResult.SAVE_FAILED:
+			record_line = "NEW PERSONAL BEST — NOT SAVED"
+		_:
+			record_line = "PERSONAL BEST %06d" % maxi(previous_best, SessionManager.best_score)
 	var target_line := "All medal targets cleared" if next_target <= 0 else "%d points to the next medal" % maxi(0, next_target - score)
 	results_detail_label.text = "%s\n\nBest trick: %s  (+%d)\nLanded tricks: %d  •  Clean: %d  •  Bails: %d\n\n%s" % [
 		record_line,
@@ -1236,6 +1264,10 @@ func _on_run_finished(snapshot: Dictionary) -> void:
 		int(snapshot.get("bail_count", 0)),
 		target_line,
 	]
+	if record_result == SessionManager.ScoreResult.SAVE_FAILED:
+		_show_notice("PERSONAL BEST COULD NOT BE SAVED")
+	elif record_result == SessionManager.ScoreResult.LOAD_FAILED:
+		_show_notice("PERSONAL BEST SAVED — CORRUPT RECORDS REBUILT")
 	var marker_button := results_panel.find_child("ResultsMarkerButton", true, false) as Button
 	if marker_button != null:
 		marker_button.disabled = not SessionManager.has_marker
@@ -1273,6 +1305,8 @@ func _on_settings_save_failed(error: Error) -> void:
 	_show_notice("SETTINGS COULD NOT BE SAVED (%d)" % int(error))
 
 func notify_course_recovery(reason: String = "") -> void:
+	_recovery_active = true
+	_update_recovery_menu_lock()
 	_show_notice("RETURNING TO THE SLOPE" if reason.is_empty() else "RETURNING TO THE SLOPE — %s" % reason.replace("_", " "))
 	if recovery_overlay == null:
 		return
@@ -1291,6 +1325,30 @@ func complete_course_recovery(_reason: String = "", _spawn_transform: Transform3
 	tween.tween_callback(func() -> void:
 		recovery_overlay.visible = false
 	)
+
+func finish_course_recovery(_reason: String = "", _spawn_transform: Transform3D = Transform3D.IDENTITY) -> void:
+	# The menu stays locked through the whole fade: recovery_respawned only
+	# drives the overlay, recovery_completed ends the owned transition.
+	_recovery_active = false
+	_update_recovery_menu_lock()
+
+func cancel_course_recovery(_reason: String = "") -> void:
+	_recovery_active = false
+	_update_recovery_menu_lock()
+	if recovery_overlay == null:
+		return
+	var tween := create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tween.tween_property(recovery_overlay, "color:a", 0.0, maxf(recovery_fade_in_duration, 0.0))
+	tween.tween_callback(func() -> void:
+		recovery_overlay.visible = false
+	)
+
+func _update_recovery_menu_lock() -> void:
+	for button_name in ["ReturnMarkerButton", "SetMarkerButton", "RestartButton", "ResultsRetryButton", "ResultsMarkerButton"]:
+		var button := find_child(button_name, true, false) as Button
+		if button != null:
+			button.disabled = _recovery_active
 
 func _on_recorder_armed(value: bool) -> void:
 	if recording_label != null:

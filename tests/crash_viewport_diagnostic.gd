@@ -15,7 +15,18 @@ var _finish_started := false
 var _evaluation_reasons: Array[String] = []
 var _evaluation_summary := ""
 var _waiting_for_clip := false
-var _evaluation_frame := 220
+var _evaluation_started := false
+var _crash_elapsed := 0.0
+var _grounded_crash_elapsed := 0.0
+var _post_recovery_frames := 0
+var _saw_fall := false
+var _saw_rest := false
+var _saw_recovery := false
+
+const MAX_DIAGNOSTIC_SECONDS := 8.0
+const POST_RECOVERY_OBSERVATION_FRAMES := 12
+const SKI_PLANE_ACQUISITION_SECONDS := 0.12
+const MAX_GROUNDED_SKI_VERTICALITY := 0.70
 
 func _ready() -> void:
 	resort = load("res://world/resort.tscn").instantiate() as Node3D
@@ -48,21 +59,31 @@ func _ready() -> void:
 		# Cap rendering for a watchable debug clip and extend the evaluation so
 		# the recording contains FALL, REST, and recovery before the test exits.
 		Engine.max_fps = 60
-		_evaluation_frame = 410
 		ClipRecorder.clip_saved.connect(_on_clip_saved)
 		ClipRecorder.clip_failed.connect(_on_clip_failed)
 	set_physics_process(true)
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	frame_count += 1
 	if frame_count == 30 and not crash_triggered:
 		_trigger_crash()
 		crash_triggered = true
 	if not crash_triggered:
 		return
-	if frame_count > 30 and frame_count < _evaluation_frame:
-		_sample()
-	if frame_count == _evaluation_frame:
+	_crash_elapsed += delta
+	_sample(delta)
+	var stage := skier.crash_context.stage if skier.crash_context != null else CrashContext.Stage.NONE
+	_saw_fall = _saw_fall or stage == CrashContext.Stage.FALL
+	_saw_rest = _saw_rest or stage == CrashContext.Stage.REST
+	_saw_recovery = _saw_recovery or stage == CrashContext.Stage.RECOVERY
+	if _saw_recovery and skier.state == SkierController.State.GROUND:
+		_post_recovery_frames += 1
+	else:
+		_post_recovery_frames = 0
+	if _post_recovery_frames >= POST_RECOVERY_OBSERVATION_FRAMES:
+		_evaluate()
+	elif _crash_elapsed >= MAX_DIAGNOSTIC_SECONDS:
+		_evaluation_reasons.append("crash lifecycle did not recover to GROUND within %.1f seconds" % MAX_DIAGNOSTIC_SECONDS)
 		_evaluate()
 
 func _trigger_crash() -> void:
@@ -94,7 +115,7 @@ func _trigger_crash() -> void:
 	if not RuntimeEnvironment.is_headless():
 		ClipRecorder._start_recording()
 
-func _sample() -> void:
+func _sample(delta: float) -> void:
 	if skier == null or skier.animation_controller == null:
 		return
 	var left_ski := skier.animation_controller.left_ski as Node3D
@@ -102,13 +123,15 @@ func _sample() -> void:
 	var pelvis := skier.animation_controller.pelvis as Node3D
 	if left_ski == null or right_ski == null:
 		return
-	var left_global_up := left_ski.global_basis.y
-	var right_global_up := right_ski.global_basis.y
 	var left_forward := -left_ski.global_basis.z
 	var right_forward := -right_ski.global_basis.z
-	# Vertical ski: ski long axis (forward) dot world up near 1 means vertical post
-	var left_vertical := absf(left_forward.dot(Vector3.UP))
-	var right_vertical := absf(right_forward.dot(Vector3.UP))
+	var grounded := skier.contact.grounded if skier.contact != null else false
+	_grounded_crash_elapsed = _grounded_crash_elapsed + delta if grounded else 0.0
+	var support_normal := skier.contact.average_normal if grounded and skier.contact.average_normal.length_squared() > 0.0001 else skier.crash_context.impact_normal
+	support_normal = support_normal.normalized() if support_normal.is_finite() and support_normal.length_squared() > 0.0001 else Vector3.UP
+	# A ski post has its long axis aligned with the live snow normal.
+	var left_vertical := absf(left_forward.normalized().dot(support_normal))
+	var right_vertical := absf(right_forward.normalized().dot(support_normal))
 	var dist_between_skis := left_ski.global_position.distance_to(right_ski.global_position)
 	var pelvis_pos := pelvis.global_position if pelvis != null else skier.global_position
 	samples.append({
@@ -121,11 +144,16 @@ func _sample() -> void:
 		"velocity": skier.velocity.length(),
 		"angular": skier.angular_velocity.length(),
 		"stage": skier.crash_context.stage if skier.crash_context != null else 0,
-		"grounded": skier.contact.grounded if skier.contact != null else false,
+		"grounded": grounded,
+		"grounded_elapsed": _grounded_crash_elapsed,
+		"support_normal": support_normal,
 		"elapsed": skier.crash_context.elapsed if skier.crash_context != null else 0.0,
 	})
 
 func _evaluate() -> void:
+	if _evaluation_started:
+		return
+	_evaluation_started = true
 	print("CRASH_VIEWPORT_DIAG_START")
 	if samples.is_empty():
 		push_error("CRASH_DIAG_FAIL: no samples")
@@ -133,37 +161,60 @@ func _evaluate() -> void:
 		return
 	var max_vertical := 0.0
 	var grounded_vertical_frames := 0
+	var grounded_vertical_streak := 0
+	var longest_vertical_streak := 0
 	var grounded_frames := 0
 	var grounded_streak := 0
 	var longest_grounded_streak := 0
 	var min_dist := 1e9
 	var max_dist := 0.0
+	var max_settled_angular := 0.0
+	var saw_settled_angular_sample := false
+	var finite_telemetry := true
 	for s in samples:
 		max_vertical = max(max_vertical, float(s.max_vertical))
+		finite_telemetry = finite_telemetry and is_finite(float(s.max_vertical)) and is_finite(float(s.dist)) and is_finite(float(s.velocity)) and is_finite(float(s.angular)) and (s.pelvis as Vector3).is_finite() and (s.support_normal as Vector3).is_finite()
 		if bool(s.grounded):
 			grounded_frames += 1
 			grounded_streak += 1
 			longest_grounded_streak = maxi(longest_grounded_streak, grounded_streak)
 		else:
 			grounded_streak = 0
-		# Only count sustained vertical when grounded in REST (where skis should be flat, not post)
-		if float(s.max_vertical) > 0.78 and bool(s.grounded) and int(s.stage) == CrashContext.Stage.REST:
+		var constrained_stage := int(s.stage) in [CrashContext.Stage.FALL, CrashContext.Stage.REST]
+		var acquired_contact := float(s.grounded_elapsed) >= SKI_PLANE_ACQUISITION_SECONDS
+		if float(s.max_vertical) > MAX_GROUNDED_SKI_VERTICALITY and bool(s.grounded) and constrained_stage and acquired_contact:
 			grounded_vertical_frames += 1
+			grounded_vertical_streak += 1
+			longest_vertical_streak = maxi(longest_vertical_streak, grounded_vertical_streak)
+		else:
+			grounded_vertical_streak = 0
+		if bool(s.grounded) and constrained_stage and float(s.grounded_elapsed) >= 0.5:
+			max_settled_angular = maxf(max_settled_angular, float(s.angular))
+			saw_settled_angular_sample = true
 		min_dist = min(min_dist, float(s.dist))
 		max_dist = max(max_dist, float(s.dist))
-	print("CRASH_MAX_VERTICAL: %.3f grounded_rest_vertical %d (threshold <4)" % [max_vertical, grounded_vertical_frames])
+	print("CRASH_MAX_VERTICAL: %.3f grounded_fall_rest_vertical %d longest_streak %d (limit %.2f after %.2fs)" % [max_vertical, grounded_vertical_frames, longest_vertical_streak, MAX_GROUNDED_SKI_VERTICALITY, SKI_PLANE_ACQUISITION_SECONDS])
 	print("CRASH_SKI_DIST_MIN: %.3f max %.3f" % [min_dist, max_dist])
 	print("CRASH_GROUNDED_FRAMES: %d longest_streak %d" % [grounded_frames, longest_grounded_streak])
+	print("CRASH_SETTLED_ANGULAR_MAX: %.3f rad/s after 0.5s" % max_settled_angular)
 	# Check for static settling: after 60 frames post-impact, pelvis should still show small movement if dragging works.
-	var early_pelvis: Vector3 = samples[10].pelvis as Vector3
-	var mid_pelvis: Vector3 = samples[80].pelvis as Vector3
-	var late_pelvis: Vector3 = samples[samples.size() - 10].pelvis as Vector3
+	var early_pelvis: Vector3 = samples[mini(10, samples.size() - 1)].pelvis as Vector3
+	var mid_pelvis: Vector3 = samples[mini(80, samples.size() - 1)].pelvis as Vector3
+	var late_pelvis: Vector3 = samples[maxi(samples.size() - 10, 0)].pelvis as Vector3
 	var early_to_mid := early_pelvis.distance_to(mid_pelvis)
 	var mid_to_late := mid_pelvis.distance_to(late_pelvis)
 	print("CRASH_PELVIS_EARLY_MID: %.4f mid_late %.4f" % [early_to_mid, mid_to_late])
-	var reasons: Array[String] = []
-	if grounded_vertical_frames > 4:
-		reasons.append("vertical ski grounded_rest %d frames >4 (max %.3f)" % [grounded_vertical_frames, max_vertical])
+	var reasons: Array[String] = _evaluation_reasons.duplicate()
+	if grounded_vertical_frames > 0:
+		reasons.append("vertical ski exceeded %.2f for %d grounded FALL/REST frames (longest streak %d, max %.3f)" % [MAX_GROUNDED_SKI_VERTICALITY, grounded_vertical_frames, longest_vertical_streak, max_vertical])
+	if not _saw_fall or not _saw_rest or not _saw_recovery or skier.state != SkierController.State.GROUND:
+		reasons.append("crash lifecycle was incomplete (fall=%s rest=%s recovery=%s state=%d)" % [_saw_fall, _saw_rest, _saw_recovery, skier.state])
+	if not finite_telemetry:
+		reasons.append("crash diagnostic produced non-finite telemetry")
+	if not saw_settled_angular_sample:
+		reasons.append("crash diagnostic did not observe grounded FALL/REST after 0.5 seconds")
+	elif max_settled_angular > 1.8:
+		reasons.append("grounded crash retained %.3f rad/s after 0.5 seconds" % max_settled_angular)
 	if min_dist < 0.08:
 		reasons.append("skis intersect dist %.3f <0.08" % min_dist)
 	# Settling should not be frozen: mid->late should still have small motion, but early->mid should be larger
@@ -189,7 +240,7 @@ func _evaluate() -> void:
 			else:
 				print("CRASH_IMAGE_SAVED: user://crash_viewport_capture.png")
 	_evaluation_reasons = reasons
-	_evaluation_summary = "vertical %.3f dist %.3f drag %.4f/%.4f" % [max_vertical, min_dist, early_to_mid, mid_to_late]
+	_evaluation_summary = "vertical %.3f angular %.3f dist %.3f drag %.4f/%.4f" % [max_vertical, max_settled_angular, min_dist, early_to_mid, mid_to_late]
 	if not RuntimeEnvironment.is_headless() and ClipRecorder.is_recording():
 		_waiting_for_clip = true
 		ClipRecorder._stop_recording()

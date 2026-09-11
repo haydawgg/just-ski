@@ -265,6 +265,8 @@ func _build_player() -> void:
 	ui.recovery_fade_in_duration = course_recovery.fade_in_duration
 	course_recovery.recovery_started.connect(ui.notify_course_recovery)
 	course_recovery.recovery_respawned.connect(ui.complete_course_recovery)
+	course_recovery.recovery_completed.connect(ui.finish_course_recovery)
+	course_recovery.recovery_cancelled.connect(ui.cancel_course_recovery)
 	_build_finish_trigger()
 
 func _build_finish_trigger() -> void:
@@ -282,8 +284,21 @@ func _build_finish_trigger() -> void:
 	finish_trigger.add_child(shape_node)
 	add_child(finish_trigger)
 	finish_trigger.body_entered.connect(func(body: Node3D) -> void:
-		if body == player and player.scoring != null:
-			player.scoring.finish_run()
+		if body != player or player.scoring == null:
+			return
+		# Only a downhill crossing from the playable side completes the run.
+		# Uphill re-entry after Keep Riding, lateral drift-through, and
+		# already-finished runs are rejected.
+		if player.scoring.finished:
+			return
+		var finish_plane_z := course_profile.finish_trigger_world_z() if course_profile != null else -155.0
+		# Entries detected within a tick of the plane are normal crossings;
+		# only a clearly downhill-side entry (re-entry from behind) is rejected.
+		if player.global_position.z < finish_plane_z - 1.5:
+			return
+		if player.velocity.z > -0.5:
+			return
+		player.scoring.finish_run()
 	)
 	player.scoring.run_finished.connect(_on_run_finished_recorder)
 	SessionManager.respawn_requested.connect(_on_respawn_requested_recorder)

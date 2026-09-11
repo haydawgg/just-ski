@@ -9,6 +9,8 @@ func _ready() -> void:
 	await _test_release_scope()
 	await _test_pending_arm_lifecycle()
 	await _test_session_respawn_reasons_gate_capture()
+	await _test_state_reason_matrix()
+	await _test_active_recording_summit_restart_saves_partial()
 	await _test_teardown_during_recording()
 	await _test_teardown_during_encoding()
 	await _test_encode_thread_start_failure()
@@ -17,7 +19,7 @@ func _ready() -> void:
 			push_error("CLIP_RECORDER_LIFECYCLE_FAIL: " + failure)
 		get_tree().quit(1)
 		return
-	print("CLIP_RECORDER_LIFECYCLE_PASS: debug release scope, arm state, summit-restart capture gating, worker teardown, encode teardown, and start failure cleanup verified")
+	print("CLIP_RECORDER_LIFECYCLE_PASS: debug release scope, arm state, summit-restart capture gating, respawn state matrix, partial-save restart, worker teardown, encode teardown, and start failure cleanup verified")
 	get_tree().quit(0)
 
 func _new_recorder() -> Node:
@@ -68,23 +70,29 @@ func _test_session_respawn_reasons_gate_capture() -> void:
 		emitted_reasons.append(reason)
 	SessionManager.respawn_requested.connect(on_respawn)
 	var previous_marker := SessionManager.has_marker
+	var previous_marker_transform := SessionManager.marker
 	var previous_spawn := SessionManager.default_spawn
 	SessionManager.clear_marker()
 	var spawn := Transform3D(Basis.IDENTITY, Vector3(0.0, 98.0, 138.0))
+	var marker := Transform3D(Basis.IDENTITY, Vector3(4.0, 12.0, -8.0))
 	SessionManager.set_default_spawn(spawn)
+	SessionManager.request_new_run_from_marker()
 	SessionManager.request_respawn()
 	SessionManager.request_respawn_to(spawn)
+	SessionManager.set_marker(marker)
+	SessionManager.request_new_run_from_marker()
 	SessionManager.request_summit_restart()
 	if (
-		emitted_reasons.size() != 3
+		emitted_reasons.size() != 4
 		or emitted_reasons[0] != SessionManager.RESPAWN_SESSION
 		or emitted_reasons[1] != SessionManager.RESPAWN_COURSE_RECOVERY
-		or emitted_reasons[2] != SessionManager.RESPAWN_SUMMIT_RESTART
+		or emitted_reasons[2] != SessionManager.RESPAWN_NEW_RUN_MARKER
+		or emitted_reasons[3] != SessionManager.RESPAWN_SUMMIT_RESTART
 	):
 		failures.append("Session respawn reasons were not explicit: %s" % str(emitted_reasons))
 	SessionManager.respawn_requested.disconnect(on_respawn)
 	if previous_marker:
-		SessionManager.set_marker(SessionManager.marker)
+		SessionManager.set_marker(previous_marker_transform)
 	else:
 		SessionManager.clear_marker()
 	SessionManager.set_default_spawn(previous_spawn)
@@ -96,6 +104,11 @@ func _test_session_respawn_reasons_gate_capture() -> void:
 		failures.append("course recovery started an armed capture")
 	if not bool(recorder.get("armed")):
 		failures.append("course recovery disarmed a pending summit arm")
+	recorder.call("handle_session_respawn", SessionManager.RESPAWN_NEW_RUN_MARKER)
+	if bool(recorder.get("_recording")):
+		failures.append("new marker run started an armed capture")
+	if not bool(recorder.get("armed")):
+		failures.append("new marker run disarmed a pending summit arm")
 	recorder.call("handle_session_respawn", SessionManager.RESPAWN_SESSION)
 	if bool(recorder.get("_recording")):
 		failures.append("session respawn started an armed capture")
@@ -114,6 +127,14 @@ func _test_session_respawn_reasons_gate_capture() -> void:
 	if bool(recorder.get("_recording")):
 		failures.append("course recovery to default spawn did not interrupt an in-progress clip")
 	_assert_clean(recorder, "course recovery interruption")
+	await _destroy_recorder(recorder)
+
+	recorder = _new_recorder()
+	recorder.call("_start_recording")
+	recorder.call("handle_session_respawn", SessionManager.RESPAWN_NEW_RUN_MARKER)
+	if bool(recorder.get("_recording")):
+		failures.append("new marker run did not interrupt an in-progress clip")
+	_assert_clean(recorder, "new marker run interruption")
 	await _destroy_recorder(recorder)
 
 func _test_teardown_during_recording() -> void:
@@ -173,6 +194,77 @@ func _test_encode_thread_start_failure() -> void:
 			failures.append("encode start failure left temporary file %s" % file_name)
 	_assert_clean(recorder, "encode start failure")
 	await _destroy_recorder(recorder)
+
+func _test_state_reason_matrix() -> void:
+	var reasons: Array[StringName] = [
+		SessionManager.RESPAWN_SESSION,
+		SessionManager.RESPAWN_NEW_RUN_MARKER,
+		SessionManager.RESPAWN_COURSE_RECOVERY,
+		SessionManager.RESPAWN_SUMMIT_RESTART,
+	]
+	for state in ["idle", "armed", "recording"]:
+		for reason: StringName in reasons:
+			var recorder := _new_recorder()
+			if state == "armed":
+				recorder.call("arm")
+			elif state == "recording":
+				recorder.call("_start_recording")
+				recorder.set("_frames", _short_frames(recorder))
+			recorder.call("handle_session_respawn", reason)
+			var label := "%s × %s" % [state, reason]
+			if state == "armed" and reason == SessionManager.RESPAWN_SUMMIT_RESTART:
+				if not bool(recorder.get("_recording")):
+					failures.append("%s did not consume the arm into capture" % label)
+				if bool(recorder.get("armed")):
+					failures.append("%s left the recorder armed" % label)
+			elif state == "recording":
+				if bool(recorder.get("_recording")):
+					failures.append("%s left the capture active" % label)
+				if bool(recorder.get("armed")):
+					failures.append("%s left the recorder armed" % label)
+				if bool(recorder.get("_encoding")):
+					failures.append("%s muxed a too-short capture" % label)
+				_assert_clean(recorder, label)
+			else:
+				if bool(recorder.get("_recording")):
+					failures.append("%s started a capture" % label)
+				if bool(recorder.get("_encoding")):
+					failures.append("%s started encoding" % label)
+				if state == "idle" and bool(recorder.get("armed")):
+					failures.append("%s armed an idle recorder" % label)
+				if state == "armed" and reason != SessionManager.RESPAWN_SUMMIT_RESTART and not bool(recorder.get("armed")):
+					failures.append("%s disarmed a pending summit arm" % label)
+			await _destroy_recorder(recorder)
+
+func _test_active_recording_summit_restart_saves_partial() -> void:
+	# A long-enough partial capture closes into the mux pipeline; the new run
+	# starts unrecorded because the arm was already consumed by the first
+	# restart. Teardown before completion keeps the test from publishing a file.
+	var recorder := _new_recorder()
+	var frames := _make_valid_frames(recorder)
+	recorder.set("_recording", true)
+	recorder.set("_frames", frames)
+	recorder.set("_capture_frame_count", frames.size())
+	recorder.set("_capture_accum", 1.0 / 30.0)
+	recorder.call("handle_session_respawn", SessionManager.RESPAWN_SUMMIT_RESTART)
+	if bool(recorder.get("_recording")):
+		failures.append("summit restart during recording left the capture active")
+	if bool(recorder.get("armed")):
+		failures.append("summit restart during recording armed a new capture")
+	if not bool(recorder.get("_encoding")):
+		failures.append("summit restart during recording did not queue the partial clip for saving")
+	recorder.call("_shutdown_capture_workers")
+	_assert_clean(recorder, "partial clip restart")
+	await _destroy_recorder(recorder)
+
+func _short_frames(recorder: Node) -> Array[PackedByteArray]:
+	var image := Image.create(64, 48, false, Image.FORMAT_RGB8)
+	image.fill(Color("#8a2f4f"))
+	var encoded: PackedByteArray = recorder.call("_encode_jpeg_frame", image)
+	var frames: Array[PackedByteArray] = []
+	for _index in range(4):
+		frames.append(encoded)
+	return frames
 
 func _press_save_clip(recorder: Node) -> void:
 	var event := InputEventAction.new()

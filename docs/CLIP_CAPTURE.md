@@ -10,7 +10,7 @@ The runtime advertises this boundary through `ClipRecorder.RELEASE_SCOPE = &"pro
 
 F9 arms the next summit run for a 960×540, 30 fps MJPEG-in-MP4 debug capture. Press F9 again while the recorder is idle to cancel that pending arm. The pending arm survives a run ending before summit capture starts and is consumed only by an explicit Restart from Summit, not by session or course-recovery respawns that happen to use the default spawn.
 
-While recording, F9 stops the current capture. Out-of-bounds recovery interrupts an in-progress clip instead of continuing it across the teleport. The JPEG worker is bounded so capture cannot grow an unbounded queue or block the gameplay thread.
+While recording, F9 stops the current capture. Out-of-bounds recovery interrupts an in-progress clip instead of continuing it across the teleport. A Restart from Summit while a capture is active also closes that capture first — the partial clip enters the normal save pipeline if it is long enough and is discarded as too short otherwise — and the new run starts unrecorded unless the recorder is explicitly armed again. A second summit restart therefore never produces a clip spanning two runs with a teleport discontinuity. The JPEG worker is bounded so capture cannot grow an unbounded queue or block the gameplay thread.
 
 ## Timing contract
 

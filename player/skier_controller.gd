@@ -20,6 +20,7 @@ const BODY_COLLISION_SEAT_OFFSET := 0.67
 const CRASH_REST_MIN_SNOW_ALIGNMENT_DOT := 0.94
 
 signal state_changed(state_name: String)
+signal rail_finished(feature_id: StringName, outcome: StringName)
 signal telemetry_updated(data: Dictionary)
 signal landed(result: Dictionary)
 signal crashed
@@ -63,6 +64,7 @@ var rail_capture_blend_remaining := 0.0
 var rail_entry_severity := 0.0
 var rail_kink_severity := 0.0
 var rail_balance_velocity := 0.0
+var _rail_stall_time := 0.0
 var rail_previous_balance := 0.0
 var bail_time := 0.0
 var bail_recovering := false
@@ -183,12 +185,10 @@ func _physics_process(delta: float) -> void:
 		# race the recovery spawn.
 		if scoring != null:
 			scoring.step(delta, 0.0)
-		telemetry_updated.emit(telemetry())
+		telemetry_updated.emit(gameplay_telemetry())
 		return
 	if input_frame.respawn_pressed:
 		SessionManager.request_respawn()
-	if input_frame.marker_pressed and state == State.GROUND and contact.grounded:
-		SessionManager.set_marker(_marker_transform())
 	var velocity_before_motion := velocity
 	var state_before_motion := state
 	last_collision_diagnostics.clear()
@@ -203,6 +203,8 @@ func _physics_process(delta: float) -> void:
 		state != State.BAIL
 	)
 	contact.merge_capsule_floor(is_on_floor(), get_floor_normal(), profile.maximum_ground_angle_degrees)
+	if input_frame.marker_pressed and can_set_marker():
+		SessionManager.set_marker(_marker_transform())
 	_sample_trick_input(delta)
 	match state:
 		State.GROUND: _update_ground(delta)
@@ -233,7 +235,7 @@ func _physics_process(delta: float) -> void:
 	_update_contact_shadow(delta)
 	_update_debug()
 	AudioManager.update_surface_audio(velocity.length(), skid_amount, state == State.GRIND, contact.surface_kind, _audio_airborne())
-	telemetry_updated.emit(telemetry())
+	telemetry_updated.emit(gameplay_telemetry())
 
 func _update_ground(delta: float) -> void:
 	var ground_contact := _ground_motion_solver.resolve_contact(contact.grounded, coyote_remaining, delta, profile.coyote_time)
@@ -608,6 +610,15 @@ func _update_grind(delta: float) -> void:
 	if rail_motion.reached_end:
 		_exit_rail(false)
 		return
+	# A flat or opposed rail can stall at zero speed; linger briefly for
+	# balance recovery, then release the skier instead of balancing forever.
+	if rail_motion.stalled:
+		_rail_stall_time += delta
+		if _rail_stall_time >= maxf(profile.rail_stall_release_time, 0.0):
+			_exit_rail(false)
+			return
+	else:
+		_rail_stall_time = 0.0
 	# Balance: left stick counters drift; kinks and boardslides add instability.
 	var kink := 0.0
 	if rail_prev_tangent.length_squared() > 0.01:
@@ -967,6 +978,7 @@ func _try_capture_rail() -> void:
 		rail_previous_balance = rail_balance
 		rail_balance_velocity = 0.0
 		rail_kink_severity = 0.0
+		_rail_stall_time = 0.0
 		rail_prev_tangent = best.tangent as Vector3
 		rail_capture_from_position = global_position
 		rail_capture_blend_remaining = profile.rail_capture_blend_time
@@ -1023,6 +1035,8 @@ func _scan_rail_approach() -> float:
 	return best_score
 
 func _exit_rail(pop_off: bool) -> void:
+	if active_rail != null:
+		rail_finished.emit(_rail_feature_id(), &"success")
 	var tangent := active_rail.tangent_at(rail_offset) * rail_direction if active_rail != null else -global_basis.z
 	velocity = tangent * rail_speed
 	if pop_off:
@@ -1040,6 +1054,8 @@ func _exit_rail(pop_off: bool) -> void:
 	air_deliberate = pop_off
 
 func _slip_off_rail() -> void:
+	if active_rail != null:
+		rail_finished.emit(_rail_feature_id(), &"failed")
 	var tangent := active_rail.tangent_at(rail_offset) * rail_direction if active_rail != null else -global_basis.z
 	var sideways := Vector3.UP.cross(tangent).normalized()
 	if sideways.length_squared() < 0.01:
@@ -1067,6 +1083,8 @@ func _slip_off_rail() -> void:
 func enter_crash(context: CrashContext) -> bool:
 	if state == State.BAIL or context == null or not context.active:
 		return false
+	if state == State.GRIND and active_rail != null:
+		rail_finished.emit(_rail_feature_id(), &"failed")
 	_end_spawn_settle()
 	_clear_landing_orientation_settle()
 	active_rail = null
@@ -1428,8 +1446,11 @@ func _recover_from_bail(delta: float = 1.0 / 60.0) -> void:
 	_clear_crash_state()
 	state_changed.emit("Ground")
 
-func respawn_at(value: Transform3D, _reason: StringName = SessionManager.RESPAWN_SESSION) -> void:
+func respawn_at(value: Transform3D, reason: StringName = SessionManager.RESPAWN_SESSION) -> void:
 	var was_finished := scoring != null and scoring.finished
+	if state == State.GRIND and active_rail != null:
+		# A teleport cancels the rail attempt; the outcome is not a success.
+		rail_finished.emit(_rail_feature_id(), &"cancelled")
 	respawn_count += 1
 	active_rail = null
 	velocity = Vector3.ZERO
@@ -1455,6 +1476,7 @@ func respawn_at(value: Transform3D, _reason: StringName = SessionManager.RESPAWN
 	rail_balance = 0.0
 	rail_capture_blend_remaining = 0.0
 	rail_entry_severity = 0.0
+	_rail_stall_time = 0.0
 	bail_recovering = false
 	recent_rail_detach_time = 0.0
 	recent_rail_detach_balance = 0.0
@@ -1478,9 +1500,9 @@ func respawn_at(value: Transform3D, _reason: StringName = SessionManager.RESPAWN
 	gesture_strength = 0.0
 	input_frame.clear_values()
 	trick_command.reset()
-	if was_finished:
+	if was_finished or reason == SessionManager.RESPAWN_SUMMIT_RESTART or reason == SessionManager.RESPAWN_NEW_RUN_MARKER:
 		scoring.reset_run()
-	elif SessionManager.has_marker:
+	elif reason == SessionManager.RESPAWN_SESSION and SessionManager.has_marker:
 		scoring.apply_retry_cost()
 	else:
 		scoring.reset_link()
@@ -1548,11 +1570,35 @@ func set_recovery_frozen(value: bool) -> void:
 		angular_velocity = Vector3.ZERO
 		AudioManager.stop_feedback()
 
+func can_set_marker() -> bool:
+	# Authoritative marker eligibility for every input path: current-frame
+	# contact, a grounded GROUND state, and snow only. Rideable park features
+	# share the terrain probe channel but report FEATURE, so they cannot
+	# receive a session marker.
+	return (
+		state == State.GROUND
+		and contact.grounded
+		and contact.surface_class == SkiContactSolver.SurfaceClass.SNOW
+	)
+
 func _audio_airborne() -> bool:
 	return state == State.AIR or state == State.BAIL
 
 func _marker_transform() -> Transform3D:
-	return Transform3D(global_basis, ParkLayout.surface_hover(global_position.x, global_position.z, ParkLayout.MARKER_HOVER))
+	# Store a downhill-facing basis on the sampled snow plane rather than the
+	# live basis, which can be crash-oriented whenever a menu path saves.
+	var forward := (-global_basis.z).slide(contact.average_normal)
+	if forward.length_squared() < 0.0001:
+		forward = contact.downhill()
+	if forward.length_squared() < 0.0001:
+		forward = Vector3.FORWARD
+	var basis := Basis.looking_at(forward.normalized(), contact.average_normal.normalized()).orthonormalized()
+	return Transform3D(basis, ParkLayout.surface_hover(global_position.x, global_position.z, ParkLayout.MARKER_HOVER))
+
+func _rail_feature_id() -> StringName:
+	if active_rail == null:
+		return &""
+	return StringName(active_rail.get_meta("feature_id", StringName(active_rail.name.to_snake_case())))
 
 func _clear_locomotion_channels() -> void:
 	edge_amount = 0.0
@@ -1598,6 +1644,7 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	rail_capture_blend_remaining = 0.0
 	rail_pose = 0
 	rail_entry_severity = 0.0
+	_rail_stall_time = 0.0
 	bail_time = 0.0
 	bail_recovering = false
 	recent_rail_detach_time = 0.0
@@ -1689,7 +1736,48 @@ func _record_motion_diagnostics(velocity_before_motion: Vector3) -> void:
 			"collisions": collision_count,
 		}
 
+func gameplay_telemetry() -> Dictionary:
+	# Narrow per-tick payload for HUD and content observers. The full debug
+	# snapshot is built only while the F3 display or a recorder asks for it.
+	return {
+		"speed_mps": velocity.length(),
+		"state": State.keys()[state],
+		"grounded": contact.grounded,
+		"snow_contact": contact.surface_class == SkiContactSolver.SurfaceClass.SNOW,
+		"rail_balance": rail_balance,
+		"rail_progress": clampf(rail_offset / maxf(active_rail.path_length, 0.01), 0.0, 1.0) if active_rail != null else 0.0,
+		"predicted_landing_time": predicted_landing_time,
+		"predicted_landing_valid": predicted_landing_valid,
+		"landing_feedback_armed": landing_feedback_armed,
+		"landing_cue": animation_controller.landing_cue_snapshot() if animation_controller != null else {},
+		"scoring": scoring.snapshot(),
+		"collision_count": get_slide_collision_count(),
+		"speed_discontinuity": last_speed_discontinuity,
+		"flick": _flick_telemetry(),
+	}
+
+func _flick_telemetry() -> Dictionary:
+	return {
+		"stick": input_frame.right_stick,
+		"kind": TrickCommand.Kind.keys()[active_trick_kind],
+		"phase": TrickCommand.PresentationPhase.keys()[trick_phase],
+		"strength": gesture_strength,
+		"left_trigger": input_frame.left_trigger,
+		"right_trigger": input_frame.right_trigger,
+		"grab": TrickController.GRAB_NAMES[trick.grab_pose],
+		"grab_qualified": trick.grab_qualified,
+		"live_grab": trick.live_grab_name,
+		"style": TrickController.STYLE_NAMES[trick.style_pose],
+		"trick_text": trick.live_name() if trick != null else "",
+		"yaw_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.y)))) if trick != null else 0,
+		"flip_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.x)))) if trick != null else 0,
+		"cork_degrees": int(round(rad_to_deg(maxf(absf(trick.accumulated_rotation.y), absf(trick.accumulated_rotation.z))))) if trick != null else 0,
+		"accumulated_rotation": trick.accumulated_rotation if trick != null else Vector3.ZERO,
+	}
+
 func telemetry() -> Dictionary:
+	# Full debug snapshot: pulled on demand by the F3 display and diagnostics,
+	# never emitted at gameplay rate.
 	return {
 		"speed_mps": velocity.length(),
 		"speed_kph": velocity.length() * 3.6,
@@ -1749,23 +1837,7 @@ func telemetry() -> Dictionary:
 		"upright_dot": global_basis.y.normalized().dot(contact.average_normal.normalized()),
 		"line_link": scoring.link_remaining > 0.0,
 		"scoring": scoring.snapshot(),
-		"flick": {
-			"stick": input_frame.right_stick,
-			"kind": TrickCommand.Kind.keys()[active_trick_kind],
-			"phase": TrickCommand.PresentationPhase.keys()[trick_phase],
-			"strength": gesture_strength,
-			"left_trigger": input_frame.left_trigger,
-			"right_trigger": input_frame.right_trigger,
-			"grab": TrickController.GRAB_NAMES[trick.grab_pose],
-			"grab_qualified": trick.grab_qualified,
-			"live_grab": trick.live_grab_name,
-			"style": TrickController.STYLE_NAMES[trick.style_pose],
-			"trick_text": trick.live_name() if trick != null else "",
-			"yaw_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.y)))) if trick != null else 0,
-			"flip_degrees": int(round(rad_to_deg(absf(trick.accumulated_rotation.x)))) if trick != null else 0,
-			"cork_degrees": int(round(rad_to_deg(maxf(absf(trick.accumulated_rotation.y), absf(trick.accumulated_rotation.z))))) if trick != null else 0,
-			"accumulated_rotation": trick.accumulated_rotation if trick != null else Vector3.ZERO,
-		},
+		"flick": _flick_telemetry(),
 		"animation": animation_controller.debug_snapshot() if animation_controller != null else {},
 	}
 
