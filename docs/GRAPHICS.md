@@ -26,12 +26,14 @@ The maintained graphics settings include:
 - display mode and resolution;
 - VSync and FPS cap;
 - render scale;
+- upscaling (Bilinear / FSR 1.0 / FSR 2.2) with FSR sharpness;
 - temporal anti-aliasing;
 - shadow quality intent;
 - snow shader quality;
 - SSAO;
 - SSIL;
 - SSR;
+- reflection quality (SSR steps plus player-probe intensity/range);
 - fog.
 
 Low / Medium use the Fast snow tier by default. High / Ultra use Premium snow. Editing an individual graphics option changes the preset state to Custom.

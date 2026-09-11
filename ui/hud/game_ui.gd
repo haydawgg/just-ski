@@ -473,7 +473,7 @@ func _build_options_menu() -> void:
 	options_panel.visible = false
 	options_panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	options_panel.position = Vector2(365, 58)
-	options_panel.size = Vector2(870, 815)
+	options_panel.size = Vector2(870, 880)
 	add_child(options_panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
@@ -550,6 +550,22 @@ func _build_options_menu() -> void:
 		anti_aliasing.add_item(text)
 	graphics_tab.add_child(_row("Anti-aliasing", anti_aliasing))
 	anti_aliasing.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("anti_aliasing", index))
+	var scaling_mode := OptionButton.new()
+	scaling_mode.name = "ScalingMode"
+	for text: String in ["Bilinear", "FSR 1.0", "FSR 2.2"]:
+		scaling_mode.add_item(text)
+	graphics_tab.add_child(_row("Upscaling", scaling_mode))
+	scaling_mode.item_selected.connect(func(index: int) -> void:
+		GameSettings.set_pending("scaling_mode", index)
+		_refresh_aa_editability()
+	)
+	var fsr_sharpness := HSlider.new()
+	fsr_sharpness.name = "FSRSharpness"
+	fsr_sharpness.min_value = 0.0
+	fsr_sharpness.max_value = 2.0
+	fsr_sharpness.step = 0.05
+	graphics_tab.add_child(_row("FSR sharpness", fsr_sharpness))
+	fsr_sharpness.value_changed.connect(func(value: float) -> void: GameSettings.set_pending("fsr_sharpness", value))
 	var shadow_quality := OptionButton.new()
 	shadow_quality.name = "ShadowQuality"
 	for text: String in ["Low", "Medium", "High", "Ultra"]:
@@ -577,6 +593,12 @@ func _build_options_menu() -> void:
 	ssr.text = "Enabled"
 	graphics_tab.add_child(_row("Screen-space reflections", ssr))
 	ssr.toggled.connect(func(value: bool) -> void: GameSettings.set_pending("ssr_enabled", value))
+	var reflection_quality := OptionButton.new()
+	reflection_quality.name = "ReflectionQuality"
+	for text: String in ["Low", "Medium", "High"]:
+		reflection_quality.add_item(text)
+	graphics_tab.add_child(_row("Reflection quality", reflection_quality))
+	reflection_quality.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("reflection_quality", index))
 	var fog := CheckButton.new()
 	fog.name = "Fog"
 	fog.text = "Enabled"
@@ -965,11 +987,15 @@ func _sync_options() -> void:
 	(options_panel.find_child("EnvironmentPreset", true, false) as OptionButton).select(clampi(int(GameSettings.pending["environment_preset"]), 0, 2))
 	(options_panel.find_child("RenderScale", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["render_scale"]))
 	(options_panel.find_child("AntiAliasing", true, false) as OptionButton).select(clampi(int(GameSettings.pending["anti_aliasing"]), 0, 1))
+	(options_panel.find_child("ScalingMode", true, false) as OptionButton).select(clampi(int(GameSettings.pending["scaling_mode"]), 0, 2))
+	(options_panel.find_child("FSRSharpness", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["fsr_sharpness"]))
+	_refresh_aa_editability()
 	(options_panel.find_child("ShadowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["shadow_quality"]), 0, 3))
 	(options_panel.find_child("SnowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["snow_quality"]), 0, 1))
 	(options_panel.find_child("SSAO", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssao_enabled"]))
 	(options_panel.find_child("SSIL", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssil_enabled"]))
 	(options_panel.find_child("SSR", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssr_enabled"]))
+	(options_panel.find_child("ReflectionQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["reflection_quality"]), 0, 2))
 	(options_panel.find_child("Fog", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["fog_enabled"]))
 	(options_panel.find_child("GI", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["gi_enabled"]))
 	(options_panel.find_child("Master", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["master_volume_db"]))
@@ -982,6 +1008,13 @@ func _sync_options() -> void:
 	(options_panel.find_child("Deadzone", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_deadzone"]))
 	(options_panel.find_child("OuterDeadzone", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_outer_deadzone"]))
 	(options_panel.find_child("Response", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["stick_response"]))
+
+func _refresh_aa_editability() -> void:
+	# FSR 2.2 performs its own temporal anti-aliasing; the TAA toggle has no
+	# effect while it is selected, so the row is disabled to say so honestly.
+	var anti_aliasing := options_panel.find_child("AntiAliasing", true, false) as OptionButton
+	if anti_aliasing != null:
+		anti_aliasing.disabled = int(GameSettings.pending.get("scaling_mode", 0)) == 2
 
 func _apply_options() -> void:
 	var previous := GameSettings.active.duplicate(true)

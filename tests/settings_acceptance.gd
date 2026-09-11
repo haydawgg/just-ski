@@ -44,6 +44,16 @@ func _ready() -> void:
 	_check(int(GameSettings.active["shadow_quality"]) in [0, 3], "Apply did not promote shadow quality")
 	_check(FileAccess.file_exists(GameSettings.CONFIG_PATH), "Applied settings were not persisted")
 
+	GameSettings.begin_edit()
+	GameSettings.set_pending("scaling_mode", 2)
+	GameSettings.set_pending("fsr_sharpness", 0.6)
+	GameSettings.set_pending("reflection_quality", 1)
+	GameSettings.apply_pending()
+	_check(int(get_viewport().scaling_3d_mode) == 2, "Apply did not promote the upscaling mode")
+	_check(is_equal_approx(get_viewport().fsr_sharpness, 0.6), "Apply did not promote FSR sharpness")
+	_check(not get_viewport().use_taa, "FSR2 did not take over temporal anti-aliasing")
+	_check(int(GameSettings.active["reflection_quality"]) == 1, "Apply did not promote reflection quality")
+
 	GameSettings.active = {}
 	GameSettings.pending = {}
 	GameSettings.load_settings()
@@ -52,6 +62,9 @@ func _ready() -> void:
 	_check(int(GameSettings.active["environment_preset"]) == staged_environment_preset, "Saved time of day did not survive reload")
 	_check(int(GameSettings.active["anti_aliasing"]) in [0, 1], "Saved anti-aliasing did not survive reload")
 	_check(int(GameSettings.active["shadow_quality"]) in [0, 1, 2, 3], "Saved shadow quality did not survive reload")
+	_check(int(GameSettings.active["scaling_mode"]) == 2, "Saved upscaling mode did not survive reload")
+	_check(is_equal_approx(float(GameSettings.active["fsr_sharpness"]), 0.6), "Saved FSR sharpness did not survive reload")
+	_check(int(GameSettings.active["reflection_quality"]) == 1, "Saved reflection quality did not survive reload")
 
 	GameSettings.pending = original.duplicate(true)
 	GameSettings.apply_pending()
@@ -85,6 +98,13 @@ func _test_validation_schema() -> void:
 	_check(bool(GameSettings.pending["gi_enabled"]), "High preset did not allow GI")
 	GameSettings.apply_preset(99)
 	_check(int(GameSettings.pending["graphics_preset"]) == 4, "Invalid graphics preset did not clamp safely")
+	GameSettings.apply_preset(0)
+	_check(int(GameSettings.pending["reflection_quality"]) == 0, "Low preset did not select low reflections")
+	GameSettings.apply_preset(1)
+	_check(int(GameSettings.pending["reflection_quality"]) == 1, "Medium preset did not select medium reflections")
+	GameSettings.apply_preset(2)
+	_check(int(GameSettings.pending["reflection_quality"]) == 2, "High preset did not select high reflections")
+	_check(int(GameSettings.pending["scaling_mode"]) == 0, "High preset did not reset the upscaling mode")
 	var save_events := [0]
 	var on_settings_saved := func() -> void: save_events[0] += 1
 	GameSettings.settings_saved.connect(on_settings_saved)
@@ -101,6 +121,10 @@ func _test_validation_schema() -> void:
 	_check(save_error != OK, "Invalid settings path unexpectedly reported success")
 	_check(save_failures.size() == 1 and save_failures[0] == save_error, "Settings save failure was not reported through its signal")
 	_check(GameSettings.active == active_before_failure, "Failed settings save rolled back or changed active settings")
+	_check(GameSettings._validated("scaling_mode", -1) == 0, "Upscaling mode did not clamp to the lower bound")
+	_check(GameSettings._validated("scaling_mode", 99) == 2, "Upscaling mode did not clamp to the upper bound")
+	_check(is_equal_approx(float(GameSettings._validated("fsr_sharpness", -1.0)), 0.0), "FSR sharpness did not clamp to the lower bound")
+	_check(is_equal_approx(float(GameSettings._validated("fsr_sharpness", 5.0)), 2.0), "FSR sharpness did not clamp to the upper bound")
 
 func _check(condition: bool, message: String) -> void:
 	if not condition:

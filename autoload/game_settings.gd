@@ -7,12 +7,15 @@ signal settings_save_failed(error: Error)
 const CONFIG_PATH := "user://settings.cfg"
 const RENDERER_SETTING_KEYS := [
 	"render_scale",
+	"scaling_mode",
+	"fsr_sharpness",
 	"anti_aliasing",
 	"shadow_quality",
 	"snow_quality",
 	"ssao_enabled",
 	"ssil_enabled",
 	"ssr_enabled",
+	"reflection_quality",
 	"fog_enabled",
 	"gi_enabled",
 ]
@@ -23,12 +26,15 @@ const DEFAULTS := {
 	"fps_cap": 120,
 	"graphics_preset": 2,
 	"render_scale": 1.0,
+	"scaling_mode": 0,
+	"fsr_sharpness": 0.2,
 	"anti_aliasing": 1,
 	"shadow_quality": 2,
 	"snow_quality": 1,
 	"ssao_enabled": true,
 	"ssil_enabled": false,
 	"ssr_enabled": true,
+	"reflection_quality": 2,
 	"fog_enabled": true,
 	"gi_enabled": true,
 	"environment_preset": 0,
@@ -113,12 +119,15 @@ func apply_preset(preset: int) -> void:
 	# attainable without changing gameplay or scene geometry.
 	var scales := [0.65, 0.65, 1.0, 1.0]
 	pending["render_scale"] = scales[selected_preset]
+	pending["scaling_mode"] = 0
+	pending["fsr_sharpness"] = 0.2
 	pending["anti_aliasing"] = 0 if selected_preset == 0 else 1
 	pending["shadow_quality"] = selected_preset
 	pending["snow_quality"] = 1 if selected_preset >= 2 else 0
 	pending["ssao_enabled"] = selected_preset >= 1
 	pending["ssil_enabled"] = selected_preset >= 3
 	pending["ssr_enabled"] = selected_preset >= 2
+	pending["reflection_quality"] = 0 if selected_preset == 0 else (1 if selected_preset == 1 else 2)
 	pending["fog_enabled"] = selected_preset >= 1
 	pending["gi_enabled"] = graphics_preset_allows_gi(selected_preset)
 
@@ -141,9 +150,12 @@ func _validated(key: String, value: Variant) -> Variant:
 			return _validated_int(key, value, 0, 2)
 		"fps_cap": return _validated_int(key, value, 0, 360)
 		"render_scale": return _validated_float(key, value, 0.5, 1.5)
+		"scaling_mode": return _validated_int(key, value, 0, 2)
+		"fsr_sharpness": return _validated_float(key, value, 0.0, 2.0)
 		"anti_aliasing": return _validated_int(key, value, 0, 1)
 		"shadow_quality": return _validated_int(key, value, 0, 3)
 		"snow_quality": return _validated_int(key, value, 0, 1)
+		"reflection_quality": return _validated_int(key, value, 0, 2)
 		"graphics_preset": return _validated_int(key, value, 0, 4)
 		"environment_preset": return _validated_int(key, value, 0, 2)
 		"master_volume_db", "music_volume_db", "sfx_volume_db": return _validated_float(key, value, -30.0, 0.0)
@@ -193,7 +205,13 @@ func _apply_display() -> void:
 	if mode == DisplayServer.WINDOW_MODE_WINDOWED:
 		DisplayServer.window_set_size(active["resolution"] as Vector2i)
 	get_viewport().scaling_3d_scale = float(active["render_scale"])
-	get_viewport().use_taa = int(active["anti_aliasing"]) > 0
+	# FSR2 supplies its own temporal anti-aliasing (Godot ignores use_taa
+	# under FSR2), so the viewport reflects FSR2 ownership directly instead of
+	# reporting TAA on while it has no effect.
+	var scaling_mode := clampi(int(active["scaling_mode"]), 0, 2)
+	get_viewport().scaling_3d_mode = scaling_mode
+	get_viewport().fsr_sharpness = float(active["fsr_sharpness"])
+	get_viewport().use_taa = int(active["anti_aliasing"]) > 0 and scaling_mode != Viewport.SCALING_3D_MODE_FSR2
 
 func _apply_audio() -> void:
 	for bus_name: String in ["Master", "Music", "SFX"]:

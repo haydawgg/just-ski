@@ -6,6 +6,9 @@ const DEFAULT_BODY_PATH := "res://assets/characters/skier/skier_body.glb"
 const DEFAULT_OUTFIT := preload("res://resources/character/default_skier_outfit_profile.tres")
 const MIN_POLE_KNEE_CLEARANCE := 0.10
 const MIN_POLE_BODY_CLEARANCE := 0.015
+## Minimum shaft-to-shaft clearance between the two poles. Shaft radius is
+## 0.016 per pole, so 0.05 keeps visible daylight between the shafts.
+const MIN_POLE_POLE_CLEARANCE := 0.05
 const POLE_HAND_EXCLUSION_RATIO := 0.075
 const POLE_SHAFT_LENGTH := 1.185
 const MAX_HELPER_TURN := PI
@@ -962,6 +965,42 @@ func _stabilize_equipment_poles() -> void:
 		var final_side_sign := _pole_side_sign(side, pivot.global_position, lateral)
 		if final_direction.dot(lateral) * final_side_sign < 0.02 or _minimum_pole_body_clearance(pivot.global_position, tip.global_position) < MIN_POLE_BODY_CLEARANCE:
 			pivot.global_basis = target_basis
+	_separate_pole_shafts(skier_basis)
+
+## Symmetric pole-to-pole repulsion. After per-side stabilization, the two
+## shafts can still cross (e.g. switch landings, tight tucks). Yaw both pivots
+## outward around the skier-forward axis until shaft daylight reaches
+## MIN_POLE_POLE_CLEARANCE. Skipped while either hand holds a grab, where
+## poles intentionally gather near the ski. Rotation preserves pivot position;
+## the per-frame cap plus the high release threshold prevent oscillation.
+func _separate_pole_shafts(skier_basis: Basis) -> void:
+	var left_pivot := equipment_nodes.get(&"left_pole") as Node3D
+	var right_pivot := equipment_nodes.get(&"right_pole") as Node3D
+	var left_tip := equipment_tips.get(&"left") as Node3D
+	var right_tip := equipment_tips.get(&"right") as Node3D
+	if left_pivot == null or right_pivot == null or left_tip == null or right_tip == null:
+		return
+	if (_grab_target_world.get(&"left", Vector3.ZERO) as Vector3) != Vector3.ZERO:
+		return
+	if (_grab_target_world.get(&"right", Vector3.ZERO) as Vector3) != Vector3.ZERO:
+		return
+	var left_start := left_pivot.global_position.lerp(left_tip.global_position, POLE_HAND_EXCLUSION_RATIO)
+	var right_start := right_pivot.global_position.lerp(right_tip.global_position, POLE_HAND_EXCLUSION_RATIO)
+	var distance := _segment_to_segment_distance(left_start, left_tip.global_position, right_start, right_tip.global_position)
+	if not is_finite(distance) or distance >= MIN_POLE_POLE_CLEARANCE + 0.01:
+		return
+	# Rotating a downward shaft about the forward axis swings its tip
+	# laterally: angle sign -side_sign moves each tip outward. See derivation
+	# in _pole_basis_for_direction usage; capped so one frame cannot snap.
+	var forward := -skier_basis.z
+	if forward.length_squared() < 0.5 or not forward.is_finite():
+		return
+	forward = forward.normalized()
+	var magnitude := clampf((MIN_POLE_POLE_CLEARANCE - distance) * 2.0, 0.0, 0.10)
+	if magnitude <= 0.0001:
+		return
+	left_pivot.global_basis = (Basis(forward, magnitude) * left_pivot.global_basis).orthonormalized()
+	right_pivot.global_basis = (Basis(forward, -magnitude) * right_pivot.global_basis).orthonormalized()
 
 func pole_clearance_snapshot() -> Dictionary:
 	var left_pivot := equipment_nodes.get(&"left_pole") as Node3D
@@ -980,6 +1019,9 @@ func pole_clearance_snapshot() -> Dictionary:
 	var right_clearance := _minimum_pole_knee_clearance(right_pivot.global_position, right_tip.global_position)
 	var left_body_clearance := _minimum_pole_body_clearance(left_pivot.global_position, left_tip.global_position)
 	var right_body_clearance := _minimum_pole_body_clearance(right_pivot.global_position, right_tip.global_position)
+	var pole_pole_clearance := _segment_to_segment_distance(
+		left_pivot.global_position.lerp(left_tip.global_position, POLE_HAND_EXCLUSION_RATIO), left_tip.global_position,
+		right_pivot.global_position.lerp(right_tip.global_position, POLE_HAND_EXCLUSION_RATIO), right_tip.global_position)
 	return {
 		"left_pole_knee_clearance_m": left_clearance,
 		"right_pole_knee_clearance_m": right_clearance,
@@ -987,6 +1029,7 @@ func pole_clearance_snapshot() -> Dictionary:
 		"left_pole_body_clearance_m": left_body_clearance,
 		"right_pole_body_clearance_m": right_body_clearance,
 		"pole_body_clearance_m": minf(left_body_clearance, right_body_clearance),
+		"pole_pole_clearance_m": pole_pole_clearance,
 		"left_pole_outward_dot": left_direction.dot(lateral) * left_side_sign,
 		"right_pole_outward_dot": right_direction.dot(lateral) * right_side_sign,
 		"poles_outward": left_direction.dot(lateral) * left_side_sign >= 0.02 and right_direction.dot(lateral) * right_side_sign >= 0.02,

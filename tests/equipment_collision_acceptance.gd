@@ -9,9 +9,11 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	await _check_visual_ski_feature_sweep()
 	_check_pole_body_and_snow_clearance()
+	_check_ski_span_separation()
+	await _check_airborne_pole_obstruction()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("EQUIPMENT_COLLISION_PASS: visual skis stop at solid features and pole shafts clear the body and snow envelopes")
+		print("EQUIPMENT_COLLISION_PASS: visual skis stop at solid features, pole shafts clear the body and snow envelopes, and ski nose/tail pairs hold separation")
 		await _finish(0)
 		return
 	for failure: String in failures:
@@ -87,11 +89,13 @@ func _check_pole_body_and_snow_clearance() -> void:
 		var signed_clearance := _minimum_pole_body_clearance(adapter)
 		var snow_clearance := _minimum_ground_pole_tip_clearance(adapter) if str(entry.label) == "ground" else INF
 		var production_clearance := adapter.pole_clearance_snapshot()
-		print("EQUIPMENT_POLE_CLEARANCE %s body=%.3f snow=%.3f left=%.3f right=%.3f" % [entry.label, signed_clearance, snow_clearance, float(production_clearance.get("left_pole_body_clearance_m", -INF)), float(production_clearance.get("right_pole_body_clearance_m", -INF))])
+		print("EQUIPMENT_POLE_CLEARANCE %s body=%.3f snow=%.3f left=%.3f right=%.3f polepole=%.3f" % [entry.label, signed_clearance, snow_clearance, float(production_clearance.get("left_pole_body_clearance_m", -INF)), float(production_clearance.get("right_pole_body_clearance_m", -INF)), float(production_clearance.get("pole_pole_clearance_m", -INF))])
 		if signed_clearance < 0.015:
 			failures.append("%s pole shaft entered the body envelope (%.3fm signed clearance)" % [entry.label, signed_clearance])
 		if snow_clearance < -0.055:
 			failures.append("%s pole tip passed too far below the ski contact plane (%.3fm)" % [entry.label, snow_clearance])
+		if str(entry.label) == "ground" and float(production_clearance.get("pole_pole_clearance_m", -INF)) < 0.04:
+			failures.append("%s pole shafts converged (%.3fm shaft daylight)" % [entry.label, float(production_clearance.get("pole_pole_clearance_m", -INF))])
 	_remove_now(rig)
 
 func _minimum_pole_body_clearance(adapter: SkeletonSkierRig) -> float:
@@ -124,6 +128,72 @@ func _minimum_ground_pole_tip_clearance(adapter: SkeletonSkierRig) -> float:
 		((landmarks.left_pole_tip as Vector3) - ski_plane_point).dot(up),
 		((landmarks.right_pole_tip as Vector3) - ski_plane_point).dot(up)
 	)
+
+func _check_ski_span_separation() -> void:
+	# Yawed ski pair with coincident boots: nose pair crosses laterally.
+	# The span solver must separate nose and tail pairs to at least the
+	# stance width without moving the pair centroid.
+	var lateral := Vector3.RIGHT
+	var left_boot := Vector3.ZERO
+	var right_boot := Vector3.ZERO
+	var left_forward := Vector3(0.0, 0.0, -1.0)
+	var right_forward := Vector3(0.35, 0.0, -0.94).normalized()
+	var separated: Array = SkiConstrainedLegIK.separate_ski_span(
+		left_boot, right_boot, left_forward, right_forward, lateral, 0.16)
+	var left_out := separated[0] as Vector3
+	var right_out := separated[1] as Vector3
+	for end_sign: float in [1.0, -1.0]:
+		var left_end := left_out + left_forward * (SkiConstrainedLegIK.SKI_HALF_LENGTH * end_sign)
+		var right_end := right_out + right_forward * (SkiConstrainedLegIK.SKI_HALF_LENGTH * end_sign)
+		if (right_end - left_end).dot(lateral) < 0.16 - 0.0001:
+			failures.append("Ski span solver left nose/tail pairs overlapping after separation")
+	# Idempotency: a satisfied span passes through unchanged.
+	var settled: Array = SkiConstrainedLegIK.separate_ski_span(
+		left_out, right_out, left_forward, right_forward, lateral, 0.16)
+	if not (settled[0] as Vector3).is_equal_approx(left_out) or not (settled[1] as Vector3).is_equal_approx(right_out):
+		failures.append("Ski span solver is not idempotent on a satisfied span")
+	# Degenerate forward falls back to boot positions without failing.
+	var degenerate: Array = SkiConstrainedLegIK.separate_ski_span(
+		left_boot, right_boot, Vector3.ZERO, Vector3.ZERO, lateral, 0.16)
+	if not (degenerate[0] as Vector3).is_finite() or not (degenerate[1] as Vector3).is_finite():
+		failures.append("Ski span solver produced a non-finite result for degenerate ski forward")
+
+func _check_airborne_pole_obstruction() -> void:
+	# A solid park feature on the pole shaft must retract AIR preview IK
+	# (presentation-only obstruction), while an empty scene stays at full
+	# weight. Leg rays aim straight down from the hips so only the pole ray
+	# can observe the fixture.
+	var rig := SkierAnimationController.new()
+	add_child(rig)
+	await get_tree().physics_frame
+	if rig.left_hand == null or rig.left_pole_tip == null:
+		failures.append("Articulated rig did not expose hand and pole-tip nodes")
+		_remove_now(rig)
+		return
+	var clear_scale := rig._preview_obstruction_scale(
+		rig.left_hip.global_position + Vector3(0.0, -3.0, 0.0),
+		rig.right_hip.global_position + Vector3(0.0, -3.0, 0.0))
+	if clear_scale < 0.999:
+		failures.append("AIR preview reported obstruction with no feature present (%.3f)" % clear_scale)
+	var midpoint := (rig.left_hand.global_position + rig.left_pole_tip.global_position) * 0.5
+	var obstacle := StaticBody3D.new()
+	obstacle.collision_layer = 4
+	obstacle.collision_mask = 0
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(0.12, 0.12, 0.12)
+	shape_node.shape = shape
+	obstacle.add_child(shape_node)
+	add_child(obstacle)
+	obstacle.global_position = midpoint
+	await get_tree().physics_frame
+	var blocked_scale := rig._preview_obstruction_scale(
+		rig.left_hip.global_position + Vector3(0.0, -3.0, 0.0),
+		rig.right_hip.global_position + Vector3(0.0, -3.0, 0.0))
+	if blocked_scale > 0.001:
+		failures.append("AIR preview ignored a solid feature on the pole shaft (%.3f)" % blocked_scale)
+	_remove_now(obstacle)
+	_remove_now(rig)
 
 func _point_to_segment(point: Vector3, start: Vector3, end: Vector3) -> float:
 	var segment := end - start
