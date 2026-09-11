@@ -2,6 +2,10 @@
 
 The `docs/` directory contains maintained project contracts, active worklists, and release/validation procedures. It is not an archive of implementation history.
 
+## Active implementation work
+
+- [Model-executable implementation plan](IMPLEMENTATION_PLAN/README.md) — dependency-ordered gameplay, camera, character, course, terrain/snow, world/environment, performance/display, and release-acceptance work. Execute phase-by-phase and remove/fold durable conclusions into maintained docs when complete.
+
 ## Product and gameplay
 
 - [Content design](CONTENT_DESIGN_PLAN.md) — current course goals, spot structure, design rules, and remaining human gates.
