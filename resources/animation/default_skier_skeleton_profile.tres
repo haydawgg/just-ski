@@ -4,7 +4,7 @@
 
 [resource]
 script = ExtResource("1")
-model_transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 0, 1.0401, 0.0148)
+model_transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 0, 0.9201, 0.0148)
 bone_names = {
 &"chest": &"spine.003",
 &"head": &"spine.005",

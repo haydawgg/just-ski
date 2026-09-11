@@ -6,8 +6,8 @@ const DEFAULT_BODY_PATH := "res://assets/characters/skier/skier_body.glb"
 const DEFAULT_OUTFIT := preload("res://resources/character/default_skier_outfit_profile.tres")
 const MIN_POLE_KNEE_CLEARANCE := 0.10
 const MIN_POLE_BODY_CLEARANCE := 0.015
-## Minimum shaft-to-shaft clearance between the two poles. Shaft radius is
-## 0.016 per pole, so 0.05 keeps visible daylight between the shafts.
+## Minimum shaft-to-shaft clearance between the two poles. The visible shafts
+## are 0.016 m in diameter, so 0.05 keeps clear daylight between them.
 const MIN_POLE_POLE_CLEARANCE := 0.05
 const POLE_HAND_EXCLUSION_RATIO := 0.075
 const POLE_SHAFT_LENGTH := 1.185
@@ -799,9 +799,9 @@ func _build_attachments() -> void:
 	head_attachment.add_child(head_mount)
 	SkierEquipment.build_headwear(head_mount, helmet_surface, frame_surface, lens_surface)
 	# Neck gaiter hides the bare skin column between collar and helmet that
-	# reads as an unnaturally long neck from behind. Jacket material ties it
-	# to the shell rather than the skin.
-	SkierEquipment.build_neck_gaiter(head_mount, jacket)
+	# reads as an unnaturally long neck from behind. The darker jacket panel
+	# material separates the gaiter from both exposed skin and the coat body.
+	SkierEquipment.build_neck_gaiter(head_mount, jacket_accent)
 	# Shaded mouth line on the base-mesh chin (measured seating, not a guess).
 	# Darkened skin reads as a mouth at gameplay distance without face texture.
 	var mouth_surface := SkierEquipment.material(outfit_profile.skin_color.darkened(0.45), outfit_profile.skin_roughness, 0.0, outfit_profile.skin_specular)

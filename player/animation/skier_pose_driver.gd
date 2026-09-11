@@ -3,16 +3,20 @@ extends Node3D
 
 const REST_POSITIONS := {
 	&"balance_root": Vector3.ZERO,
-	&"pelvis": Vector3(0.0, 0.96, 0.0),
-	&"spine": Vector3(0.0, 0.14, 0.0),
-	&"chest": Vector3(0.0, 0.42, 0.0),
-	&"head": Vector3(0.0, 0.38, 0.0),
-	&"left_hip": Vector3(-0.20, -0.04, 0.0),
-	&"right_hip": Vector3(0.20, -0.04, 0.0),
-	&"left_knee": Vector3(0.0, -0.52, 0.0),
-	&"right_knee": Vector3(0.0, -0.52, 0.0),
-	&"left_boot": Vector3(0.0, -0.49, -0.03),
-	&"right_boot": Vector3(0.0, -0.49, -0.03),
+	# Calibrated against the production skeleton's native human proportions.
+	# The previous 0.40 m hip-center span and 1.01 m leg chain stretched the
+	# source mesh into a wide, bow-legged silhouette. These targets keep the
+	# boots at the same height while balancing native-length legs with the torso.
+	&"pelvis": Vector3(0.0, 0.84, 0.0),
+	&"spine": Vector3(0.0, 0.16, 0.0),
+	&"chest": Vector3(0.0, 0.45, 0.0),
+	&"head": Vector3(0.0, 0.37, 0.0),
+	&"left_hip": Vector3(-0.135, -0.02, 0.0),
+	&"right_hip": Vector3(0.135, -0.02, 0.0),
+	&"left_knee": Vector3(0.0, -0.47, 0.0),
+	&"right_knee": Vector3(0.0, -0.47, 0.0),
+	&"left_boot": Vector3(0.0, -0.44, -0.03),
+	&"right_boot": Vector3(0.0, -0.44, -0.03),
 	&"left_ski": Vector3(0.0, -0.12, -0.08),
 	&"right_ski": Vector3(0.0, -0.12, -0.08),
 	&"left_shoulder": Vector3(-0.4, 0.24, 0.0),
