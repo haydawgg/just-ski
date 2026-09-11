@@ -4,12 +4,8 @@ This file tracks concrete, actionable bugs and missing functionality. Resolved i
 
 ## Animation, physics, and bail recovery
 
-- **Extreme high-energy bails can briefly show a near-vertical ski silhouette during `FALL`.** The body collider and contact probes now stay surface-aligned while the rendered skier tumbles, roll speed is capped, and `REST` cannot begin until the root is snow-aligned. The remaining awkward frames are transient rather than a held vertical-ski pose, but the fall animation is still visibly stylized at the highest angular speeds.
+- **Extreme high-energy bails can briefly show a near-vertical ski silhouette during `FALL`.** The body collider and contact probes now stay surface-aligned while the rendered skier tumbles, roll speed is capped, and `REST` cannot begin until the root is snow-aligned. Tumble caps were lowered (`crash_roll_max_angular_speed` 3.2→2.2, `crash_ground_max_rotation_rate_degrees` 300→200, `crash_ground_angular_damping` 4.0→5.0) to shorten the worst frames, but the fall animation is still visibly stylized at the highest angular speeds and the improvement still needs human clip review.
 
 ## Ski and pole IK
 
-- **Equipment collision coverage is not yet universal.** Pole shafts now clear torso/leg envelopes and grounded pole tips are floor-bounded; boot targets are stance-separated; crash equipment is constrained; and swept visual ski segments stop at solid park features. There is still no general solver for ski-to-ski, pole-to-pole, every airborne terrain contact, or arbitrary combinations of equipment and body geometry.
-
-## Graphics and performance
-
-- **Advanced renderer options are not fully exposed in the menu.** The current settings cover render scale, TAA, shadow quality, snow quality, SSAO, SSIL, SSR, fog, display mode, resolution with timed Keep/Revert confirmation, VSync, FPS cap, and a profile-gated GI toggle. FSR2, HDR, and reflection-quality controls are not implemented.
+- **Equipment collision coverage is not yet universal.** Pole shafts now clear torso/leg envelopes and each other (grab-aware), grounded pole tips are floor-bounded, boot targets are stance-separated, ski nose/tail pairs hold span, crash equipment is constrained, swept visual ski segments stop at solid park features, blocked AIR pole shafts retract preview IK, and pole strikes on solid features (plus steep snow faces far from touchdown) bail through the crash evaluator with grab, landing-window, and speed exemptions. There is still no general solver for arbitrary combinations of equipment and body geometry.

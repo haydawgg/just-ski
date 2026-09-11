@@ -40,23 +40,22 @@ COLLAR_SKIRT_TOP_Y = 0.655
 COLLAR_SKIRT_MIN_OFFSET = 0.012
 BONE_OFFSETS = {
     "Jacket": {
-        # Insulated ski-jacket volume: shoulders and sleeves carry slightly
-        # more loft than the torso, with enough separation to read as a real
-        # garment instead of a second material painted on the base body.
-        "upper_arm.L": 0.036, "upper_arm.R": 0.036,
-        "forearm.L": 0.032, "forearm.R": 0.032,
-        "shoulder.L": 0.032, "shoulder.R": 0.032,
+        # Slimmed insulated volume to match narrower arms: still reads as a
+        # garment, not paint, without Michelin-man sleeves.
+        "upper_arm.L": 0.028, "upper_arm.R": 0.028,
+        "forearm.L": 0.024, "forearm.R": 0.024,
+        "shoulder.L": 0.028, "shoulder.R": 0.028,
         "spine.003": 0.027, "spine.002": 0.027,
         "spine.001": 0.029, "spine": 0.030,
     },
     "Pants": {
-        # Ski pants retain a padded thigh/seat and taper toward the boot.
-        "thigh.L": 0.026, "thigh.R": 0.026,
-        "shin.L": 0.020, "shin.R": 0.020,
-        "pelvis.L": 0.024, "pelvis.R": 0.024,
+        # Slimmed ski pants taper toward the boot.
+        "thigh.L": 0.018, "thigh.R": 0.018,
+        "shin.L": 0.014, "shin.R": 0.014,
+        "pelvis.L": 0.020, "pelvis.R": 0.020,
     },
     "Gloves": {
-        "hand.L": 0.014, "hand.R": 0.014,
+        "hand.L": 0.018, "hand.R": 0.018,
     },
 }
 DEFAULT_OFFSETS = {"Jacket": 0.027, "Pants": 0.022, "Gloves": 0.010}

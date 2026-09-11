@@ -26,6 +26,44 @@ static func separate_boot_targets(left_target: Vector3, right_target: Vector3, p
 	var push := (min_stance - separation) * 0.5
 	return [left_target - lateral * push, right_target + lateral * push]
 
+## Enforce a minimum lateral span between the ski nose pair and tail pair so
+## ski bodies cannot overlap when per-side yaw differs (boot stance alone only
+## separates the boot points). Push offsets apply to the boot targets along the
+## lateral axis and are idempotent once the span is satisfied.
+## Ski half-length matches SkierEquipment.SKI_SIZE.z * 0.5; kept as a local
+## constant so this RefCounted helper does not depend on the equipment module.
+const SKI_HALF_LENGTH := 0.91
+
+static func separate_ski_span(
+	left_boot: Vector3,
+	right_boot: Vector3,
+	left_forward: Vector3,
+	right_forward: Vector3,
+	lateral: Vector3,
+	min_span: float
+) -> Array:
+	var axis := lateral
+	if axis.length_squared() < 0.5 or not axis.is_finite():
+		axis = Vector3.RIGHT
+	else:
+		axis = axis.normalized()
+	var left_fwd := left_forward if left_forward.is_finite() and left_forward.length_squared() > 0.0001 else Vector3.ZERO
+	var right_fwd := right_forward if right_forward.is_finite() and right_forward.length_squared() > 0.0001 else Vector3.ZERO
+	if left_fwd.length_squared() <= 0.0001 and right_fwd.length_squared() <= 0.0001:
+		return [left_boot, right_boot]
+	left_fwd = left_fwd.normalized() if left_fwd.length_squared() > 0.0001 else Vector3.ZERO
+	right_fwd = right_fwd.normalized() if right_fwd.length_squared() > 0.0001 else Vector3.ZERO
+	var push := 0.0
+	for end_sign: float in [1.0, -1.0]:
+		var left_end := left_boot + left_fwd * (SKI_HALF_LENGTH * end_sign)
+		var right_end := right_boot + right_fwd * (SKI_HALF_LENGTH * end_sign)
+		var separation := (right_end - left_end).dot(axis)
+		if separation < min_span:
+			push = maxf(push, (min_span - separation) * 0.5)
+	if push <= 0.00001:
+		return [left_boot, right_boot]
+	return [left_boot - axis * push, right_boot + axis * push]
+
 ## Shared ski-contact frame used by ground probes, rail stance, spawn, and AIR
 ## predicted-surface preview. Degenerate heading/normal fall back without
 ## producing a non-finite basis.
@@ -101,13 +139,14 @@ static func feature_obstruction_scale(
 	space: PhysicsDirectSpaceState3D,
 	from: Vector3,
 	to: Vector3,
-	exclude: Array = []
+	exclude: Array = [],
+	mask: int = FEATURE_MASK
 ) -> float:
 	if space == null or not from.is_finite() or not to.is_finite():
 		return 1.0
 	if from.distance_squared_to(to) <= 0.0001:
 		return 1.0
-	var query := PhysicsRayQueryParameters3D.create(from, to, FEATURE_MASK)
+	var query := PhysicsRayQueryParameters3D.create(from, to, mask)
 	var blocked: Array[RID] = []
 	for item: Variant in exclude:
 		if item is RID:

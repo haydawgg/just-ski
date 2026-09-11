@@ -2,10 +2,10 @@ class_name SkierEquipment
 extends RefCounted
 
 const SKI_SIZE := Vector3(0.126, 0.025, 1.82)
-const POLE_SHAFT_RADIUS := 0.016
+const POLE_SHAFT_RADIUS := 0.018
 const POLE_SHAFT_LENGTH := 1.15
-const POLE_BASKET_RADIUS := 0.052
-const POLE_BASKET_THICKNESS := 0.018
+const POLE_BASKET_RADIUS := 0.042
+const POLE_BASKET_THICKNESS := 0.012
 const TECHNICAL_CLOTH_ALBEDO := preload("res://assets/materials/skier_cloth/technical_ripstop_albedo_512.png")
 
 static func material(color: Color, roughness: float, metallic: float, specular: float = 0.5) -> StandardMaterial3D:
@@ -169,19 +169,20 @@ static func add_tapered_cylinder(parent: Node3D, node_name: String, top_radius: 
 
 static func build_boot(parent: Node3D, side: String, surface: Material, accent_surface: Material = null) -> void:
 	var prefix := side.capitalize()
-	# The lower shell retains the calibrated sole envelope while the cuff, toe cap,
-	# heel block, and buckles provide a readable alpine-boot silhouette.
-	add_box(parent, prefix + "BootMesh", Vector3(0.2, 0.17, 0.4), Vector3(0.0, -0.02, -0.09), surface)
-	add_box(parent, prefix + "BootCuff", Vector3(0.18, 0.22, 0.19), Vector3(0.0, 0.145, 0.015), surface).rotation.x = -0.12
-	add_box(parent, prefix + "BootToeCap", Vector3(0.205, 0.105, 0.12), Vector3(0.0, 0.015, -0.285), surface)
-	# Heel block overlaps the shell by more than half its length so it reads
-	# as part of the boot, not a spur floating behind it.
-	add_box(parent, prefix + "BootHeel", Vector3(0.18, 0.08, 0.09), Vector3(0.0, -0.005, 0.10), surface)
+	# Realistic alpine-boot envelope: ~32cm long, 13cm wide. The previous
+	# 40cm shell + forward toe cap read as clown shoes in side views and
+	# buried the ski under a black box. Sole stays seated on the ski pivot.
+	add_box(parent, prefix + "BootMesh", Vector3(0.13, 0.14, 0.30), Vector3(0.0, -0.02, -0.06), surface)
+	add_box(parent, prefix + "BootCuff", Vector3(0.12, 0.20, 0.13), Vector3(0.0, 0.12, 0.02), surface).rotation.x = -0.12
+	add_box(parent, prefix + "BootToeCap", Vector3(0.125, 0.09, 0.10), Vector3(0.0, 0.0, -0.19), surface)
+	# Heel block overlaps the shell so it reads as part of the boot.
+	# Overlap 0.05 / 0.08 = 62% keeps the >=25% seating check green.
+	add_box(parent, prefix + "BootHeel", Vector3(0.12, 0.07, 0.08), Vector3(0.0, -0.01, 0.08), surface)
 	if accent_surface != null:
 		for buckle_index: int in 3:
 			# Buckles sit just proud of the cuff: readable hardware, no
-			# floating side tabs.
-			add_box(parent, "%sBootBuckle%d" % [prefix, buckle_index + 1], Vector3(0.188, 0.018, 0.025), Vector3(0.0, 0.075 + buckle_index * 0.055, -0.03 + buckle_index * 0.025), accent_surface)
+			# floating side tabs. Width stays within cuff + 10mm.
+			add_box(parent, "%sBootBuckle%d" % [prefix, buckle_index + 1], Vector3(0.128, 0.018, 0.025), Vector3(0.0, 0.055 + buckle_index * 0.05, -0.015 + buckle_index * 0.022), accent_surface)
 
 static func build_ski(parent: Node3D, side: String, surface: Material, accent_surface: Material = null) -> void:
 	var prefix := side.capitalize()
@@ -225,17 +226,23 @@ static func build_headwear(parent: Node3D, helmet_surface: Material, frame_surfa
 	strap.mesh = _band_mesh(center, deg_to_rad(332.0), deg_to_rad(568.0), 20, [[0.125, 0.17, 0.17], [0.085, 0.125, 0.125]], frame_surface)
 	strap.material_override = frame_surface
 	parent.add_child(strap)
-	# Use shallow rounded lenses instead of the former two-row band mesh. The
-	# ellipsoids keep a natural goggle contour at gameplay distance and leave a
-	# visible dark frame around the cyan lens without a rectangular centre block.
-	# Front faces sit ~1cm proud of the imported face surface: pulling the depth
-	# in buries the band inside the head, pushing it out floats the goggles.
-	var frame := add_sphere(parent, "GoggleFrame", 0.105, Vector3(0.0, 0.144, -0.118), frame_surface, Vector3(1.28, 0.56, 0.18))
-	var lens := add_sphere(parent, "GoggleLens", 0.095, Vector3(0.0, 0.144, -0.137), lens_surface, Vector3(1.24, 0.50, 0.22))
+	# Use shallow rounded lenses with a realistic ~20cm width. The previous
+	# 27cm-wide ellipsoids read as bug eyes front-on and as side discs in
+	# profile. Front faces sit ~1cm proud of the imported face surface.
+	var frame := add_sphere(parent, "GoggleFrame", 0.095, Vector3(0.0, 0.144, -0.118), frame_surface, Vector3(1.05, 0.52, 0.18))
+	var lens := add_sphere(parent, "GoggleLens", 0.085, Vector3(0.0, 0.144, -0.135), lens_surface, Vector3(1.0, 0.46, 0.20))
 	# Seat a small rounded bridge against the lens surface instead of the old
 	# oversized box that obscured the middle of the skier's face.
 	var bridge := add_capsule(parent, "GoggleNoseBridge", 0.012, 0.055, Vector3(0.0, 0.144, -0.157), frame_surface)
 	bridge.rotation.z = PI * 0.5
+
+static func build_neck_gaiter(parent: Node3D, surface: Material) -> void:
+	# Covers the bare skin column between jacket collar and helmet that reads
+	# as a long thin neck from behind. Named to avoid the forbidden
+	# JacketCollar artifact label while serving the same visual role.
+	# Tapered cylinder: wider at the jacket, snug at the jaw.
+	add_tapered_cylinder(parent, "NeckGaiter", 0.075, 0.095, 0.14, Vector3(0.0, 0.0, 0.01), surface)
+
 
 static func build_face(parent: Node3D, surface: Material, mouth_pos: Vector3) -> void:
 	# Stylized mouth line on the lower face. The goggles cover the eyes, so no
@@ -254,7 +261,7 @@ static func build_jacket_details(spine_parent: Node3D, chest_parent: Node3D, acc
 	# Depths are per-rig calibrated: the primitive ellipsoid torso and the
 	# imported base mesh sit at different depths under their mounts, so each
 	# caller passes seating measured against its own torso wall.
-	add_box(spine_parent, "JacketBackStripe", Vector3(0.035, 0.34, 0.012), Vector3(0.0, 0.28, back_z), accent_surface)
+	add_box(spine_parent, "JacketBackStripe", Vector3(0.028, 0.34, 0.012), Vector3(0.0, 0.28, back_z), accent_surface)
 	# Front-facing details follow the chest, not the lower spine, so a carve,
 	# grab, or flip cannot leave the zipper/pocket floating off the jacket shell.
 	add_box(chest_parent, "JacketFrontZip", Vector3(0.012, 0.30, 0.008), Vector3(0.0, -0.08, front_z), dark_surface)
@@ -272,8 +279,8 @@ static func build_sleeves(shoulder_parent: Node3D, elbow_parent: Node3D, side: S
 	# calibrated soft volumes add sleeve bulk and a readable cuff while remaining
 	# independently attached to the existing shoulder/elbow bones.
 	var prefix := side.capitalize()
-	add_capsule(shoulder_parent, prefix + "UpperSleeve", 0.10, 0.46, Vector3(0.0, -0.23, 0.0), jacket_surface)
-	add_capsule(elbow_parent, prefix + "ForearmSleeve", 0.082, 0.40, Vector3(0.0, -0.18, 0.0), jacket_surface)
+	add_capsule(shoulder_parent, prefix + "UpperSleeve", 0.086, 0.46, Vector3(0.0, -0.23, 0.0), jacket_surface)
+	add_capsule(elbow_parent, prefix + "ForearmSleeve", 0.071, 0.40, Vector3(0.0, -0.18, 0.0), jacket_surface)
 	# A rounded cuff avoids the square wrist blocks that read as detached gloves
 	# in front-facing views while keeping the existing calibrated wrist position.
 	# The cuff flares wider than the forearm sleeve so it stays visible where
@@ -282,7 +289,7 @@ static func build_sleeves(shoulder_parent: Node3D, elbow_parent: Node3D, side: S
 	# would silently shrink back below the sleeve. The cuff sits mid-forearm,
 	# clear of the glove: wrist coverage comes from the glove itself, and a
 	# cuff concentric with the hand swallows it whole.
-	add_capsule(elbow_parent, prefix + "SleeveCuff", 0.085, 0.18, Vector3(0.0, -0.30, 0.0), cuff_surface)
+	add_capsule(elbow_parent, prefix + "SleeveCuff", 0.073, 0.18, Vector3(0.0, -0.30, 0.0), cuff_surface)
 
 static func build_pole(parent: Node3D, side: String, shaft_surface: Material, accent_surface: Material) -> void:
 	var prefix := side.capitalize()

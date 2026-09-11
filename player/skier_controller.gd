@@ -215,6 +215,7 @@ func _physics_process(delta: float) -> void:
 	if state != State.GRIND and state_before_motion != State.GRIND:
 		var incoming_velocity := velocity
 		resolve_visual_ski_feature_sweep(delta, incoming_velocity)
+		resolve_airborne_pole_feature_sweep(delta, incoming_velocity)
 		move_and_slide()
 		_record_motion_diagnostics(velocity_before_motion)
 		_evaluate_feature_crash_after_motion()
@@ -1251,6 +1252,55 @@ func resolve_visual_ski_feature_sweep(delta: float, velocity_before_motion: Vect
 	)
 	if not bool(result.get("hit", false)):
 		return result
+	return _apply_equipment_sweep_hit("ski", result, motion, velocity_before_motion)
+
+## Airborne pole shafts vs solid park features. Poles gather near the ski
+## during grabs and dip toward the snow inside the landing window on clean
+## approaches, so both cases are excluded: sweeping them would convert
+## legitimate tricks and touchdowns into bails.
+func resolve_airborne_pole_feature_sweep(delta: float, velocity_before_motion: Vector3) -> Dictionary:
+	var no_hit := {"hit": false, "safe_fraction": 1.0}
+	if state != State.AIR or animation_controller == null or delta <= 0.0:
+		return no_hit
+	var adapter := animation_controller.rig_adapter
+	if adapter == null:
+		return no_hit
+	if adapter.grab_target_world(&"left") != Vector3.ZERO or adapter.grab_target_world(&"right") != Vector3.ZERO:
+		return no_hit
+	if predicted_landing_time >= 0.0 and predicted_landing_time <= 0.3:
+		return no_hit
+	var segments := adapter.pole_shaft_segments()
+	if segments.is_empty():
+		return no_hit
+	var motion := velocity * delta
+	var result := _equipment_feature_collision_solver.sweep_poles(
+		get_world_3d().direct_space_state,
+		segments,
+		motion,
+		[get_rid()]
+	)
+	if bool(result.get("hit", false)):
+		return _apply_equipment_sweep_hit("pole", result, motion, velocity_before_motion)
+	# Steep snow faces (banks, berm walls) far from touchdown: a pole spearing
+	# one mid-flight bails like a feature impact. The snow plane itself is
+	# excluded twice over — terrain mask only here, steep-normal gate in the
+	# crash evaluator — so ordinary approaches keep the slide path.
+	if state != State.AIR:
+		return result
+	if predicted_landing_time >= 0.0 and predicted_landing_time <= 0.5:
+		return result
+	var terrain_result := _equipment_feature_collision_solver.sweep_poles(
+		get_world_3d().direct_space_state,
+		segments,
+		motion,
+		[get_rid()],
+		SkiContactSolver.TERRAIN_MASK
+	)
+	if not bool(terrain_result.get("hit", false)):
+		return result
+	return _apply_equipment_sweep_hit("pole", terrain_result, motion, velocity_before_motion)
+
+func _apply_equipment_sweep_hit(kind_label: String, result: Dictionary, motion: Vector3, velocity_before_motion: Vector3) -> Dictionary:
 	var safe_fraction := clampf(float(result.get("safe_fraction", 0.0)), 0.0, 1.0)
 	var clearance_fraction := EquipmentFeatureCollisionSolverModule.CONTACT_MARGIN / maxf(motion.length(), 0.001)
 	var travel_fraction := clampf(safe_fraction - clearance_fraction, 0.0, 1.0)
@@ -1263,7 +1313,7 @@ func resolve_visual_ski_feature_sweep(delta: float, velocity_before_motion: Vect
 	var resolved_velocity := velocity
 	var collider_layer: int = collider.collision_layer if collider is CollisionObject3D else EquipmentFeatureCollisionSolverModule.FEATURE_MASK
 	var diagnostic := {
-		"collider": collider.name if collider is Node else "<visual-ski-sweep>",
+		"collider": collider.name if collider is Node else "<equipment-sweep>",
 		"asset_id": str(collider.get_meta("asset_id", "")) if collider is Node else "",
 		"asset_class": str(collider.get_meta("asset_class", "")) if collider is Node else "",
 		"collision_policy": str(collider.get_meta("collision_policy", "")) if collider is Node else "",
@@ -1278,6 +1328,7 @@ func resolve_visual_ski_feature_sweep(delta: float, velocity_before_motion: Vect
 		"speed_retention": resolved_velocity.length() / maxf(impact_velocity.length(), 0.01),
 		"incoming_normal_speed": maxf(0.0, -impact_velocity.dot(normal.normalized())),
 		"grounded": contact.grounded,
+		"equipment_kind": kind_label,
 		"equipment_side": str(result.get("side", &"")),
 		"equipment_sweep": true,
 	}

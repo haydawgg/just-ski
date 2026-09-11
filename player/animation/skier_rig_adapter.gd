@@ -44,6 +44,12 @@ func grab_reach_error(_side: StringName) -> float:
 func grab_target_world(_side: StringName) -> Vector3:
 	return Vector3.ZERO
 
+## Grip-excluded pole shaft segments for feature sweeps, keyed by side with
+## {start, end} endpoints. The base adapter (and any rig without mounted
+## poles) returns an empty set, which disables pole sweeping.
+func pole_shaft_segments() -> Dictionary:
+	return {}
+
 func grab_debug_snapshot() -> Dictionary:
 	return {}
 
