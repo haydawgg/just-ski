@@ -8,7 +8,7 @@ $presetPath = Join-Path $RepoRoot "export_presets.cfg"
 $releasePath = Join-Path $RepoRoot "docs/RELEASE.md"
 $readmePath = Join-Path $RepoRoot "README.md"
 $licensePath = Join-Path $RepoRoot "LICENSE"
-$licensingDecisionPath = Join-Path $RepoRoot "docs/LICENSING_DECISION.md"
+$assetSourcesPath = Join-Path $RepoRoot "docs/ASSET_SOURCES.md"
 $exportContentPath = Join-Path $RepoRoot "docs/EXPORT_CONTENT.md"
 $gitignorePath = Join-Path $RepoRoot ".gitignore"
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -41,20 +41,29 @@ if (-not (Test-Path -LiteralPath $releasePath -PathType Leaf)) {
 }
 else {
 	$release = Get-Content -Raw $releasePath
-	foreach ($requiredText in @("4.7.2.stable.official.ed1daf0bf", "Windows Desktop", "--export-release", "--quit-after 120", "docs/EXPORT_CONTENT.md")) {
+	foreach ($requiredText in @("4.7.2.stable.official.ed1daf0bf", "Windows Desktop", "--export-release", "--quit-after 120", "docs/EXPORT_CONTENT.md", "repository-root `LICENSE` (MIT)")) {
 		if ($release -notmatch [regex]::Escape($requiredText)) {
 			$failures.Add("docs/RELEASE.md is missing: $requiredText")
 		}
+	}
+	if ($release -match 'does not include a project-level license') {
+		$failures.Add("docs/RELEASE.md contains stale project-license language.")
 	}
 }
 
 if (-not (Test-Path -LiteralPath $exportContentPath -PathType Leaf)) {
 	$failures.Add("docs/EXPORT_CONTENT.md is missing.")
 }
+if (-not (Test-Path -LiteralPath $assetSourcesPath -PathType Leaf)) {
+	$failures.Add("docs/ASSET_SOURCES.md is missing.")
+}
 
 $readme = Get-Content -Raw $readmePath
 if ($readme -notmatch 'docs/RELEASE\.md') {
 	$failures.Add("README.md does not link the release procedure.")
+}
+if ($readme -notmatch 'docs/ASSET_SOURCES\.md') {
+	$failures.Add("README.md does not link third-party asset provenance.")
 }
 if (-not (Test-Path -LiteralPath $licensePath -PathType Leaf)) {
 	$failures.Add("LICENSE is missing.")
@@ -70,19 +79,7 @@ else {
 if ($readme -notmatch '\[MIT License\]\(LICENSE\)') {
 	$failures.Add("README.md does not link the project MIT license.")
 }
-if (-not (Test-Path -LiteralPath $licensingDecisionPath -PathType Leaf)) {
-	$failures.Add("docs/LICENSING_DECISION.md is missing.")
-}
-else {
-	$licensingDecision = Get-Content -Raw $licensingDecisionPath
-	if ($licensingDecision -notmatch 'Status: \*\*MIT selected and recorded\*\*' -or $licensingDecision -notmatch 'repository-root `LICENSE`') {
-		$failures.Add("docs/LICENSING_DECISION.md does not record the MIT decision and LICENSE contract.")
-	}
-}
-$release = Get-Content -Raw $releasePath
-if ($release -notmatch 'repository-root `LICENSE` \(MIT\)' -or $release -match 'does not include a project-level license') {
-	$failures.Add("docs/RELEASE.md does not describe the active MIT release contract.")
-}
+
 $gitignore = (Get-Content -Raw $gitignorePath) -replace "`r", ""
 if ($gitignore -notmatch '(?m)^builds/$') {
 	$failures.Add("Generated builds/ output is not ignored.")
