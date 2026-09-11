@@ -161,7 +161,7 @@ if (-not (Test-Path -LiteralPath $performanceBaselinePath -PathType Leaf)) {
 }
 else {
 	$performanceBaseline = Get-Content -Raw $performanceBaselinePath
-	foreach ($requiredBaselineText in @("Measurement contract", "Current discrete-GPU matrix", "Integrated-GPU validation", "Regression policy", "16.67 ms")) {
+	foreach ($requiredBaselineText in @("Measurement contract", "Recorded discrete-GPU matrix", "Integrated-GPU validation", "Regression policy", "16.67 ms")) {
 		if ($performanceBaseline -notmatch [regex]::Escape($requiredBaselineText)) {
 			$failures.Add("PERFORMANCE_BASELINE_1080P.md is missing required content: $requiredBaselineText")
 		}
