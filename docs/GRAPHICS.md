@@ -26,12 +26,15 @@ The maintained graphics settings include:
 - display mode and resolution;
 - VSync and FPS cap;
 - render scale;
+- upscaling (Bilinear / FSR 1.0 / FSR 2.2) with FSR sharpness;
 - temporal anti-aliasing;
 - shadow quality intent;
 - snow shader quality;
 - SSAO;
 - SSIL;
 - SSR;
+- reflection quality (SSR steps plus player-probe intensity/range);
+- HDR output (Display tab, covered by the Keep/Revert confirmation);
 - fog.
 
 Low / Medium use the Fast snow tier by default. High / Ultra use Premium snow. Editing an individual graphics option changes the preset state to Custom.
@@ -39,6 +42,8 @@ Low / Medium use the Fast snow tier by default. High / Ultra use Premium snow. E
 The current Settings menu intentionally exposes a practical subset of Godot's renderer controls rather than every Forward+ feature. It includes a staged GI toggle. GI is effective only when the selected environment profile exposes GI, the user setting `gi_enabled` is true, and the graphics preset permits GI (High, Ultra, or Custom; Low and Medium forbid it). The profile is the upper-level capability gate, the user setting is the preference, and the preset is the hardware-capability policy. Apply updates the live environment before persistence; a save failure is reported without rolling back the applied runtime state.
 
 Time of day follows the same staged settings model. `environment_preset` selects one of three authored `ResortEnvironmentProfile` resources: Day, Golden Hour, or Sunset. `resort.gd` owns the small preset-to-resource seam and applies the selected profile to the existing sky, sun, fill, fog, post-processing, and GI configuration without another autoload. Dedicated QA scenes such as `sunset_resort.tscn` opt out of the user preference so their authored lighting remains deterministic.
+
+HDR output is opt-in on every preset and defaults off. Enabling it requests HDR on the window, enables the 16F 2D pipeline, and switches the resort tonemapper from Filmic to AgX (Filmic/ACES are SDR-only curves and would crush highlights against a display peak); exposure, glow, and adjustment stay profile-owned. The window request no-ops on headless/dummy servers and SDR outputs fall back gracefully. Because an HDR mode switch can blank the display, it routes through the same timed Keep/Revert confirmation as display mode and resolution. HDR grading still requires human review on a capable display; automated captures run SDR.
 
 ## Snow shading
 

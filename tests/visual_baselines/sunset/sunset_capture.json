@@ -13,9 +13,9 @@
     "video_adapter": "NVIDIA GeForce RTX 4050 Laptop GPU"
   },
   "schema_version": "visual-evidence-v1",
-  "source_run_id": "visual_20260909_143451_064_6074f6e",
+  "source_run_id": "visual_20260911_001121_947_85e3500",
   "source_scenario_id": "sunset.capture",
-  "source_sha256": "2465baa6fb3bddb4329c2a27c7585b2b12c1d3b737e7cfafe977fa34a824c4c7",
+  "source_sha256": "b8164b423ca7cfae5185f5e79012f29764077faa74be4e84165a8bdf0632cff7",
   "suite": "sunset",
   "thresholds": {
     "changed_fraction": 0.1,

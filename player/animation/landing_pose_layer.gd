@@ -160,6 +160,12 @@ static func air_preview_targets(
 	)
 	left.origin = separated[0]
 	right.origin = separated[1]
+	var span_separated: Array = SkiConstrainedLegIK.separate_ski_span(
+		left.origin, right.origin,
+		stance.forward as Vector3, stance.forward as Vector3,
+		stance.lateral as Vector3, min_stance)
+	left.origin = span_separated[0]
+	right.origin = span_separated[1]
 	if (right.origin - left.origin).dot(stance.lateral as Vector3) < min_stance - 0.0001:
 		return empty
 	if not SkiConstrainedLegIK.is_finite_transform(left) or not SkiConstrainedLegIK.is_finite_transform(right):

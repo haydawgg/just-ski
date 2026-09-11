@@ -221,6 +221,10 @@ Require-Match $resort 'PLAYER_PROBE_RECAPTURE_INTERVAL\s*:=\s*0\.33' "Probe reca
 Require-Match $resort 'PLAYER_PROBE_SNAP_DISTANCE\s*:=\s*40\.0' "Probe snap distance must be an explicit named constant."
 Reject-Match $resort 'update_mode\s*=\s*ReflectionProbe\.UPDATE_ALWAYS' "Player-following probe must never use continuous recapture."
 Reject-Match $resort 'graphics_preset_allows_gi\(int\(GameSettings\.active\.get\("graphics_preset"' "Probe preset gating must not reuse the GI capability policy."
+Require-Match $resort 'func effective_hdr_enabled' "Resort must own an explicit HDR presentation gate."
+Require-Match $resort 'TONE_MAPPER_AGX' "HDR presentation must grade through an HDR-capable tonemapper."
+Require-Match $resort 'TONE_MAPPER_FILMIC' "SDR presentation must keep the authored filmic tonemapper."
+Require-Match $resort '_apply_hdr_presentation\(\)' "Graphics apply must refresh the HDR tonemapper presentation."
 
 if (Test-Path -LiteralPath (Join-Path $RepoRoot "shaders/snow.gdshader")) {
 	$failures.Add("Legacy procedural snow shader still exists.")

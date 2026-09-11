@@ -18,7 +18,14 @@ func evaluate(
 		return null
 	for diagnostic: Dictionary in diagnostics:
 		if (int(diagnostic.get("collider_layer", 0)) & 4) == 0:
-			continue
+			# Snow-plane contact stays owned by the ski contact and landing
+			# systems. The only terrain hits that may bail are equipment
+			# sweeps against steep faces (banks, berm walls), where the hit
+			# normal is far from snow-up.
+			var steep_face := bool(diagnostic.get("equipment_sweep", false)) \
+				and (diagnostic.get("normal", Vector3.UP) as Vector3).normalized().y < 0.7
+			if not steep_face:
+				continue
 		var speed_before := float(diagnostic.get("speed_before", 0.0))
 		var incoming_normal_speed := float(diagnostic.get("incoming_normal_speed", 0.0))
 		var speed_retention := float(diagnostic.get("speed_retention", 1.0))

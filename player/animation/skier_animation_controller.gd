@@ -835,6 +835,15 @@ func _apply_ski_constrained_leg_ik(frame: SkierAnimationFrame, delta: float) -> 
 	var separated: Array = SkiConstrainedLegIK.separate_boot_targets(left_boot_target.origin, right_boot_target.origin, pelvis.global_basis, profile.leg_ik_min_stance_width)
 	left_boot_target.origin = separated[0]
 	right_boot_target.origin = separated[1]
+	# Ski bodies can still overlap when per-side yaw differs (boot stance only
+	# separates the boot points). Enforce nose/tail span with the contact
+	# forward of each ski before the solve.
+	var span_separated: Array = SkiConstrainedLegIK.separate_ski_span(
+		left_boot_target.origin, right_boot_target.origin,
+		-left_contact_pose.basis.z, -right_contact_pose.basis.z,
+		pelvis.global_basis.x, profile.leg_ik_min_stance_width)
+	left_boot_target.origin = span_separated[0]
+	right_boot_target.origin = span_separated[1]
 	_left_boot_target_world = left_boot_target
 	_right_boot_target_world = right_boot_target
 	_apply_bounded_pelvis_compensation(left_boot_target.origin, right_boot_target.origin, delta, feasibility_weight)
@@ -922,7 +931,19 @@ func _preview_obstruction_scale(left_target: Vector3, right_target: Vector3) -> 
 		exclude.append((body as CollisionObject3D).get_rid())
 	var left_scale := SkiConstrainedLegIK.feature_obstruction_scale(space, left_hip.global_position, left_target, exclude)
 	var right_scale := SkiConstrainedLegIK.feature_obstruction_scale(space, right_hip.global_position, right_target, exclude)
-	return minf(left_scale, right_scale)
+	# Pole shafts sweep solid park features in AIR too (rails, towers). A
+	# blocked shaft retracts preview IK like a blocked leg reach; this is
+	# presentation-only and never triggers the crash path. Terrain is
+	# intentionally excluded: pole-vs-snow in AIR is negligible and touchdown
+	# proximity must not read as an obstruction.
+	var pole_scale := 1.0
+	for entries: Array in [[left_hand, left_pole_tip], [right_hand, right_pole_tip]]:
+		var hand := entries[0] as Node3D
+		var tip := entries[1] as Node3D
+		if hand == null or tip == null:
+			continue
+		pole_scale = minf(pole_scale, SkiConstrainedLegIK.feature_obstruction_scale(space, hand.global_position, tip.global_position, exclude))
+	return minf(minf(left_scale, right_scale), pole_scale)
 
 func _preview_reach_feasible(left_ski_target: Transform3D, right_ski_target: Transform3D) -> bool:
 	var left_boot := left_ski_target * _left_binding_rest
