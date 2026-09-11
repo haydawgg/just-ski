@@ -1,58 +1,32 @@
 # Summit Sessions
 
-Summit Sessions is a controller-first, single-player park-skiing prototype built for Godot 4.7.2 stable. The project focuses on momentum-led skiing, Flick-It-style trick input, rail riding, procedural animation, and a deterministic graybox resort that can be launched without manual scene setup.
+Summit Sessions is a controller-first, single-player park-skiing prototype built for Godot 4.7.2 stable. The project focuses on momentum-led skiing, analog Flick-It-style trick input, rail riding, procedural animation, and a deterministic data-driven resort.
 
-The current presentation combines project-built geometry and effects with two documented CC0 sources: the Snow 02 material set and the production skier body. See [Asset Sources](docs/ASSET_SOURCES.md) for attribution and processing details.
+Project-authored code and content are released under the [MIT License](LICENSE). Third-party CC0/OFL material and processing records are documented in [Asset Sources](docs/ASSET_SOURCES.md).
 
 ## Run
 
-Open `project.godot` in Godot 4.7.2 stable and run the project, or use the bundled Windows engine when present:
+Open `project.godot` in Godot 4.7.2 stable and run the project. The main scene is `res://world/resort.tscn` and the renderer targets Forward+.
+
+When the bundled Windows engine is present:
 
 ```powershell
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64.exe --path .
 ```
 
-The main scene is `res://world/resort.tscn` and the renderer targets Forward+.
-
-To run the warm-lighting variant, launch the sunset scene directly:
+To launch the authored sunset validation variant directly:
 
 ```powershell
 .\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64.exe --path . res://world/sunset_resort.tscn
 ```
 
-The sunset profile enables Forward+ SDFGI for the static procedural resort geometry, with lower graphics presets disabling it automatically.
-
-## Build and release
-
-The supported engine is the official Godot 4.7.2 stable release. The committed
-Windows Desktop preset in `export_presets.cfg` is the reproducible build
-configuration; install the matching official export templates before running:
-
-```powershell
-$godot = $env:GODOT_PATH
-New-Item -ItemType Directory -Force builds\windows | Out-Null
-& $godot --headless --path . --export-release "Windows Desktop" builds\windows\SummitSessions.exe
-```
-
-Smoke-test an exported build on a machine with the required graphics driver:
-
-```powershell
-& .\builds\windows\SummitSessions.exe --headless --quit-after 120
-```
-
-Project-authored code and content are released under the [MIT License](LICENSE).
-The included external sources remain governed by their local CC0/OFL
-provenance and notice records; the project license does not relicense those
-materials. New binary content follows [Asset Growth Policy](docs/ASSET_POLICY.md),
-and the decision record is retained in [Licensing Decision](docs/LICENSING_DECISION.md).
-
 ## Controls
 
 | Action | Controller | Keyboard |
-|---|---|---|
+| --- | --- | --- |
 | Carve / pressure | Left stick | A / D, W / S |
 | Preload / pop | Right stick down, then flick | Space |
-| Spin / flip / cork | Right-stick flicks | Arrow keys |
+| Spin / flip / cork | Right-stick release direction | Arrow keys |
 | Air correction | Left stick | A / D / W / S |
 | Tuck | RT / R2 | Shift |
 | Brake / hockey stop | LT / L2 or B / Circle | Ctrl |
@@ -64,104 +38,103 @@ and the decision record is retained in [Licensing Decision](docs/LICENSING_DECIS
 | Debug overlay | — | F3 |
 | Debug run capture | — | F9 |
 
-Controller triggers change role after takeoff: LT/L2 and RT/R2 are ground brake/tuck inputs, then become airborne hand inputs after they are released and pressed again. See [Controls](docs/CONTROLS.md) for the full gesture and grab mapping.
+Controller triggers change role after takeoff: LT/L2 and RT/R2 are ground brake/tuck inputs, then become airborne hand inputs after they are released and pressed again. See [Controls](docs/CONTROLS.md) for the full mapping.
 
 ## Current prototype
 
 The playable slice includes:
 
-- Four authoritative locomotion states: ground, air, grind, and bail.
-- Slope-relative gravity, anisotropic ski friction, carving, skidding, pressure, tuck, braking, terrain suspension, and surface-specific handling.
-- Charged pop and right-stick gesture recognition for spins, flips, corks, rail pop-off, grabs, tweaks, and style poses.
-- Landing prediction, plausibility-gated landing evaluation, controlled crash/recovery, course recovery, and session markers.
-- Spline-backed rails, boxes, and tubes with approach validation, bidirectional travel, balance drift, slip-off, and pop-off.
-- Procedural skier presentation driven from gameplay telemetry, with a production Skeleton3D rig and a primitive fallback adapter.
-- Triplanar snow shading with Fast and Premium tiers, procedural environment presentation, snow spray, audio, rumble, HUD feedback, scoring, combos, and finish results.
-- A data-driven downhill park with jump, flow, and jib routes assembled from reusable procedural features.
-- Controller-navigable Settings menu with staged Apply / Cancel / Reset behavior, live graphics changes, and persisted settings.
-- Prototype/debug gameplay capture to MJPEG-in-MP4 without synchronized game audio.
+- four authoritative locomotion states: ground, air, grind, and bail;
+- slope-relative gravity, ski friction/grip, carving, skidding, pressure, tuck, braking, suspension, and surface-specific handling;
+- charged pop and continuous-axis right-stick trick input with compact/open airborne management;
+- landing prediction, plausibility-gated landing evaluation, controlled crash/recovery, course recovery, and session markers;
+- spline-backed rails, boxes, and tubes with bidirectional travel, approach validation, balance drift, slip-off, and pop-off;
+- procedural skier presentation driven by gameplay telemetry, with a production Skeleton3D rig and primitive fallback;
+- triplanar snow, environment presentation, snow VFX, audio, rumble, HUD feedback, scoring, combos, and finish results;
+- a data-driven downhill park organized into six sessionable spots plus an opt-in Session Yard profile;
+- controller-navigable settings with staged Apply / Cancel / Reset behavior and persisted graphics settings;
+- a prototype/debug 960×540 30 fps MJPEG-in-MP4 recorder without synchronized game audio.
+
+## Design and architecture
+
+Gameplay owns the authoritative skier root, collision, movement state, and trick history. Presentation systems consume that state but do not move the gameplay root.
+
+The trick system is built around takeoff commitment rather than midair trick commands:
+
+```text
+preload -> analog throw -> committed rotation -> compact/open/check -> physical landing
+```
+
+Course content is deterministic and data-driven. Runtime construction and editor preview baking use the same course profiles and builders so there is one authoring source of truth.
 
 ## Documentation
 
-Active direction and validation:
+Start with [Documentation](docs/README.md). The maintained docs are grouped by product/gameplay, presentation/world, validation/performance, and build/assets.
 
-- [Content Design Plan](docs/CONTENT_DESIGN_PLAN.md) — active course/content implementation roadmap.
-- [Performance Backlog](docs/PERFORMANCE_BACKLOG.md) — current measured performance work and evidence requirements.
-- [Known Issues](docs/KNOWN_ISSUES.md) — unresolved production work and remaining human validation.
-- [Controller Validation](docs/CONTROLLER_VALIDATION.md) — physical controller/hardware validation matrix.
-- [Production Ski Run QA](docs/PRODUCTION_SKI_RUN_QA.md) — maintained end-to-end human gameplay QA.
+Key references:
 
-Technical reference:
+- [Content Design](docs/CONTENT_DESIGN_PLAN.md)
+- [Controls](docs/CONTROLS.md)
+- [Physics](docs/PHYSICS.md)
+- [Animation](docs/ANIMATION.md)
+- [Graphics](docs/GRAPHICS.md)
+- [Known Issues](docs/KNOWN_ISSUES.md)
+- [Performance Baseline](docs/PERFORMANCE_BASELINE_1080P.md)
+- [Release](docs/RELEASE.md)
 
-- [Controls](docs/CONTROLS.md) — input mapping, Flick-It gestures, grabs, rails, and debug clip capture.
-- [Physics](docs/PHYSICS.md) — locomotion state ownership, ski handling, landings, crashes, rails, and tuning.
-- [Trick Control Target](docs/TRICK_CONTROL_TARGET.md) — durable trick-system design principles and current implementation alignment.
-- [Animation](docs/ANIMATION.md) — presentation architecture, rig adapters, procedural layers, and animation test coverage.
-- [Graphics](docs/GRAPHICS.md) — renderer settings, snow, environment, character presentation, HUD, and visual verification.
-- [Performance Baseline](docs/PERFORMANCE_BASELINE_1080P.md) — reproducible 1080p benchmark contract and current measurements.
-- [World Authoring](docs/WORLD_AUTHORING.md) — deterministic course/world authoring and preview workflow.
-- [Asset Sources](docs/ASSET_SOURCES.md) — third-party source index and provenance.
-- [Clip capture](docs/CLIP_CAPTURE.md) — prototype/debug scope, timing compensation, worker shutdown, and streaming mux behavior.
-- [Release](docs/RELEASE.md) — supported engine, export preset, and smoke-test procedure.
-- [Historical documents](docs/history/README.md) — completed plans, dated QA reports, and superseded roadmaps retained for decision history.
+Completed plans, dated postmortems, and one-off implementation reports are intentionally not kept as permanent docs; Git, issues, and pull requests retain that history.
 
 ## Verification
 
-Use the static checks for fast source-level validation:
+Fast source-level checks:
 
 ```powershell
 .\tests\physics_static_acceptance.ps1
 .\tests\shader_static_acceptance.ps1
 ```
 
-Use the runtime quality gate for the full headless acceptance pass:
+Full headless runtime gate:
 
 ```powershell
 .\tests\runtime_quality_gate.ps1
 ```
 
-`tests/runtime_quality_gate.ps1` is the source of truth for the runtime scene list. It launches the maintained acceptance, diagnostic, benchmark, environment, camera, character, animation, gameplay, and capture suites and fails on non-zero exits or emitted engine / shader / script / acceptance errors. It accepts a shard name for CI and prints each scene's elapsed time.
-
-The hosted Quality Gate keeps static checks separate from five parallel runtime shards (`environment-camera`, `physics`, `animation`, `tricks-gameplay`, and `systems-media`). The final `quality` job remains the protected branch status and succeeds only when the static gate, project import preparation, and every runtime shard pass. Each runtime shard uses an isolated temporary Godot user directory and restores a project import cache keyed by the Godot version and source/assets.
-
-Run the complete local gate (static physics, static shaders, and every headless runtime scene) with one command:
+Complete local gate:
 
 ```powershell
 .\tests\quality_gate.ps1
 ```
 
-Individual gameplay suites can also be launched during a controlled play/test session:
+The hosted Quality Gate keeps static checks separate from five runtime shards (`environment-camera`, `physics`, `animation`, `tricks-gameplay`, and `systems-media`). The final `quality` job succeeds only when static preparation and every runtime shard pass.
 
-For a single scene, set the repository-local Godot user folders and launch the desired `.tscn` directly. Example:
-
-```powershell
-$env:APPDATA=(Resolve-Path '.godot_user\roaming').Path
-$env:LOCALAPPDATA=(Resolve-Path '.godot_user\local').Path
-.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --headless --path . res://tests/gameplay_acceptance.tscn
-```
-
-## Visual review and capture
-
-The maintained Codex-analyzable visual bundle can be generated on a GPU-backed machine with:
+For GPU-backed visual review:
 
 ```powershell
 .\tests\visual_analysis_bundle.ps1
 ```
 
-It emits one manifest and report under `.godot_user/visual_runs/<run-id>/`. Start with `visual_report.md`; it links labeled contact sheets, subject crops, structured timeline summaries, raw captures, and any compatible-baseline overlays/heatmaps. See [Visual evidence](docs/VISUAL_EVIDENCE.md) for the catalog, status semantics, baseline policy, and validation command.
+The generated `visual_report.md` links contact sheets, subject crops, structured telemetry, raw captures, and compatible-baseline comparisons. See [Visual Evidence](docs/VISUAL_EVIDENCE.md).
 
-For a focused legacy-compatible animation capture, use:
+## Build and release
+
+The supported engine is the official Godot 4.7.2 stable release. `export_presets.cfg` contains the maintained Windows Desktop export preset.
+
+Install matching export templates, then run:
 
 ```powershell
-.\.tools\godot-4.7.2\Godot_v4.7.2-stable_win64_console.exe --path . --fixed-fps 30 --disable-vsync res://tests/animation_silhouette_inspection.tscn -- --capture-silhouette-showcase
+$godot = $env:GODOT_PATH
+New-Item -ItemType Directory -Force builds\windows | Out-Null
+& $godot --headless --path . --export-release "Windows Desktop" builds\windows\SummitSessions.exe
 ```
 
-The compatibility comparison is written under `.godot_user/captures/`; bundle runs retain those legacy filenames below each suite's `compat/` directory.
+Smoke-test the exported build on a machine with the required graphics driver:
 
-F9 is a prototype/debug capture utility, not a supported sharing/export feature. It arms the next summit run for a 960×540 / 30 fps MJPEG-in-MP4 recording until the finish, a manual F9 stop, or the recorder's safety cap. The result is written to the user's Downloads folder when available, with `user://` as a fallback. It does not include synchronized game audio, and browser/Discord compatibility is not part of the current release contract. See [Clip capture](docs/CLIP_CAPTURE.md) for the maintained scope.
+```powershell
+& .\builds\windows\SummitSessions.exe --headless --quit-after 120
+```
 
-Use `-- --primitive-skier` to force the generated primitive skier presentation for debugging or comparison. Normal runtime uses automatic rig selection and prefers the configured Skeleton3D production body.
+See [Release](docs/RELEASE.md) and [Export Content](docs/EXPORT_CONTENT.md) for the maintained release contract.
 
 ## Scope
 
-This repository is a prototype, not a finished content release. Automated tests exercise a large part of the gameplay and presentation contract, but controller feel, long-session comfort, hardware behavior, visual polish, clipping, and performance still require human play and profiling. The maintained boundary is documented in [Known Issues](docs/KNOWN_ISSUES.md).
+This repository is a prototype, not a finished content release. Automated tests cover a large part of the gameplay and presentation contract, but controller feel, long-session comfort, hardware behavior, visual polish, clipping, exported-build behavior, and representative-hardware performance still require human validation. Current unresolved defects are tracked in [Known Issues](docs/KNOWN_ISSUES.md), while broader human release checks live in [Production Ski-Run QA](docs/PRODUCTION_SKI_RUN_QA.md).
