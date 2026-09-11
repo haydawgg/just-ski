@@ -34,9 +34,10 @@ func _build_meshes() -> void:
 	var frame := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18, outfit_profile.hardgoods_specular)
 	var helmet := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var pole := SkierEquipment.material(outfit_profile.pole_color.darkened(0.16), outfit_profile.hardgoods_roughness, 0.28, outfit_profile.hardgoods_specular)
-	# Pelvis shell covers the ±0.27m hip joints; the torso is an oval that
-	# fits inside its own pelvis width and the shoulder block depth instead
-	# of a barrel protruding ~14cm front and back.
+	# Pelvis shell covers the narrowed ±0.20m hip joints with margin (half
+	# 0.28m); the torso is an oval that fits inside its own pelvis width
+	# and the shoulder block depth instead of a barrel protruding ~14cm
+	# front and back.
 	SkierEquipment.add_box(driver.joint(&"pelvis"), "PelvisMesh", Vector3(0.56, 0.22, 0.32), Vector3(0.0, 0.05, 0.0), pants)
 	SkierEquipment.add_sphere(driver.joint(&"spine"), "TorsoMesh", 0.26, Vector3(0.0, 0.34, 0.0), jacket, Vector3(1.0, 1.38, 0.75))
 	SkierEquipment.add_box(driver.joint(&"chest"), "ShoulderJacket", Vector3(0.84, 0.20, 0.40), Vector3(0.0, 0.14, 0.0), jacket)
@@ -53,17 +54,18 @@ func _build_meshes() -> void:
 	# the mouth seats.
 	SkierEquipment.add_sphere(driver.joint(&"head"), "JawMesh", 0.095, Vector3(0.0, 0.0, -0.03), skin, Vector3(0.79, 0.95, 1.0))
 	SkierEquipment.build_headwear(driver.joint(&"head"), helmet, frame, lens)
+	SkierEquipment.build_neck_gaiter(driver.joint(&"head"), jacket)
 	SkierEquipment.build_face(driver.joint(&"head"), SkierEquipment.material(outfit_profile.skin_color.darkened(0.45), outfit_profile.skin_roughness, 0.0, outfit_profile.skin_specular), Vector3(0.0, 0.03, -0.123))
 	for side: StringName in [&"left", &"right"]:
-		SkierEquipment.add_capsule(driver.joint(StringName(side + "_hip")), side.capitalize() + "Thigh", 0.095, 0.56, Vector3(0.0, -0.26, 0.0), pants)
-		SkierEquipment.add_capsule(driver.joint(StringName(side + "_knee")), side.capitalize() + "Shin", 0.08, 0.52, Vector3(0.0, -0.24, 0.0), pants)
+		SkierEquipment.add_capsule(driver.joint(StringName(side + "_hip")), side.capitalize() + "Thigh", 0.085, 0.56, Vector3(0.0, -0.26, 0.0), pants)
+		SkierEquipment.add_capsule(driver.joint(StringName(side + "_knee")), side.capitalize() + "Shin", 0.072, 0.52, Vector3(0.0, -0.24, 0.0), pants)
 		SkierEquipment.build_boot(driver.joint(StringName(side + "_boot")), side, dark, boot_accent)
 		SkierEquipment.build_ski(driver.joint(StringName(side + "_ski")), side, ski_base, accent)
-		SkierEquipment.add_capsule(driver.joint(StringName(side + "_shoulder")), side.capitalize() + "UpperArm", 0.085, 0.46, Vector3(0.0, -0.21, 0.0), jacket)
-		SkierEquipment.add_capsule(driver.joint(StringName(side + "_elbow")), side.capitalize() + "Forearm", 0.07, 0.4, Vector3(0.0, -0.18, 0.0), jacket)
+		SkierEquipment.add_capsule(driver.joint(StringName(side + "_shoulder")), side.capitalize() + "UpperArm", 0.075, 0.46, Vector3(0.0, -0.21, 0.0), jacket)
+		SkierEquipment.add_capsule(driver.joint(StringName(side + "_elbow")), side.capitalize() + "Forearm", 0.060, 0.4, Vector3(0.0, -0.18, 0.0), jacket)
 		# Elongated hand with the outfit glove color (not boot dark): reads as
 		# a mitt at gameplay distance instead of an 18cm ball.
-		SkierEquipment.add_sphere(driver.joint(StringName(side + "_hand")), side.capitalize() + "Glove", 0.055, Vector3.ZERO, glove_mat, Vector3(0.95, 1.3, 1.1))
+		SkierEquipment.add_sphere(driver.joint(StringName(side + "_hand")), side.capitalize() + "Glove", 0.062, Vector3.ZERO, glove_mat, Vector3(0.95, 1.3, 1.1))
 		SkierEquipment.build_sleeves(
 			driver.joint(StringName(side + "_shoulder")),
 			driver.joint(StringName(side + "_elbow")),

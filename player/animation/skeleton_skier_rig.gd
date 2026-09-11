@@ -798,6 +798,10 @@ func _build_attachments() -> void:
 	head_mount.transform = _neutral_mount_transform(&"head")
 	head_attachment.add_child(head_mount)
 	SkierEquipment.build_headwear(head_mount, helmet_surface, frame_surface, lens_surface)
+	# Neck gaiter hides the bare skin column between collar and helmet that
+	# reads as an unnaturally long neck from behind. Jacket material ties it
+	# to the shell rather than the skin.
+	SkierEquipment.build_neck_gaiter(head_mount, jacket)
 	# Shaded mouth line on the base-mesh chin (measured seating, not a guess).
 	# Darkened skin reads as a mouth at gameplay distance without face texture.
 	var mouth_surface := SkierEquipment.material(outfit_profile.skin_color.darkened(0.45), outfit_profile.skin_roughness, 0.0, outfit_profile.skin_specular)

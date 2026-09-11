@@ -1976,8 +1976,8 @@ func _reset_targets() -> void:
 	_rotation_targets[right_pole] = Vector3.ZERO
 	_position_targets[pelvis] = Vector3(0.0, 0.96, 0.0)
 	_position_targets[chest] = Vector3(0.0, 0.42, 0.0)
-	_position_targets[left_hip] = Vector3(-0.27, -0.04, 0.0)
-	_position_targets[right_hip] = Vector3(0.27, -0.04, 0.0)
+	_position_targets[left_hip] = Vector3(-0.20, -0.04, 0.0)
+	_position_targets[right_hip] = Vector3(0.20, -0.04, 0.0)
 	_position_targets[left_shoulder] = Vector3(-0.4, 0.24, 0.0)
 	_position_targets[right_shoulder] = Vector3(0.4, 0.24, 0.0)
 
