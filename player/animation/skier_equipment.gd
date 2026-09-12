@@ -186,16 +186,16 @@ static func build_boot(parent: Node3D, side: String, surface: Material, accent_s
 			# floating side tabs. Width stays within cuff + 10mm.
 			add_box(parent, "%sBootBuckle%d" % [prefix, buckle_index + 1], Vector3(0.128, 0.018, 0.025), Vector3(0.0, 0.055 + buckle_index * 0.05, -0.015 + buckle_index * 0.022), accent_surface)
 
-static func build_ski(parent: Node3D, side: String, surface: Material, accent_surface: Material = null) -> void:
+static func build_ski(parent: Node3D, side: String, surface: Material, accent_surface: Material = null, edge_surface: Material = null) -> void:
 	var prefix := side.capitalize()
 	var instance := MeshInstance3D.new()
 	instance.name = prefix + "SkiMesh"
-	instance.mesh = _ski_mesh(surface)
+	instance.mesh = _ski_mesh(surface, edge_surface)
 	parent.add_child(instance)
 	if accent_surface != null:
 		# A restrained inlaid top-sheet stripe reads at gameplay distance without
 		# changing the collision-free, calibrated ski envelope.
-		add_box(parent, prefix + "SkiAccent", Vector3(0.022, 0.004, 1.28), Vector3(0.0, 0.014, -0.08), accent_surface)
+		add_box(parent, prefix + "SkiAccent", Vector3(0.034, 0.004, 1.28), Vector3(0.0, 0.014, -0.08), accent_surface)
 
 static func build_headwear(parent: Node3D, helmet_surface: Material, frame_surface: Material, lens_surface: Material) -> void:
 	# Whole stack is centered on the skull axis (x=0). The earlier -0.01 bias
@@ -304,7 +304,7 @@ static func build_pole(parent: Node3D, side: String, shaft_surface: Material, ac
 	add_cylinder(parent, prefix + "PoleBasket", POLE_BASKET_RADIUS, POLE_BASKET_THICKNESS, Vector3(0.0, -1.125, 0.0), accent_surface)
 	add_tapered_cylinder(parent, prefix + "PolePoint", 0.012, 0.003, 0.12, Vector3(0.0, -1.21, 0.0), shaft_surface)
 
-static func _ski_mesh(surface: Material) -> ArrayMesh:
+static func _ski_mesh(surface: Material, edge_surface: Material = null) -> ArrayMesh:
 	# Cross-sections run tail-to-tip. The waist narrows underfoot, the shovel
 	# widens, and the last two sections rise to form a real upturned tip.
 	var sections := [
@@ -330,14 +330,27 @@ static func _ski_mesh(surface: Material) -> ArrayMesh:
 		var b := a + 2
 		_add_quad(tool, top[a], top[a + 1], top[b + 1], top[b])
 		_add_quad(tool, bottom[a + 1], bottom[a], bottom[b], bottom[b + 1])
-		_add_quad(tool, top[a], top[b], bottom[b], bottom[a])
-		_add_quad(tool, top[b + 1], top[a + 1], bottom[a + 1], bottom[b + 1])
 	_add_quad(tool, top[0], bottom[0], bottom[1], top[1])
 	var last := top.size() - 2
 	_add_quad(tool, top[last + 1], bottom[last + 1], bottom[last], top[last])
 	tool.generate_normals()
 	tool.set_material(surface)
-	return tool.commit()
+	var mesh := tool.commit()
+	if edge_surface != null:
+		# Bright steel sidewalls catch edge highlights at gameplay distance so
+		# ski angle reads without enlarging the skis. Same vertices as the
+		# base shell, so the calibrated envelope is unchanged.
+		var edge_tool := SurfaceTool.new()
+		edge_tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for section_index: int in range(sections.size() - 1):
+			var a := section_index * 2
+			var b := a + 2
+			_add_quad(edge_tool, top[a], top[b], bottom[b], bottom[a])
+			_add_quad(edge_tool, top[b + 1], top[a + 1], bottom[a + 1], bottom[b + 1])
+		edge_tool.generate_normals()
+		edge_tool.set_material(edge_surface)
+		mesh = edge_tool.commit(mesh)
+	return mesh
 
 static func _add_quad(tool: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> void:
 	for point: Vector3 in [a, b, c, a, c, d]:

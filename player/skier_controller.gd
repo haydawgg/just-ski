@@ -2052,7 +2052,11 @@ func _update_contact_shadow(_delta: float) -> void:
 	height = clampf(height, 0.0, 12.0)
 	# Restrained fade: visible when near ground, fades gracefully before becoming a distant blob.
 	var height_alpha := clampf(1.0 - smoothstep(1.2, 9.5, height), 0.0, 1.0)
-	var confidence_alpha := clampf(contact.confidence, 0.0, 1.0) if state == State.GROUND else 0.85
+	# VFX-03: AIR confidence is the real probe-derived contact confidence
+	# (high only while snow stays within probe reach, decaying toward zero
+	# with altitude) instead of a near-constant that kept low air as dark as
+	# grounded snow.
+	var confidence_alpha := clampf(contact.confidence, 0.0, 1.0)
 	var alpha := height_alpha * lerpf(0.45, 0.72, confidence_alpha) * 0.52
 	if alpha < 0.02 or height > 9.0:
 		contact_shadow.visible = false
@@ -2310,6 +2314,29 @@ func _populate_animation_ski_targets() -> void:
 	var contact_owned := state == State.GROUND or (state == State.BAIL and crash_context.stage == CrashContext.Stage.RECOVERY)
 	if contact_owned:
 		var fallback_forward := -global_basis.z
+		var left_owned := contact.left_grounded and contact.left_contact_confidence > 0.05
+		var right_owned := contact.right_grounded and contact.right_contact_confidence > 0.05
+		var presentation: SkierAnimationProfile = animation_controller.profile if animation_controller != null else null
+		if (left_owned or right_owned) and presentation != null:
+			# CHAR-01: the physical probe footprint must not become the rendered
+			# stance. Heights, normals and longitudinal offsets stay per-side;
+			# only the lateral ski centers are reprojected into visual bounds.
+			var stance := SkiConstrainedLegIK.reproject_visual_ski_centers(
+				contact.left_hit_position, contact.right_hit_position,
+				contact.left_normal, contact.right_normal,
+				global_position, global_basis,
+				presentation.visual_stance_min_half_width,
+				presentation.visual_stance_preferred_half_width,
+				presentation.visual_stance_max_half_width,
+				presentation.visual_stance_uneven_extra_half_width,
+				left_owned, right_owned)
+			if left_owned:
+				animation_frame.left_ski_target_world = _ski_contact_transform(stance.get("left", contact.left_hit_position), fallback_forward, contact.left_normal)
+				animation_frame.left_ski_target_valid = true
+			if right_owned:
+				animation_frame.right_ski_target_world = _ski_contact_transform(stance.get("right", contact.right_hit_position), fallback_forward, contact.right_normal)
+				animation_frame.right_ski_target_valid = true
+			return
 		if contact.left_grounded and contact.left_contact_confidence > 0.05:
 			animation_frame.left_ski_target_world = _ski_contact_transform(contact.left_hit_position, fallback_forward, contact.left_normal)
 			animation_frame.left_ski_target_valid = true

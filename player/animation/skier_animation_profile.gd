@@ -157,6 +157,19 @@ extends Resource
 @export var air_small_takeoff_speed: float = 0.55
 @export var air_large_takeoff_speed: float = 4.2
 @export var air_takeoff_leg_flex: float = 0.14
+## No-trick takeoff bridge: fraction of the last ground loading that carries
+## into early air, decaying fast so pop extension still owns the shape.
+@export_range(0.0, 1.0) var air_takeoff_cache_scale: float = 0.5
+## Decay time-constant for the cached takeoff load (~95% gone in 3x). Kept fast
+## so pop extension owns the charged-takeoff shape and the takeoff-extension
+## gate below keeps holding; the floor carries the sustained baseline.
+@export_range(0.02, 0.3) var air_takeoff_cache_decay: float = 0.03
+## No-trick athletic baseline: slight forward torso independent of jump size,
+## yielded to trick/spin poses via the no-trick weight at the call site.
+@export_range(0.0, 0.2) var air_baseline_torso_pitch: float = 0.06
+## No-trick hand carriage: forward shift of the shoulder base so straight-air
+## hands wait forward/outward instead of trailing behind the torso line.
+@export_range(0.0, 0.4) var air_baseline_hand_forward: float = 0.28
 @export var air_compact_leg_flex: float = 0.58
 @export var air_spin_leg_flex: float = 0.22
 @export var air_pelvis_compact_drop: float = 0.13
@@ -350,6 +363,14 @@ extends Resource
 @export var leg_ik_pelvis_rotation_limit: float = 0.14
 @export var leg_ik_max_reach_ratio: float = 1.02
 @export var leg_ik_min_stance_width: float = 0.16
+## Presentation-only visual ski stance, decoupled from the physical contact
+## probe footprint. Gameplay keeps sampling wide for stability; only the
+## lateral rendered ski centers are reprojected into these half-width bounds
+## around the body center (full stance widths are twice the values below).
+@export_range(0.05, 0.3) var visual_stance_min_half_width: float = 0.09
+@export_range(0.05, 0.3) var visual_stance_preferred_half_width: float = 0.18
+@export_range(0.05, 0.4) var visual_stance_max_half_width: float = 0.26
+@export_range(0.0, 0.2) var visual_stance_uneven_extra_half_width: float = 0.08
 @export var pose_handoff_duration: float = 0.2
 @export var landing_pose_handoff_duration: float = 0.08
 @export var pop_pose_handoff_duration: float = 0.08

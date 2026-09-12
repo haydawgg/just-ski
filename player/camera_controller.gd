@@ -97,6 +97,12 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export var carve_look_ahead_gain := 0.08
 @export var carve_look_ahead_max := 2.0
 @export var carve_look_ahead_rate := 3.5
+## Signed turn lead: lateral look-target bias into the sustained turn,
+## derived from the signed heading/travel angle. Capped on its own and as
+## part of the combined carve offset so linked carves open space ahead
+## without orbiting the camera or pushing the skier out of frame.
+@export_range(0.0, 2.0, 0.05) var turn_lead_lateral_max := 1.0
+@export_range(0.5, 3.0, 0.05) var turn_lead_limit := 2.0
 @export var predicted_landing_look_weight := 0.38
 
 @export_group("Look-ahead & FOV")
@@ -117,6 +123,10 @@ const COMPOSITION_LANDMARK_NAMES := [
 
 @export_group("Stabilization")
 @export var surface_up_rate := 3.5
+## Takeoff handoff: retain the takeoff surface normal for this long after AIR
+## entry before blending toward world-up, so the reference frame does not
+## rotate in the same instant that AIR framing/FOV/distance change.
+@export_range(0.0, 1.0, 0.01) var takeoff_surface_up_hold_time := 0.25
 
 @export_group("Performance")
 ## Clearance is safety telemetry only; collision-safe placement still runs every
@@ -157,6 +167,7 @@ var camera_state := CameraState.GROUND
 var spring_velocity_horizontal := Vector3.ZERO
 var spring_velocity_vertical := Vector3.ZERO
 var _filtered_surface_up := Vector3.UP
+var _takeoff_surface_up := Vector3.UP
 var _yaw_dir := Vector3.FORWARD
 var _pitch := 0.0
 var _smoothed_air_height := 0.0
@@ -182,6 +193,10 @@ var _profile_look_ahead := 0.0
 var _smoothed_heading_weight := 0.0
 var _smoothed_bank := 0.0
 var _last_stable_camera_offset := Vector3.ZERO
+var _consecutive_emergency_frames := 0
+var _target_motion_carryover := Vector3.ZERO
+var _hard_reacquire_used := false
+var _emergency_fallback_used := false
 var _desired_camera_position := Vector3.ZERO
 var _composition_recovery_bias := Vector3.ZERO
 var _desired_camera_forward := Vector3.FORWARD
@@ -391,6 +406,7 @@ func reset_immediate() -> void:
 	var forward := -target.global_basis.z
 	var speed := target.velocity.length()
 	_filtered_surface_up = up
+	_takeoff_surface_up = up
 	var horizontal := (forward - up * forward.dot(up))
 	_yaw_dir = horizontal.normalized() if horizontal.length_squared() > 0.001 else Vector3.FORWARD
 	_pitch = atan2(-forward.dot(up), maxf(forward.dot(_yaw_dir), 0.0001))
@@ -428,6 +444,10 @@ func reset_immediate() -> void:
 	_camera_occluded = false
 	_camera_clearance = maximum_camera_distance
 	_camera_fallback_count = 0
+	_consecutive_emergency_frames = 0
+	_target_motion_carryover = Vector3.ZERO
+	_hard_reacquire_used = false
+	_emergency_fallback_used = false
 	_composition_valid = false
 	_composition_recovery_active = false
 	_skier_screen_rect = Rect2()
@@ -484,6 +504,10 @@ func _physics_process(delta: float) -> void:
 	var raw_surface_up := Vector3.UP
 	if skier != null and skier.state in [SkierController.State.GROUND, SkierController.State.GRIND] and skier.contact.average_normal.length_squared() > 0.01:
 		raw_surface_up = skier.contact.average_normal.normalized()
+	elif camera_state == CameraState.AIR and _air_entry_time >= 0.0 and _air_entry_time < takeoff_surface_up_hold_time and _takeoff_surface_up.length_squared() > 0.5:
+		# Takeoff handoff: hold the latched takeoff normal instead of slewing
+		# toward world-up while AIR framing/FOV/distance change.
+		raw_surface_up = _takeoff_surface_up.normalized()
 	_filtered_surface_up = _slerp_direction(_filtered_surface_up, raw_surface_up, 1.0 - exp(-surface_up_rate * delta))
 	var up := _filtered_surface_up
 
@@ -493,6 +517,8 @@ func _physics_process(delta: float) -> void:
 	if camera_state == CameraState.AIR:
 		if previous_camera_state != CameraState.AIR:
 			_air_entry_time = 0.0
+			_takeoff_surface_up = _filtered_surface_up
+			up = _takeoff_surface_up
 			_framing_solver.reset(target.global_position.dot(up), true)
 		else:
 			_air_entry_time += delta
@@ -517,9 +543,22 @@ func _physics_process(delta: float) -> void:
 	# Respawn/teleport guard: never feed-forward a >25 m jump (reset_immediate handles it).
 	if target_displacement.length_squared() > 625.0:
 		target_displacement = Vector3.ZERO
+		_target_motion_carryover = Vector3.ZERO
 		_previous_target_position = target_position_now
 	else:
-		global_position += target_displacement
+		# CAM-02: previously missed target motion is re-injected here so one
+		# blocked frame cannot permanently discard it. Downstream relative
+		# caps still bound the extra correction this frame.
+		var effective_displacement := target_displacement + _target_motion_carryover
+		if effective_displacement.length_squared() > 625.0:
+			effective_displacement = effective_displacement.normalized() * 25.0
+		global_position += effective_displacement
+		target_displacement = effective_displacement
+	# A repeated world-space freeze must escalate to a bounded target-relative
+	# hard reacquire instead of committing another stale pose.
+	var force_reacquire := _consecutive_emergency_frames >= 3 or _previous_target_distance > maximum_camera_distance + 0.05
+	_hard_reacquire_used = false
+	_emergency_fallback_used = false
 
 	var planar := target.velocity.slide(up)
 	var planar_speed := planar.length()
@@ -585,8 +624,11 @@ func _physics_process(delta: float) -> void:
 		# bail; the feet may legitimately disappear into the snow during rest.
 		framing_target += up * crash_target_height
 
-	var speed_distance_target := clampf(speed * speed_distance_gain, 0.0, speed_distance_cap)
-	var speed_height_target := clampf(speed * speed_height_gain, 0.0, speed_height_cap)
+	# Ordinary speed responses use planar (downhill travel) speed so vertical
+	# jump velocity cannot masquerade as travel speed. The vertical component
+	# stays inside AIR framing (framing solver + air height) instead.
+	var speed_distance_target := clampf(planar_speed * speed_distance_gain, 0.0, speed_distance_cap)
+	var speed_height_target := clampf(planar_speed * speed_height_gain, 0.0, speed_height_cap)
 	_smoothed_speed_distance = lerpf(_smoothed_speed_distance, speed_distance_target, 1.0 - exp(-speed_distance_response * delta))
 	_smoothed_speed_height = lerpf(_smoothed_speed_height, speed_height_target, 1.0 - exp(-speed_height_response * delta))
 	var distance := follow_distance + _smoothed_speed_distance + _profile_distance
@@ -647,11 +689,21 @@ func _physics_process(delta: float) -> void:
 			0.0,
 			turn_look_ahead_gain
 		)
-	var look_ahead_target := maxf(clampf(speed * look_ahead_gain, look_ahead_min, look_ahead_max) + turn_look_ahead, _profile_look_ahead)
+	var look_ahead_target := maxf(clampf(planar_speed * look_ahead_gain, look_ahead_min, look_ahead_max) + turn_look_ahead, _profile_look_ahead)
 	_smoothed_look_ahead = lerpf(_smoothed_look_ahead, look_ahead_target, 1.0 - exp(-look_ahead_rate * delta))
 	var carve_look_ahead_target := Vector3.ZERO
 	if skier != null and camera_state in [CameraState.GROUND, CameraState.LANDING] and planar_speed > trajectory_heading_speed_threshold and absf(skier.heading_travel_angle_degrees) > 2.0:
 		carve_look_ahead_target = planar.normalized() * clampf(planar_speed * carve_look_ahead_gain, 0.0, carve_look_ahead_max)
+		# Signed turn lead: bias the look target laterally into the sustained
+		# turn so linked carves open space ahead. Positive heading angle is a
+		# left turn; travel_right points right, so the lead negates it.
+		var travel_right_side := travel.cross(up)
+		if travel_right_side.length_squared() > 0.001 and turn_lead_lateral_max > 0.0:
+			var turn_side := -signf(skier.heading_travel_angle_degrees)
+			var lateral_strength := clampf(absf(skier.heading_travel_angle_degrees) / maxf(heading_angle_reference, 1.0), 0.0, 1.0) * turn_lead_lateral_max
+			carve_look_ahead_target += travel_right_side.normalized() * turn_side * lateral_strength
+		if turn_lead_limit > 0.0 and carve_look_ahead_target.length() > turn_lead_limit:
+			carve_look_ahead_target = carve_look_ahead_target.normalized() * turn_lead_limit
 	_smoothed_carve_look_ahead_offset = _smoothed_carve_look_ahead_offset.lerp(
 		carve_look_ahead_target,
 		1.0 - exp(-carve_look_ahead_rate * delta)
@@ -696,7 +748,7 @@ func _physics_process(delta: float) -> void:
 	var banked_up := Vector3.UP.rotated(blended_forward, _smoothed_bank)
 	global_basis = Basis.looking_at(blended_forward, banked_up)
 
-	var fov_target := base_fov + clampf(speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain + _profile_fov
+	var fov_target := base_fov + clampf(planar_speed / fov_speed_reference, 0.0, 1.0) * speed_fov_gain + _profile_fov
 	var fov_before := camera.fov
 	var fov_step := (fov_target - fov_before) * (1.0 - exp(-fov_rate * delta))
 	var fov_limit := maximum_fov_change_rate * delta
@@ -762,7 +814,7 @@ func _physics_process(delta: float) -> void:
 		if feed_forward_hold_valid:
 			final_position = feed_forward_hold
 		else:
-			final_position = frame_start_position
+			final_position = _emergency_fallback_position(frame_start_position, target_displacement, up, travel, delta, force_reacquire)
 			emergency_fallback_used = true
 		final_offset = final_position - target.global_position
 	var final_up_offset := final_offset.dot(up)
@@ -781,13 +833,13 @@ func _physics_process(delta: float) -> void:
 				if feed_forward_hold_valid:
 					final_position = feed_forward_hold
 				else:
-					final_position = frame_start_position
+					final_position = _emergency_fallback_position(frame_start_position, target_displacement, up, travel, delta, force_reacquire)
 					emergency_fallback_used = true
 		else:
 			if feed_forward_hold_valid:
 				final_position = feed_forward_hold
 			else:
-				final_position = frame_start_position
+				final_position = _emergency_fallback_position(frame_start_position, target_displacement, up, travel, delta, force_reacquire)
 				emergency_fallback_used = true
 		final_offset = final_position - target.global_position
 	# Absolute maximum distance must be enforced after all rate limits and
@@ -804,7 +856,7 @@ func _physics_process(delta: float) -> void:
 			if feed_forward_hold_valid:
 				final_position = feed_forward_hold
 			else:
-				final_position = frame_start_position
+				final_position = _emergency_fallback_position(frame_start_position, target_displacement, up, travel, delta, force_reacquire)
 				emergency_fallback_used = true
 	# Ensure the final translation-capped pose is still above the snow surface.
 	if get_world_3d() != null:
@@ -819,7 +871,7 @@ func _physics_process(delta: float) -> void:
 				if feed_forward_hold_valid:
 					final_position = feed_forward_hold
 				else:
-					final_position = frame_start_position
+					final_position = _emergency_fallback_position(frame_start_position, target_displacement, up, travel, delta, force_reacquire)
 					emergency_fallback_used = true
 	# All radial/translation/surface clamps above can change the swept segment.
 	# Revalidate the final segment and destination before committing the pose.
@@ -840,15 +892,29 @@ func _physics_process(delta: float) -> void:
 			final_position = trace_position
 			emergency_fallback_used = false
 		else:
-			# Safety emergency: keeping the old world pose may exceed the relative
-			# motion cap, but it is preferable to committing a colliding camera.
-			final_position = frame_start_position
+			# Safety emergency: never freeze on the raw start-of-frame world
+			# pose after the target has moved. Resolve a target-relative pose
+			# (feed-forward hold, stable offset, sweep pull-in, or bounded
+			# hard reacquire) so missed translation is not discarded.
+			final_position = _emergency_fallback_position(frame_start_position, target_displacement, up, travel, delta, force_reacquire, trace_position)
 			emergency_fallback_used = true
 	global_position = final_position
 	# Authoritative stable state: only a fully valid, non-emergency committed pose
 	# may replace the previous target-relative fallback offset.
 	if not emergency_fallback_used and _fallback_pose_is_valid(global_position, frame_start_position, target_displacement, up, delta):
 		_last_stable_camera_offset = global_position - target.global_position
+	if emergency_fallback_used:
+		_consecutive_emergency_frames += 1
+		# CAM-02: do not advance away the knowledge of missed target
+		# translation. Carry the unfollowed motion into the next frame's
+		# feed-forward instead of forgetting it with _previous_target_position.
+		var committed_translation := global_position - frame_start_position
+		var missed_motion := target_displacement - committed_translation
+		_target_motion_carryover = (_target_motion_carryover + missed_motion).limit_length(maximum_camera_distance)
+	else:
+		_consecutive_emergency_frames = 0
+		_target_motion_carryover = Vector3.ZERO
+	_emergency_fallback_used = emergency_fallback_used
 	# Composition is position-only, so the rendered basis remains the yaw/pitch
 	# controller's bounded orientation in every state.
 	global_basis = composition_basis
@@ -891,10 +957,15 @@ func _apply_screen_composition(frame_start_position: Vector3, up: Vector3, trave
 	var base_evaluation := _evaluate_composition(base_position, global_basis, camera.fov, up)
 	var candidates: Array[Vector3] = [base_position]
 	var soft_composition_state := camera_state in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]
-	if camera_state in [CameraState.GROUND, CameraState.LANDING, CameraState.RAIL]:
-		# Ground follow already has a stable spring, heading, and collision path.
-		# Do not orbit around the skier trying to satisfy a transient screen-space
-		# bound; that recovery can turn a small framing error into lateral drift.
+	if camera_state in [CameraState.GROUND, CameraState.RAIL]:
+		# Ground/rail follow already has a stable spring, heading, and
+		# collision path. Do not orbit around the skier trying to satisfy a
+		# transient screen-space bound; that recovery can turn a small framing
+		# error into lateral drift.
+		# LANDING is intentionally not here: it owns one clear recovery path
+		# below (hard visibility + collision safety with bounded recovery) so
+		# a touchdown occlusion can be climbed out of instead of reported
+		# invalid with no correction attempt.
 		_composition_recovery_active = not _composition_hard_valid(base_evaluation)
 		_composition_valid = _composition_candidate_is_valid(base_evaluation)
 		return
@@ -1126,6 +1197,101 @@ func _fallback_pose_is_valid(candidate: Vector3, frame_start_position: Vector3, 
 		return false
 	var trace := _trace_camera_candidate(frame_start_position, candidate)
 	return not bool(trace.get("hit", false))
+
+## CAM-01/CAM-02: resolve a target-relative emergency pose. Every candidate
+## inherits target motion (feed-forward hold, last stable target-relative
+## offset, sweep pull-in, or bounded hard reacquire) so a blocked frame can
+## never commit the raw start-of-frame world pose and silently discard the
+## target translation for all following frames. Hierarchy:
+## desired feed-forward hold -> stable offset -> sweep pull-in hint ->
+## bounded hard reacquire -> stabilized feed-forward hold (last resort).
+func _emergency_fallback_position(
+	frame_start_position: Vector3,
+	target_displacement: Vector3,
+	up: Vector3,
+	travel: Vector3,
+	delta: float,
+	force_reacquire: bool,
+	trace_hint: Vector3 = Vector3.INF
+) -> Vector3:
+	if target == null:
+		return frame_start_position
+	var feed_hold := _stabilize_camera_position(frame_start_position + target_displacement, up, travel, false)
+	var stable_pose := target.global_position + _last_stable_camera_offset
+	stable_pose = _stabilize_camera_position(stable_pose, up, travel, false)
+	var reacquire := _hard_reacquire_pose(frame_start_position + target_displacement, up, travel)
+	if force_reacquire and bool(reacquire.get("valid", false)):
+		_hard_reacquire_used = true
+		return reacquire.get("position", feed_hold)
+	if _fallback_pose_is_valid(feed_hold, frame_start_position, target_displacement, up, delta):
+		return feed_hold
+	if _fallback_pose_is_valid(stable_pose, frame_start_position, target_displacement, up, delta):
+		return stable_pose
+	if trace_hint.is_finite() and _fallback_pose_is_valid(trace_hint, frame_start_position, target_displacement, up, delta):
+		return trace_hint
+	if bool(reacquire.get("valid", false)):
+		_hard_reacquire_used = true
+		return reacquire.get("position", feed_hold)
+	return feed_hold
+
+## Bounded hard reacquire: rebuild the closest validated target-relative chase
+## pose from the current travel/up frame. May exceed the per-frame relative
+## correction cap (that is its purpose after a repeated freeze), but must
+## still satisfy min/max distance, min up offset, destination clearance, and
+## segment safety. Returns {"valid": bool, "position": Vector3}.
+func _hard_reacquire_pose(segment_from: Vector3, up: Vector3, travel: Vector3) -> Dictionary:
+	var invalid := {"valid": false, "position": segment_from}
+	if target == null:
+		return invalid
+	var safe_up := up.normalized() if up.length_squared() > 0.001 else Vector3.UP
+	var safe_travel := travel.slide(safe_up)
+	if safe_travel.length_squared() < 0.001:
+		safe_travel = (-target.global_basis.z).slide(safe_up)
+	if safe_travel.length_squared() < 0.001:
+		safe_travel = -global_basis.z.slide(safe_up)
+	if safe_travel.length_squared() < 0.001:
+		safe_travel = Vector3.FORWARD
+	safe_travel = safe_travel.normalized()
+	var pose := target.global_position - safe_travel * follow_distance + safe_up * (follow_height + look_height_offset)
+	pose = _stabilize_camera_position(pose, safe_up, safe_travel, false)
+	if _reacquire_pose_is_valid(pose, segment_from, safe_up):
+		return {"valid": true, "position": pose}
+	# The straight segment is blocked: fall back to the collision-safe
+	# pull-in along the same segment (controlled arm shortening toward the
+	# target beats both target loss and terrain clipping), provided it made
+	# material progress out of the blocked start and satisfies the same
+	# distance/up/clearance contract.
+	var pull := _trace_camera_candidate(segment_from, pose)
+	var pulled := pull.get("position", segment_from) as Vector3
+	if pulled.distance_to(segment_from) > 0.1 and _reacquire_destination_valid(pulled, safe_up):
+		return {"valid": true, "position": pulled}
+	return invalid
+
+func _reacquire_destination_valid(candidate: Vector3, up: Vector3) -> bool:
+	if target == null or not candidate.is_finite():
+		return false
+	var safe_up := up.normalized() if up.length_squared() > 0.001 else Vector3.UP
+	var offset := candidate - target.global_position
+	var distance := offset.length()
+	if distance < minimum_camera_distance - 0.001 or distance > maximum_camera_distance + 0.001:
+		return false
+	if offset.dot(safe_up) < minimum_camera_up_offset - 0.001:
+		return false
+	return _camera_destination_is_clear(candidate)
+
+func _reacquire_pose_is_valid(candidate: Vector3, segment_from: Vector3, up: Vector3) -> bool:
+	if target == null or not candidate.is_finite() or not segment_from.is_finite():
+		return false
+	var safe_up := up.normalized() if up.length_squared() > 0.001 else Vector3.UP
+	var offset := candidate - target.global_position
+	var distance := offset.length()
+	if distance < minimum_camera_distance - 0.001 or distance > maximum_camera_distance + 0.001:
+		return false
+	if offset.dot(safe_up) < minimum_camera_up_offset - 0.001:
+		return false
+	if not _camera_destination_is_clear(candidate):
+		return false
+	return not bool(_trace_camera_candidate(segment_from, candidate).get("hit", false))
 
 func _keep_composition_camera_behind(candidate: Vector3, up: Vector3, travel: Vector3) -> Vector3:
 	if target == null or camera_state not in [CameraState.AIR, CameraState.LANDING, CameraState.CRASH]:
@@ -1415,8 +1581,15 @@ func debug_snapshot() -> Dictionary:
 		"camera_clearance": _camera_clearance,
 		"camera_fallback_count": _camera_fallback_count,
 		"composition_fallback_count": _camera_fallback_count,
+		"emergency_fallback_used": _emergency_fallback_used,
+		"consecutive_emergency_frames": _consecutive_emergency_frames,
+		"hard_reacquire_used": _hard_reacquire_used,
+		"target_motion_carryover": _target_motion_carryover,
 		"target_screen_position": _target_screen_position,
 		"skier_screen_rect": _skier_screen_rect,
+		"skier_screen_size": _skier_screen_rect.size,
+		"pitch_degrees": rad_to_deg(_pitch),
+		"surface_up": _filtered_surface_up,
 		"landing_screen_position": _landing_screen_position,
 		"composition_valid": _composition_valid,
 		"composition_recovery_active": _composition_recovery_active,
@@ -1466,11 +1639,20 @@ func _avoid_collision(from: Vector3, desired: Vector3, up: Vector3, travel: Vect
 		var candidate_distance := candidate_position.distance_to(target.global_position)
 		if not bool(result.hit) and candidate_distance >= minimum_camera_distance:
 			return candidate_position
-	# Every candidate is occluded. Hold the last valid offset-relative pose instead
-	# of moving the camera through a feature or snapping into its near side.
+	# Every candidate is occluded. Prefer the collision-safe pull-in along the
+	# desired arm: shortening the chase arm toward the target inherits target
+	# motion and keeps the skier framed, while a stale world pose freezes the
+	# camera behind the crest. The camera is not a physical body; controlled
+	# pull-in beats target loss.
 	_camera_fallback_count += 1
-	if target != null and _last_stable_camera_offset.is_finite():
-		return target.global_position + _last_stable_camera_offset
+	if target != null:
+		var pulled: Vector3 = direct.position
+		if pulled.is_finite() and _camera_destination_is_clear(pulled):
+			return pulled
+		if _last_stable_camera_offset.is_finite():
+			var stable := target.global_position + _last_stable_camera_offset
+			if _camera_destination_is_clear(stable):
+				return stable
 	return direct.position
 
 func _measure_camera_clearance(position: Vector3) -> float:

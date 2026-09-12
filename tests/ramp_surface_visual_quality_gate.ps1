@@ -2,6 +2,7 @@ param(
 	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
 	[ValidateSet("daytime", "golden", "sunset")]
 	[string]$EnvironmentName = "daytime",
+	[switch]$HideGuides,
 	[int]$TimeoutSeconds = 120
 )
 
@@ -11,6 +12,7 @@ $godot = Join-Path $RepoRoot ".tools/godot-4.7.2/Godot_v4.7.2-stable_win64.exe"
 if (-not (Test-Path -LiteralPath $godot -PathType Leaf)) { throw "Godot GUI executable was not found: $godot" }
 
 $runName = "ramp_surface_$EnvironmentName"
+if ($HideGuides) { $runName += "_noguides" }
 $evidenceRootRelative = "res://.godot_user/visual_runs/$runName"
 $evidenceRoot = Join-Path $RepoRoot ".godot_user\visual_runs\$runName"
 $captureRootRelative = "res://.godot_user/captures/$runName"
@@ -31,6 +33,7 @@ $arguments = @(
 	"--capture-dir=$captureRootRelative",
 	"--skip-player-probe"
 )
+if ($HideGuides) { $arguments += "--hide-guides" }
 $process = Start-Process -FilePath $godot -WorkingDirectory $RepoRoot -ArgumentList $arguments -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
 while ($true) {
@@ -61,6 +64,10 @@ $expectedScenarioIds = @(
 	"environment.ramp_texture.lip",
 	"environment.ramp_texture.deck",
 	"environment.ramp_texture.landing",
+	"environment.ramp_texture.medium_deck",
+	"environment.ramp_texture.medium_landing",
+	"environment.ramp_texture.large_knuckle",
+	"environment.ramp_texture.large_landing",
 	"environment.ramp_texture.roller",
 	"environment.ramp_texture.berm",
 	"environment.ramp_texture.side_hit"

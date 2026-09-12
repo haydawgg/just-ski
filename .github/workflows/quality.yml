@@ -92,6 +92,7 @@ jobs:
           - animation
           - tricks-gameplay
           - systems-media
+          - release-stress
     env:
       RUNTIME_SHARD: ${{ matrix.shard }}
     steps:
@@ -234,4 +235,4 @@ jobs:
           if ($env:STATIC_RESULT -ne 'success' -or $env:PREPARE_RESULT -ne 'success' -or $env:RUNTIME_RESULT -ne 'success' -or $env:EXPORT_PACK_RESULT -ne 'success') {
             throw 'One or more required static/runtime/export quality jobs did not pass.'
           }
-          Write-Output 'QUALITY_GATE_PASS: static checks, production pack export, and all five runtime shards passed.'
+          Write-Output 'QUALITY_GATE_PASS: static checks, production pack export, and all six runtime shards passed.'

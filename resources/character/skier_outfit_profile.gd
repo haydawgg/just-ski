@@ -19,6 +19,7 @@ extends Resource
 @export_group("Equipment")
 @export var ski_base_color := Color("#1d5a74")
 @export var ski_accent_color := Color("#d9a441")
+@export var ski_edge_color := Color("#b9c2c9")
 @export var pole_color := Color("#9fb9c4")
 
 @export_group("Surface Response")

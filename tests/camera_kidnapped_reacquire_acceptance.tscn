@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://ckidnapreacqacc01"]
+
+[ext_resource type="Script" path="res://tests/camera_kidnapped_reacquire_acceptance.gd" id="1"]
+
+[node name="CameraKidnappedReacquireAcceptance" type="Node3D"]
+script = ExtResource("1")

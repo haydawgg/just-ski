@@ -12,6 +12,7 @@ func _ready() -> void:
 	_test_air_phase_sequence()
 	_test_jump_size_scaling()
 	_test_terrain_hop()
+	_test_small_no_trick_air_athletic()
 	_test_straight_air_at_multiple_speeds()
 	_test_physics_driven_spin_support()
 	AudioManager.shutdown_audio()
@@ -117,12 +118,51 @@ func _test_terrain_hop() -> void:
 	frame.predicted_landing_time = 0.12
 	_step(rig, frame, 28, true)
 	var hop := rig.debug_snapshot()
-	if float(hop.air_size) > 0.16 or float(hop.air_flex) > 0.3:
+	# Phase 6A recalibration: the no-trick athletic floor intentionally sits
+	# at 0.30, so the hop ceiling moves 0.30 -> 0.38. Intent preserved with
+	# margin — the ordering hop (~0.30) < small charged apex (~0.44) <
+	# medium (~0.69) still distinguishes hops from real jumps.
+	if float(hop.air_size) > 0.16 or float(hop.air_flex) > 0.38:
 		failures.append("A tiny uncharged terrain hop played an oversized jump pose")
 	if int(hop.reaction) == SkierAnimationController.AnimationEvent.POP:
 		failures.append("Terrain takeoff incorrectly played the charged-pop reaction")
 	if float(hop.terrain_influence) > 0.12:
 		failures.append("Terrain suspension remained magnetized during the terrain hop")
+	_dispose_rig(rig)
+
+func _test_small_no_trick_air_athletic() -> void:
+	# Phase 6A: a small no-trick jump must stay athletic (flexed, never
+	# mannequin-straight) at entry, early air, apex and descent. The rig
+	# carries real ground loading into the air frames, exercising the
+	# takeoff-load cache as well as the baseline floor.
+	var rig := _new_rig()
+	_step(rig, _ground_frame(12.0), 40)
+	var frame := _air_frame(12.0, SkierAnimationFrame.TakeoffType.TERRAIN_TAKEOFF, 0.0, 1.2)
+	frame.air_time = 0.05
+	frame.air_upward_velocity = 0.9
+	frame.predicted_landing_time = 0.55
+	_step(rig, frame, 12, true)
+	var entry := float(rig.debug_snapshot().air_flex)
+	frame.air_time = 0.22
+	frame.air_upward_velocity = 0.4
+	frame.predicted_landing_time = 0.38
+	_step(rig, frame, 20, true)
+	var early := float(rig.debug_snapshot().air_flex)
+	frame.air_time = 0.42
+	frame.air_upward_velocity = 0.0
+	frame.predicted_landing_time = 0.2
+	_step(rig, frame, 24, true)
+	var apex := float(rig.debug_snapshot().air_flex)
+	frame.air_time = 0.6
+	frame.air_upward_velocity = -1.6
+	frame.predicted_landing_time = 0.08
+	_step(rig, frame, 22, true)
+	var descent := float(rig.debug_snapshot().air_flex)
+	print("JUMP_NOTRICK_SAMPLE entry=%.3f early=%.3f apex=%.3f descent=%.3f" % [entry, early, apex, descent])
+	for sample: Array in [[entry, "entry"], [early, "early air"], [apex, "apex"], [descent, "descent"]]:
+		var value := float(sample[0])
+		if value < 0.26 or value > 0.8:
+			failures.append("Small no-trick air left the athletic flex band at %s (%.3f)" % [str(sample[1]), value])
 	_dispose_rig(rig)
 
 func _test_straight_air_at_multiple_speeds() -> void:

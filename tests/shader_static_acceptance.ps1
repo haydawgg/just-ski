@@ -32,6 +32,11 @@ function Reject-Match([string]$Text, [string]$Pattern, [string]$Message) {
 $common = Read-RequiredFile "shaders/snow_common.gdshaderinc"
 $fast = Read-RequiredFile "shaders/snow_fast.gdshader"
 $premium = Read-RequiredFile "shaders/snow_premium.gdshader"
+$summit = Read-RequiredFile "shaders/snow_summit.gdshader"
+$mountain = Read-RequiredFile "shaders/distant_mountain.gdshader"
+$treeBatch = Read-RequiredFile "world/environment/park_tree_batch.gd"
+$treeAsset = Read-RequiredFile "assets/environment/production/low_poly_environment_asset.gd"
+$catalogTres = Read-RequiredFile "resources/environment/default_environment_asset_catalog.tres"
 $tracks = Read-RequiredFile "shaders/ski_tracks.gdshader"
 $particle = Read-RequiredFile "shaders/snow_particle.gdshader"
 $material = Read-RequiredFile "world/snow_material.gd"
@@ -39,6 +44,7 @@ $snowProfile = Read-RequiredFile "world/snow_presentation_profile.gd"
 $parkLayout = Read-RequiredFile "world/park_features/park_layout.gd"
 $contact = Read-RequiredFile "player/ski_contact_solver.gd"
 $resort = Read-RequiredFile "world/resort.gd"
+$summitEnvironment = Read-RequiredFile "world/summit_environment_builder.gd"
 $snowVfx = Read-RequiredFile "world/vfx/ski_snow_vfx.gd"
 $settings = Read-RequiredFile "autoload/game_settings.gd"
 $ui = Read-RequiredFile "ui/hud/game_ui.gd"
@@ -87,8 +93,7 @@ Require-Match $premium 'CLEARCOAT\s*=' "Premium sparkle must use the reflection 
 Require-Match $premium 'SSS_STRENGTH\s*=' "Premium snow must provide real SSS strength."
 Require-Match $premium 'SSS_TRANSMITTANCE_COLOR\s*=' "Premium snow must provide transmittance color."
 Reject-Match $common 'SSS_STRENGTH|SSS_TRANSMITTANCE|CLEARCOAT' "Premium-only renderer outputs cannot leak into shared code."
-Require-Match $common 'smoothstep\(detail_near_distance,\s*max\(detail_far_distance' "Snow detail must fade between its near and far boundaries."
-Require-Match $common 'if\s*\(detail_visibility\s*>\s*0\.001\)' "Texture sampling must be skipped beyond the detail boundary."
+Require-Match $common 'smoothstep\(detail_near_distance,\s*max\(detail_far_distance' "Snow detail must fade between its near and far boundaries."Require-Match $common 'if\s*\(detail_visibility\s*>\s*0\.001\)' "Texture sampling must be skipped beyond the detail boundary."
 Require-Match $common 'macro_tint_amount\s*\*\s*detail_visibility' "Macro tint must fade to the flat far-field response."
 Require-Match $common 'far_macro_tint_amount' "Snow must retain broad terrain variation beyond the micro-detail boundary."
 Require-Match $common 'warm_snow_tint' "Snow must provide subtle warm base-color variation."
@@ -225,6 +230,41 @@ Require-Match $resort 'func effective_hdr_enabled' "Resort must own an explicit 
 Require-Match $resort 'TONE_MAPPER_AGX' "HDR presentation must grade through an HDR-capable tonemapper."
 Require-Match $resort 'TONE_MAPPER_FILMIC' "SDR presentation must keep the authored filmic tonemapper."
 Require-Match $resort '_apply_hdr_presentation\(\)' "Graphics apply must refresh the HDR tonemapper presentation."
+
+# Phase 10: the summit workaround is scoped to the presentation-only shoulder
+# regions; the interactive piste renders through the standard shadow-receiving
+# tier, and the summit's value manipulation stays multiplicative and bounded.
+Require-Match $summit 'render_mode shadows_disabled' "Presentation-only shoulder relief must keep its shadow-safe workaround."
+Require-Match $summit 'surface_albedo\s*\*=\s*1\.0\s*\+\s*drift_value' "Summit drift must modulate the surface multiplicatively."
+Reject-Match $summit 'surface_albedo\s*\+=\s*vec3\(drift_value' "Summit drift cannot rejoin the additive value path."
+Require-Match $summit 'summit_drift_strength\s*:\s*hint_range\(0\.0,\s*0\.4\)' "Summit drift strength must stay bounded to subtle variation."
+Require-Match $snowProfile 'summit_drift_strength\s*:=\s*0\.16' "Summit drift default must remain subtler than the retired strong drift."
+Require-Match $snowProfile 'summit_luminance_floor\s*:=\s*0\.44' "Summit luminance floor must match the shared readability floor."
+Require-Match $snowProfile 'detail_far_distance\s*:=\s*64\.0' "Ground detail must carry piste form into the approach sightline."
+Require-Match $summitEnvironment 'SummitPlayableRenderSurface' "Summit builder must create the shadow-receiving playable region."
+Require-Match $summitEnvironment 'SummitReliefRenderSurfaceLeft' "Summit builder must keep the left shadow-safe shoulder region."
+Require-Match $summitEnvironment 'SummitReliefRenderSurfaceRight' "Summit builder must keep the right shadow-safe shoulder region."
+Require-Match $summitEnvironment 'SnowSurface\.create\(SnowSurface\.Kind\.GROOMED,\s*Vector2\(0\.0,\s*-1\.0\),\s*0\.0,\s*shadow_safe,\s*SnowSurface\.PresentationRole\.GROUND\)' "Summit region materials must select shadow safety per region."
+Reject-Match $summitEnvironment 'SnowSurface\.create\(SnowSurface\.Kind\.GROOMED,\s*Vector2\(0\.0,\s*-1\.0\),\s*0\.0,\s*true\)' "Summit render surface cannot blanket the playable piste with the shadow-safe workaround."
+
+# Phase 11: structural tree families render through deterministic spatial
+# MultiMesh chunks, and global fog is the single primary aerial-perspective
+# system (the mountain shader only adds a bounded local blend).
+Require-Match $treeBatch 'FAMILY_COUNT\s*:=\s*4' "Tree batching must expose four structural conifer families."
+Require-Match $treeBatch 'multimesh\.custom_aabb\s*=' "Tree chunk components must carry chunk-local visibility bounds."
+Require-Match $treeBatch 'tree_chunk' "Tree chunks must record their spatial chunk for tests and debugging."
+Require-Match $treeAsset 'TREE_FAMILY_PROFILES' "Tree assets must own a structural family table."
+Require-Match $treeAsset 'AssetKind\s*\{[^}]*PISTE_MARKER[^}]*SNOW_BANK[^}]*LIFT_STATION' "Density assets must be concrete low-poly kinds."
+Require-Match $catalogTres 'asset_id = "piste_marker"' "Catalog must register the piste marker asset."
+Require-Match $catalogTres 'asset_id = "snow_bank"' "Catalog must register the snow bank asset."
+Require-Match $catalogTres 'asset_id = "lift_station"' "Catalog must register the lift station asset."
+Require-Match $catalogTres 'lod_distances_m = Vector3\(48, 96, 235\)' "Tree LOD must reduce its near/far overlap."
+Require-Match $mountain 'uniform float haze_blend\s*:\s*hint_range\(0\.0,\s*1\.0\)\s*=\s*0\.28' "Mountain haze blend must be an explicit bounded uniform."
+Require-Match $mountain 'depth_haze\s*\*\s*haze_blend' "Mountain shading must use the bounded local haze blend."
+Reject-Match $mountain 'depth_haze\s*\*\s*0\.66' "Mountain shading cannot double-wash distance haze again."
+Require-Match $summitEnvironment '"topology": "long_ridge"' "Backdrop must author multiple topology families."
+Require-Match $summitEnvironment '"topology": "saddle"' "Backdrop must include the saddle/double-peak family."
+Require-Match $summitEnvironment '"topology": "low_ridge"' "Backdrop must include the distant low-ridge family."
 
 if (Test-Path -LiteralPath (Join-Path $RepoRoot "shaders/snow.gdshader")) {
 	$failures.Add("Legacy procedural snow shader still exists.")

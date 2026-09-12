@@ -112,10 +112,33 @@ func trace(from: Vector3, desired: Vector3) -> Dictionary:
 		safe_fraction = clampf(float(cast[0]), 0.0, 1.0)
 	_camera_destination_query.transform = Transform3D(Basis.IDENTITY, desired)
 	var destination_hits := space.intersect_shape(_camera_destination_query, 1)
-	var hit := safe_fraction < 0.999 or not destination_hits.is_empty()
-	if not hit:
+	var destination_blocked := not destination_hits.is_empty()
+	if safe_fraction >= 0.999 and not destination_blocked:
 		return {"hit": false, "position": desired}
-	return {"hit": true, "position": from.lerp(desired, safe_fraction)}
+	# CAM-03: a safe cast fraction alone is not sufficient. The desired pose
+	# can still sit inside the clearance margin (overlap-only case) while the
+	# sweep reports ~1.0. Back off along the segment to the furthest
+	# destination-clear point instead of committing the colliding pose.
+	var limit := safe_fraction
+	if destination_blocked:
+		limit = minf(limit, furthest_clear_fraction(from, desired))
+	return {"hit": true, "position": from.lerp(desired, clampf(limit, 0.0, 1.0))}
+
+## Binary search for the furthest fraction along [from, desired] whose camera
+## volume is destination-clear. Returns 0.0 when even the start overlaps, in
+## which case the caller must use target-relative fallback policy instead of
+## committing the colliding destination. Bounded to a fixed iteration count so
+## query cost stays predictable; only runs on the blocked path.
+func furthest_clear_fraction(from: Vector3, desired: Vector3) -> float:
+	var low := 0.0
+	var high := 1.0
+	for _index: int in 8:
+		var mid := (low + high) * 0.5
+		if destination_is_clear(from.lerp(desired, mid)):
+			low = mid
+		else:
+			high = mid
+	return low
 
 func measure_clearance(position: Vector3, basis: Basis, maximum_distance: float) -> float:
 	if world == null or not position.is_finite():

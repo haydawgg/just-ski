@@ -6,6 +6,7 @@ uniform vec3 base_color : source_color = vec3(0.42, 0.55, 0.66);
 uniform vec3 haze_color : source_color = vec3(0.72, 0.8, 0.86);
 uniform float haze_start_distance : hint_range(0.0, 1000.0) = 170.0;
 uniform float haze_end_distance : hint_range(1.0, 1200.0) = 620.0;
+uniform float haze_blend : hint_range(0.0, 1.0) = 0.28;
 uniform float facet_value_range : hint_range(0.0, 0.35) = 0.08;
 uniform float mountain_height = 100.0;
 
@@ -28,6 +29,9 @@ void fragment() {
 	float snow = snow_line * smoothstep(0.22, 0.7, world_normal.y);
 	vec3 rock = base_color * (0.72 + strata * 0.07);
 	vec3 surface = mix(rock, vec3(0.88, 0.93, 0.97), snow);
-	ALBEDO = mix(surface, haze_color, depth_haze * 0.66) * facet_value;
+	// Global environment fog is the primary aerial-perspective system on this
+	// project, so the shader only adds a bounded local blend on top of it to
+	// keep near/mid/far value layers without double-washing distant peaks.
+	ALBEDO = mix(surface, haze_color, depth_haze * haze_blend) * facet_value;
 	ROUGHNESS = 0.98;
 }

@@ -16,6 +16,7 @@ This file is the active performance worklist for Summit Sessions. The reproducib
 - [ ] Record OS, CPU, GPU, driver, Godot version, preset, render scale, snow tier, and effective GI state for every result.
 - [ ] Validate daytime and sunset separately.
 - [ ] Treat hardware-specific failures as measured release risks rather than extrapolating from headless CI.
+- [ ] A/B the player-following reflection probe on target hardware (`.\tests\visual_profile.ps1 -IsolationModes baseline,environment_effects`); compare `Resort.player_probe_summary()` recapture counts/intervals and inspect skis, goggles, rails, and feature highlights for specular jumps before keeping, throttling, or removing the probe.
 
 ## P0 — production snow profiling
 

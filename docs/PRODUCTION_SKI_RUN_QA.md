@@ -41,6 +41,50 @@ The environment gate also records landing telemetry for first contact, impact,
 compression, recovery, and final landing. Confirm `vfx_mode="landing"` and an
 active landing emitter in the landing JSON before judging spray separation.
 
+## Integrated release acceptance (Phase 13)
+
+The canonical run is `tests/canonical_release_run.tscn` (trace version
+`canonical_release_run/v1`): fixed spawn acceleration, linked left/right
+carves, small/medium/large hero airs with clean landings, 300+ frames after the
+final landing, and the finish runout. It records wall/physics/process
+percentiles, camera telemetry, event markers, and probe telemetry to
+`user://canonical_release_profile.json`. Baseline `ebd9276` vs final: 1828 vs
+1854 frames, wall p50/p95 8.30/8.34 ms both, airtimes 2.08/2.63/3.25 s vs
+2.15/2.83/3.42 s, zero grounded hard-invalid frames and zero camera fallbacks
+in both. GPU/human performance and visual review remain outstanding.
+
+| Gate area | Executable evidence |
+| --- | --- |
+| Camera correctness | `camera_convex_crest_follow_acceptance`, `camera_kidnapped_reacquire_acceptance`, `camera_collision_destination_acceptance`, `camera_airborne_viewport_diagnostic` (30/60/120 Hz), `camera_runtime_stability_acceptance` |
+| Camera comfort | `camera_airborne_viewport_diagnostic`, `camera_low_speed_acceptance`, `environment_camera_sweep_acceptance` |
+| Contact/stance | `contact_stance_acceptance`, `terrain_suspension_course`, `crest_unweighting_acceptance` |
+| Animation | `jump_animation_acceptance`, `landing_animation_acceptance`, `trick_animation_acceptance`, `grab_animation_acceptance`, `animation_silhouette_acceptance` |
+| VFX/shadow | `snow_vfx_acceptance`, `contact_shadow_diagnostic`, `environment_visual_acceptance` |
+| Course | `course_rhythm_acceptance`, `park_challenge_playthrough_acceptance`, `release_jump_envelope_acceptance` |
+| Terrain | `park_terrain_continuity_acceptance`, `wedge_viewport_diagnostic`, `physics_collision_acceptance` |
+| Snow/lighting | `snow_lighting_architecture_acceptance`, `environment_visual_acceptance`, `sunset_environment_acceptance` |
+| Environment | `environment_tree_batch_acceptance`, `resort_density_acceptance`, `summit_environment_acceptance` |
+| Performance | `canonical_release_run`, `profiling_acceptance`, `performance_profile_schema_acceptance`, `performance_compare_acceptance` |
+| Display/UI | `display_aspect_acceptance`, `settings_acceptance`, `trick_ui_acceptance`, `clip_recorder_lifecycle_acceptance` |
+| Visual evidence | `visual_evidence_acceptance` plus the GPU capture gates below (human review outstanding) |
+| Regression preservation | `static_quality_gate.ps1` plus all six runtime shards |
+
+Stress evidence: `release_jump_envelope_acceptance` sweeps each hero jump at
+±15% entry speed, ±3.5 m lateral offsets, and ±8° approach error (18/18 clean)
+plus a deliberate ride-around per jump (3/3), a 0.9 s terrain takeoff smaller
+than every table air, and a 30-pass convex-crest loop (30/30 grounded landings,
+0 bails) — 58 discrete landing/crest passes total; `release_carve_stress_acceptance`
+runs eight linked high-speed carves with zero invalid frames;
+`release_cross_state_acceptance` covers braked low-speed recovery, bail
+recovery, and respawn relocation; the environment camera sweep was already
+re-run after final dressing.
+
+Observation (pre-existing, out of Phase 13 scope): a near-stationary grounded
+skier placed on the flat BottomHub finish pad receives a snow-normal impulse
+that launches it off the pad. Normal play crosses the finish trigger before
+that region, so it does not affect the shipping run; it is recorded here rather
+than fixed.
+
 ## GPU-backed sunset visual check
 
 Run this on the Vulkan/NVIDIA reference machine after the headless gates:

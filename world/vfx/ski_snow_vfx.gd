@@ -42,6 +42,8 @@ var last_valid_contact_center := Vector3.ZERO
 var last_valid_contact_normal := Vector3.UP
 var last_valid_contact_allows_snow := false
 var landing_window_remaining := 0.0
+var _carve_anchor_smoothed := Vector3.ZERO
+var _carve_anchor_initialized := false
 
 func _ready() -> void:
 	skier = get_parent() as SkierController
@@ -92,14 +94,11 @@ func update_from_existing_contact(delta: float) -> void:
 	if skier == null:
 		return
 	landing_window_remaining = maxf(landing_window_remaining - delta, 0.0)
-	# GPUParticles3D can finish a one-shot burst before the landing evidence
-	# frame is read back. Keep the authored burst alive for a short, bounded
-	# landing window and restart only if the one-shot emitter completed early.
-	if landing_window_remaining > 0.0:
-		if landing_spray != null and not landing_spray.emitting:
-			landing_spray.emitting = true
-			landing_spray.restart()
-	else:
+	# Single-burst contract: the landing one-shot fires exactly once per
+	# landed event (see _on_landed). The window extends landing MODE
+	# bookkeeping for telemetry and evidence only; re-triggering the emitter
+	# inside it reads as repeated bursts for a single landing.
+	if landing_window_remaining <= 0.0:
 		if landing_spray != null and landing_spray.emitting:
 			landing_spray.emitting = false
 	# SkiContactPresentation captures skier.contact.left_hit_position and
@@ -143,6 +142,7 @@ func _set_emitter_density(emitter: GPUParticles3D, target: float, delta: float) 
 
 func clear_transient_effects() -> void:
 	last_track_valid = false
+	_carve_anchor_initialized = false
 	for emitter: GPUParticles3D in [carve_spray, skid_spray, speed_snow, bail_scrape]:
 		if emitter == null:
 			continue
@@ -371,7 +371,10 @@ func _set_particle_emitter_height(particles: GPUParticles3D, height: float) -> v
 		(mat as ShaderMaterial).set_shader_parameter("emitter_base_height", height)
 
 func _update_continuous_spray(speed: float, delta: float) -> void:
-	var contact_position := _presentation_center() + _presentation_normal() * 0.08
+	# Raw contact center: every emitter adds its own single surface lift
+	# below, so the shared helper must not pre-lift (that stacked +0.08 twice
+	# on center-routed sprays while side-routed sprays sat exact).
+	var contact_position := _presentation_center()
 	var normal := _presentation_normal()
 	var travel := skier.velocity.slide(normal)
 	if travel.length_squared() < 0.01:
@@ -385,12 +388,30 @@ func _update_continuous_spray(speed: float, delta: float) -> void:
 	var speed_ratio := clampf((speed - 3.0) / 20.0, 0.0, 1.0)
 	var left_contact := contact_presentation.left_position if contact_presentation.left_valid else contact_position
 	var right_contact := contact_presentation.right_position if contact_presentation.right_valid else contact_position
-	carve_spray.global_position = left_contact + normal * 0.08 - travel * 0.45
-	skid_spray.global_position = right_contact + normal * 0.08 - travel * 0.3
+	# VFX-01: carve spray belongs to the loaded outside ski, never a fixed
+	# side. Turn sign is the kinematic heading angle (positive = left turn =
+	# loaded right ski); near-straight running stays centered, and an invalid
+	# dominant side falls back to the contact center.
+	var turn_side := 0.0
+	if absf(skier.heading_travel_angle_degrees) > 3.0:
+		turn_side = signf(skier.heading_travel_angle_degrees)
+	var carve_anchor := contact_position
+	if turn_side > 0.0 and contact_presentation.right_valid:
+		carve_anchor = right_contact
+	elif turn_side < 0.0 and contact_presentation.left_valid:
+		carve_anchor = left_contact
+	if not _carve_anchor_initialized:
+		_carve_anchor_initialized = true
+		_carve_anchor_smoothed = carve_anchor
+	_carve_anchor_smoothed = _carve_anchor_smoothed.lerp(carve_anchor, 1.0 - exp(-EMITTER_SMOOTH_RESPONSE * delta))
+	# Skid spray washes off both sliding skis, so it rides the contact center
+	# with slip-signed ejection instead of a fixed side.
+	carve_spray.global_position = _carve_anchor_smoothed + normal * 0.08 - travel * 0.45
+	skid_spray.global_position = contact_position + normal * 0.08 - travel * 0.3
 	_set_particle_emitter_height(carve_spray, carve_spray.global_position.y)
 	_set_particle_emitter_height(skid_spray, skid_spray.global_position.y)
 	var carve_material := carve_spray.process_material as ParticleProcessMaterial
-	carve_material.direction = normal * 0.42 - travel * 0.82
+	carve_material.direction = normal * 0.42 - travel * 0.82 + right * turn_side * 0.55
 	carve_material.spread = 24.0
 	var lateral_sign := signf(skier.lateral_slip)
 	if is_zero_approx(lateral_sign):

@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="EnvironmentAssetCatalog" load_steps=28 format=3]
+[gd_resource type="Resource" script_class="EnvironmentAssetCatalog" load_steps=34 format=3]
 
 [ext_resource type="Script" path="res://resources/environment/environment_asset_definition.gd" id="1_def"]
 [ext_resource type="Script" path="res://resources/environment/environment_asset_catalog.gd" id="2_catalog"]
@@ -17,6 +17,9 @@
 [ext_resource type="PackedScene" path="res://assets/environment/production/trail_board_collision.tscn" id="15_board_collision"]
 [ext_resource type="PackedScene" path="res://assets/environment/production/snow_boulder_visual.tscn" id="16_boulder_visual"]
 [ext_resource type="PackedScene" path="res://assets/environment/production/lift_line_visual.tscn" id="17_lift_line_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/piste_marker_visual.tscn" id="18_marker_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/snow_bank_visual.tscn" id="19_bank_visual"]
+[ext_resource type="PackedScene" path="res://assets/environment/production/lift_station_visual.tscn" id="20_station_visual"]
 
 [sub_resource type="Resource" id="EnvironmentAssetDefinition_tree"]
 script = ExtResource("1_def")
@@ -27,7 +30,7 @@ nominal_size_m = Vector3(3, 6, 3)
 asset_class = 0
 readability_category = "landmark"
 source_license = "Project-authored for this repository; no external source"
-lod_distances_m = Vector3(35, 105, 230)
+lod_distances_m = Vector3(48, 96, 235)
 
 [sub_resource type="Resource" id="EnvironmentAssetDefinition_gate"]
 script = ExtResource("1_def")
@@ -125,6 +128,36 @@ readability_category = "resort_lift"
 source_license = "Project-authored for this repository; no external source"
 lod_distances_m = Vector3(55, 160, 340)
 
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_marker"]
+script = ExtResource("1_def")
+asset_id = "piste_marker"
+visual_scene = ExtResource("18_marker_visual")
+nominal_size_m = Vector3(0.32, 1.26, 0.32)
+asset_class = 2
+readability_category = "piste_marker"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(30, 85, 190)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_bank"]
+script = ExtResource("1_def")
+asset_id = "snow_bank"
+visual_scene = ExtResource("19_bank_visual")
+nominal_size_m = Vector3(3.2, 0.62, 2.4)
+asset_class = 4
+readability_category = "snow_bank"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(30, 90, 220)
+
+[sub_resource type="Resource" id="EnvironmentAssetDefinition_station"]
+script = ExtResource("1_def")
+asset_id = "lift_station"
+visual_scene = ExtResource("20_station_visual")
+nominal_size_m = Vector3(4.5, 5.23, 5.62)
+asset_class = 4
+readability_category = "resort_lift"
+source_license = "Project-authored for this repository; no external source"
+lod_distances_m = Vector3(55, 160, 340)
+
 [resource]
 script = ExtResource("2_catalog")
 mode = 0
@@ -137,6 +170,9 @@ SubResource("EnvironmentAssetDefinition_boundary"),
 SubResource("EnvironmentAssetDefinition_lift"),
 SubResource("EnvironmentAssetDefinition_snowmaker"),
 SubResource("EnvironmentAssetDefinition_board"),
-SubResource("EnvironmentAssetDefinition_boulder"),
-SubResource("EnvironmentAssetDefinition_lift_line")
+	SubResource("EnvironmentAssetDefinition_boulder"),
+	SubResource("EnvironmentAssetDefinition_lift_line"),
+	SubResource("EnvironmentAssetDefinition_marker"),
+	SubResource("EnvironmentAssetDefinition_bank"),
+	SubResource("EnvironmentAssetDefinition_station")
 ])

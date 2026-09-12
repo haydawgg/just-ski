@@ -34,6 +34,9 @@ func _ready() -> void:
 		_run_high_speed_chase_reproduction(step)
 		_run_screen_space_continuity_reproduction(step)
 		_run_ground_to_air_transition_reproduction(step)
+		_run_slope_takeoff_continuity_reproduction(step)
+		_run_sustained_carve_mirror_reproduction(step)
+		_run_landing_recovery_reproduction(step)
 		_run_carve_lookahead_reproduction(step)
 		_run_foreground_occlusion_reproduction(step)
 		_run_respawn_initialization_reproduction(step)
@@ -390,6 +393,170 @@ func _run_ground_to_air_transition_reproduction(step: float) -> void:
 			break
 	_remove_target_and_camera(skier, camera_rig)
 
+func _run_slope_takeoff_continuity_reproduction(step: float) -> void:
+	# Phase 2: ground->AIR from the real ~18° course slope. The flat-normal
+	# reproduction misses the surface-up -> world-up reference rotation that
+	# coincides with AIR framing/FOV/distance changes at takeoff.
+	var slope_angle := deg_to_rad(18.0)
+	var slope_normal := Vector3(0.0, cos(slope_angle), sin(slope_angle))
+	var downhill := Vector3(0.0, -sin(slope_angle), -cos(slope_angle))
+	var skier := SkierController.new()
+	skier.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(skier)
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = slope_normal
+	skier.global_position = Vector3(0.0, 0.35, 0.0)
+	skier.velocity = downhill * 20.0
+	var camera_rig := SkiCameraController.new()
+	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(camera_rig)
+	camera_rig.set_target(skier)
+	for _index: int in ceili(0.5 / step):
+		skier.global_position += skier.velocity * step
+		camera_rig._physics_process(step)
+	# Takeoff: pop normal to the slope, then ballistic flight.
+	skier.state = SkierController.State.AIR
+	skier.contact.grounded = false
+	skier.velocity = downhill * 20.0 + slope_normal * 4.5
+	skier.predicted_landing_valid = true
+	skier.predicted_landing_point = skier.global_position + downhill * 30.0
+	var label := "Slope-takeoff %.0f Hz" % (1.0 / step)
+	var history: Array[Dictionary] = []
+	var previous_pitch := float(camera_rig.debug_snapshot().get("pitch_degrees", 0.0))
+	var window := 0.2
+	for frame_index: int in ceili(1.2 / step):
+		var elapsed := float(frame_index) * step
+		skier.velocity.y -= 9.8 * step
+		skier.global_position += skier.velocity * step
+		skier.predicted_landing_time = maxf(0.02, 1.2 - elapsed)
+		camera_rig._physics_process(step)
+		var snapshot := camera_rig.debug_snapshot()
+		if not bool(snapshot.get("composition_valid", false)):
+			failures.append("%s frame %d lost hard composition on an open slope" % [label, frame_index])
+			break
+		var pitch := float(snapshot.get("pitch_degrees", 0.0))
+		if absf(pitch - previous_pitch) > 5.0:
+			failures.append("%s frame %d pitch snap %.2f deg (%.2f -> %.2f)" % [label, frame_index, absf(pitch - previous_pitch), previous_pitch, pitch])
+			break
+		previous_pitch = pitch
+		history.append({
+			"t": elapsed,
+			"cy": (snapshot.get("target_screen_position", Vector2.ZERO) as Vector2).y,
+			"h": (snapshot.get("skier_screen_size", Vector2.ZERO) as Vector2).y,
+			"recovery": bool(snapshot.get("composition_recovery_active", false)),
+		})
+		while history.size() > 2 and float(history[1].get("t", 0.0)) <= elapsed - window:
+			history.pop_front()
+		if history.size() >= 2:
+			var oldest: Dictionary = history[0]
+			var newest: Dictionary = history[history.size() - 1]
+			if float(newest.get("t", 0.0)) - float(oldest.get("t", 0.0)) >= window - step * 0.5:
+				if not bool(oldest.get("recovery", false)) and not bool(newest.get("recovery", false)):
+					var dy_px := absf(float(newest.get("cy", 0.0)) - float(oldest.get("cy", 0.0))) * 540.0
+					if dy_px > 60.0:
+						failures.append("%s frames %d-%d screen-Y jump %.1f px over %.2f s (limit 60)" % [label, frame_index - history.size() + 1, frame_index, dy_px, window])
+						break
+					var h_old := maxf(float(oldest.get("h", 0.0)), 0.0001)
+					var h_new := float(newest.get("h", 0.0))
+					var ratio := h_new / h_old
+					if ratio < 0.82 or ratio > 1.18:
+						failures.append("%s frames %d-%d subject-height ratio %.3f outside [0.82, 1.18]" % [label, frame_index - history.size() + 1, frame_index, ratio])
+						break
+	_remove_target_and_camera(skier, camera_rig)
+
+func _run_landing_recovery_reproduction(step: float) -> void:
+	# Phase 2: LANDING must be able to recover an invalid composition instead
+	# of being trapped by the GROUND/LANDING early return. A feature slides
+	# between the camera and the skier exactly at touchdown; the 0.35 s
+	# LANDING window must climb back to a hard-valid pose.
+	var floor := StaticBody3D.new()
+	floor.collision_layer = 1
+	floor.collision_mask = 0
+	var floor_shape := CollisionShape3D.new()
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(80.0, 0.5, 80.0)
+	floor_shape.shape = floor_box
+	floor.add_child(floor_shape)
+	floor.position.y = -0.25
+	add_child(floor)
+	var skier := SkierController.new()
+	skier.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(skier)
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_position = Vector3(0.0, 0.35, 0.0)
+	skier.velocity = Vector3.ZERO
+	var camera_rig := SkiCameraController.new()
+	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(camera_rig)
+	camera_rig.set_target(skier)
+	for _index: int in ceili(0.5 / step):
+		camera_rig._physics_process(step)
+	# Short hop so the camera enters a genuine LANDING window at touchdown.
+	skier.state = SkierController.State.AIR
+	for hop_index: int in ceili(0.45 / step):
+		var tau := float(hop_index) * step
+		skier.global_position = Vector3(0.0, 0.35 + 1.2 * sin(tau / 0.45 * PI), 0.0)
+		skier.velocity = Vector3(0.0, 1.2 * PI / 0.45 * cos(tau / 0.45 * PI), 0.0)
+		camera_rig._physics_process(step)
+	# Touchdown + occluding feature on the settled sight-line between the
+	# camera and the skier, so the steady-state spring pose stays occluded
+	# and only candidate recovery (not the spring) can fix it.
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.global_position = Vector3(0.0, 0.35, 0.0)
+	skier.velocity = Vector3.ZERO
+	skier.predicted_landing_valid = false
+	var midpoint := camera_rig.global_position.lerp(skier.global_position, 0.35)
+	var feature := StaticBody3D.new()
+	feature.collision_layer = 4
+	feature.collision_mask = 0
+	feature.position = midpoint
+	var feature_shape := CollisionShape3D.new()
+	var feature_box := BoxShape3D.new()
+	feature_box.size = Vector3(3.0, 2.0, 0.9)
+	feature_shape.shape = feature_box
+	feature.add_child(feature_shape)
+	add_child(feature)
+	# Step once so the composition cache (keyed on frame id + pose) reflects
+	# the spawned feature before the setup check below.
+	camera_rig._physics_process(step)
+	var label := "Landing-recovery %.0f Hz" % (1.0 / step)
+	var setup_evaluation := camera_rig._evaluate_composition(camera_rig.global_position, camera_rig.global_basis, camera_rig.camera.fov, Vector3.UP)
+	if camera_rig._composition_hard_valid(setup_evaluation):
+		failures.append("%s setup is not occluding; feature placement is stale" % label)
+		_teardown_landing(skier, camera_rig, floor, feature)
+		return
+	var recovered := false
+	var recovery_seen := false
+	for frame_index: int in ceili(0.7 / step):
+		camera_rig._physics_process(step)
+		var snapshot := camera_rig.debug_snapshot()
+		recovery_seen = recovery_seen or bool(snapshot.get("composition_recovery_active", false))
+		if bool(snapshot.get("composition_valid", false)):
+			var evaluation := camera_rig._evaluate_composition(camera_rig.global_position, camera_rig.global_basis, camera_rig.camera.fov, Vector3.UP)
+			if camera_rig._composition_hard_valid(evaluation):
+				recovered = true
+				break
+		if not camera_rig._camera_destination_is_clear(camera_rig.global_position):
+			failures.append("%s frame %d committed a colliding pose while recovering" % [label, frame_index])
+			break
+	if failures.is_empty() or not failures[failures.size() - 1].begins_with(label):
+		if not recovery_seen:
+			failures.append("%s never engaged composition recovery during LANDING" % label)
+		elif not recovered:
+			failures.append("%s did not recover a hard-valid pose within 0.7 s of touchdown" % label)
+	_teardown_landing(skier, camera_rig, floor, feature)
+
+func _teardown_landing(skier: SkierController, camera_rig: SkiCameraController, floor: StaticBody3D, feature: StaticBody3D) -> void:
+	_remove_target_and_camera(skier, camera_rig)
+	remove_child(feature)
+	feature.free()
+	remove_child(floor)
+	floor.free()
+
 func _validate_camera_exports(camera_rig: SkiCameraController, step: float) -> bool:
 	var valid := true
 	if camera_rig.composition_hard_rect != HARD_SAFE_RECT:
@@ -450,6 +617,112 @@ func _run_carve_lookahead_reproduction(step: float) -> void:
 	if carve_offset.length() < 0.05:
 		failures.append("Lateral carve look-ahead did not open space in the travel direction")
 	_remove_target_and_camera(skier, camera_rig)
+
+func _run_sustained_carve_mirror_reproduction(step: float) -> void:
+	# Phase 3: sustained left/right carves must mirror each other — mirrored
+	# lateral lead, modest mirrored screen offset into the turn, no
+	# oscillation — while straight running shows ~zero lead and the hard
+	# frame is preserved throughout.
+	var label := "Sustained-carve %.0f Hz" % (1.0 / step)
+	var left := _measure_carve_side(step, 35.0, label)
+	if left.is_empty():
+		return
+	var right := _measure_carve_side(step, -35.0, label)
+	if right.is_empty():
+		return
+	print("CARVE_MIRROR_SAMPLE %s left lead=(%.3f fwd, %.3f lat) dx=%+.3f | right lead=(%.3f fwd, %.3f lat) dx=%+.3f" % [
+		label, float(left.get("forward", 0.0)), float(left.get("lateral", 0.0)), float(left.get("dx", 0.0)),
+		float(right.get("forward", 0.0)), float(right.get("lateral", 0.0)), float(right.get("dx", 0.0))])
+	if signf(float(left.get("lateral", 0.0))) == signf(float(right.get("lateral", 0.0))):
+		failures.append("%s lateral lead did not mirror: left %.3f right %.3f" % [label, float(left.get("lateral", 0.0)), float(right.get("lateral", 0.0))])
+		return
+	if absf(float(left.get("lateral", 0.0)) + float(right.get("lateral", 0.0))) > 0.2:
+		failures.append("%s lateral lead magnitudes do not mirror: |%.3f| vs |%.3f|" % [label, float(left.get("lateral", 0.0)), float(right.get("lateral", 0.0))])
+		return
+	if absf(float(left.get("forward", 0.0)) - float(right.get("forward", 0.0))) > 0.2:
+		failures.append("%s forward lead differs left/right: %.3f vs %.3f" % [label, float(left.get("forward", 0.0)), float(right.get("forward", 0.0))])
+		return
+	if signf(float(left.get("dx", 0.0))) == signf(float(right.get("dx", 0.0))):
+		failures.append("%s screen offset did not mirror: left %+.3f right %+.3f" % [label, float(left.get("dx", 0.0)), float(right.get("dx", 0.0))])
+		return
+	for side: Dictionary in [left, right]:
+		var adx := absf(float(side.get("dx", 0.0)))
+		if adx < 0.02 or adx > 0.15:
+			failures.append("%s screen offset %+.3f is not modest (need 0.02-0.15)" % [label, float(side.get("dx", 0.0))])
+			return
+
+func _measure_carve_side(step: float, angle_degrees: float, label: String) -> Dictionary:
+	var skier := SkierController.new()
+	skier.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(skier)
+	skier.state = SkierController.State.GROUND
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier.global_position = Vector3.ZERO
+	skier.velocity = Vector3(0.0, 0.0, -12.0)
+	skier.heading_travel_angle_degrees = 0.0
+	var camera_rig := SkiCameraController.new()
+	camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
+	add_child(camera_rig)
+	camera_rig.set_target(skier)
+	# Straight baseline: no signed lead expected.
+	for _index: int in ceili(0.5 / step):
+		skier.global_position += skier.velocity * step
+		camera_rig._physics_process(step)
+	var straight_offset := camera_rig.debug_snapshot().get("carve_look_ahead_offset", Vector3.ZERO) as Vector3
+	if straight_offset.length() > 0.05:
+		failures.append("%s straight running shows carve lead %.3f m (need < 0.05)" % [label, straight_offset.length()])
+		_remove_target_and_camera(skier, camera_rig)
+		return {}
+	# Sustained carve, then measure the settled window.
+	skier.heading_travel_angle_degrees = angle_degrees
+	skier.global_basis = Basis(Vector3.UP, deg_to_rad(angle_degrees))
+	for _index: int in ceili(2.5 / step):
+		skier.global_position += skier.velocity * step
+		camera_rig._physics_process(step)
+		if not bool(camera_rig.debug_snapshot().get("composition_valid", false)):
+			failures.append("%s lost hard composition during a %+.0f deg carve" % [label, angle_degrees])
+			_remove_target_and_camera(skier, camera_rig)
+			return {}
+	var lead_sum := Vector3.ZERO
+	var dx_sum := 0.0
+	var samples := 0
+	var lead_flips := 0
+	var screen_flips := 0
+	var previous_lead_x := 0.0
+	var previous_dx := 0.0
+	var first := true
+	for _index: int in ceili(1.0 / step):
+		skier.global_position += skier.velocity * step
+		camera_rig._physics_process(step)
+		var snapshot := camera_rig.debug_snapshot()
+		if not bool(snapshot.get("composition_valid", false)):
+			failures.append("%s lost hard composition during a %+.0f deg carve" % [label, angle_degrees])
+			_remove_target_and_camera(skier, camera_rig)
+			return {}
+		var lead := snapshot.get("carve_look_ahead_offset", Vector3.ZERO) as Vector3
+		if lead.length() > camera_rig.turn_lead_limit + 0.05:
+			failures.append("%s carve lead %.3f m exceeded limit %.2f" % [label, lead.length(), camera_rig.turn_lead_limit])
+			_remove_target_and_camera(skier, camera_rig)
+			return {}
+		var dx := (snapshot.get("target_screen_position", Vector2(0.5, 0.5)) as Vector2).x - 0.5
+		lead_sum += lead
+		dx_sum += dx
+		samples += 1
+		if not first:
+			if signf(lead.x) != signf(previous_lead_x) and absf(lead.x - previous_lead_x) > 0.02:
+				lead_flips += 1
+			if signf(dx) != signf(previous_dx) and absf(dx - previous_dx) > 0.005:
+				screen_flips += 1
+		first = false
+		previous_lead_x = lead.x
+		previous_dx = dx
+	_remove_target_and_camera(skier, camera_rig)
+	if lead_flips > 0 or screen_flips > 0:
+		failures.append("%s oscillated during a %+.0f deg carve (lead flips %d, screen flips %d)" % [label, angle_degrees, lead_flips, screen_flips])
+		return {}
+	var mean_lead := lead_sum / maxf(float(samples), 1.0)
+	return {"forward": -mean_lead.z, "lateral": mean_lead.x, "dx": dx_sum / maxf(float(samples), 1.0)}
 
 func _run_foreground_occlusion_reproduction(step: float) -> void:
 	var floor := StaticBody3D.new()
