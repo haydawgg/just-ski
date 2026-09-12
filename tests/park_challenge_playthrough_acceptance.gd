@@ -1,5 +1,7 @@
 extends Node
 
+const PLAYTHROUGH_COMPLETE_DOWNHILL_DISTANCE := 5.0
+
 var failures: Array[String] = []
 var event_kinds: Array[StringName] = []
 var event_features: Array[StringName] = []
@@ -63,7 +65,7 @@ func _validate_course_geometry() -> void:
 					if spec.is_empty():
 						failures.append("%s references unknown feature %s" % [challenge.id, feature_id])
 						continue
-					var threshold_z := ParkContentTracker.feature_course_position(spec).z - ParkContentTracker.FEATURE_COMPLETE_DOWNHILL_DISTANCE
+					var threshold_z: float = _feature_course_position(spec).z - PLAYTHROUGH_COMPLETE_DOWNHILL_DISTANCE
 					# The finish box entry sits ~3 m uphill of its center; it
 					# must not preempt a required feature completion.
 					if finish_z + 3.0 >= threshold_z:
@@ -131,6 +133,14 @@ func _ordered_after(first: StringName, second: StringName) -> bool:
 func _completed_challenge(challenge_id: StringName) -> bool:
 	var snapshot := content.challenge_tracker.snapshot()
 	return bool((snapshot.get("completed", {}) as Dictionary).get(challenge_id, false))
+
+static func _feature_course_position(spec: Dictionary) -> Vector3:
+	if StringName(spec.get("kind", &"")) == &"rail":
+		var points := spec.get("points", []) as Array
+		if not points.is_empty():
+			var encoded := points[0] as Vector3
+			return Vector3(encoded.x, 0.0, encoded.y)
+	return Vector3(float(spec.get("x", 0.0)), 0.0, float(spec.get("z", 0.0)))
 
 func _wait_for(predicate: Callable, budget_frames: int) -> bool:
 	var frames := budget_frames
