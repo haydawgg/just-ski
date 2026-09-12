@@ -91,12 +91,17 @@ func _validate_session_yard_terrain_only_flow() -> void:
 	if content.active_spot == null or content.active_spot.id != &"session_yard":
 		failures.append("Session Yard spot did not activate for the probe")
 		return
-	sweep_active = true
-	# The polyline threads between the intermediate/expert approach circles so
-	# only safe-route features complete; the terrain line completes below
-	# z = -33, before the run can finish.
-	if not await _wait_for(func() -> bool: return _feature_completed(&"yard_terrain_line"), 400):
-		failures.append("The clean-line sweep never completed the yard terrain line")
+	# Authoritative completion: drive the controller's feature_use events in
+	# safe-route order. Proximity alone must never credit, so the probe is
+	# not teleported along the polyline anymore.
+	probe.feature_used.emit(&"yard_setup_roller", &"roller", &"ride")
+	await get_tree().physics_frame
+	probe.feature_used.emit(&"yard_small_jump", &"tabletop", &"ride")
+	await get_tree().physics_frame
+	probe.feature_used.emit(&"yard_terrain_line", &"butter", &"ride")
+	await get_tree().physics_frame
+	if not _feature_completed(&"yard_terrain_line"):
+		failures.append("The safe-route uses never completed the yard terrain line")
 		return
 	var completed_before_finish := _completed_challenge(&"yard_terrain_only")
 	if completed_before_finish:
