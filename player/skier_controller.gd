@@ -18,9 +18,12 @@ const SkierInputSamplerModule := preload("res://player/input/skier_input_sampler
 const TOUCHDOWN_SEAT_MARGIN := 0.05
 const BODY_COLLISION_SEAT_OFFSET := 0.67
 const CRASH_REST_MIN_SNOW_ALIGNMENT_DOT := 0.94
+const FEATURE_TAKEOFF_SUPPORT_AGE := 0.2
+const FEATURE_CONTACT_COOLDOWN := 0.75
 
 signal state_changed(state_name: String)
 signal rail_finished(feature_id: StringName, outcome: StringName)
+signal feature_used(feature_id: StringName, feature_kind: StringName, use_kind: StringName)
 signal telemetry_updated(data: Dictionary)
 signal landed(result: Dictionary)
 signal crashed
@@ -66,6 +69,14 @@ var rail_kink_severity := 0.0
 var rail_balance_velocity := 0.0
 var _rail_stall_time := 0.0
 var rail_previous_balance := 0.0
+var _support_feature_id: StringName = &""
+var _support_feature_kind: StringName = &""
+var _support_time := 0.0
+var _support_age := 0.0
+var _support_ride_emitted := false
+var _support_takeoff_emitted := false
+var _feature_meta_cache: Dictionary = {}
+var _feature_contact_cooldowns: Dictionary = {}
 var bail_time := 0.0
 var bail_recovering := false
 var debug_enabled := false
@@ -203,6 +214,7 @@ func _physics_process(delta: float) -> void:
 		state != State.BAIL
 	)
 	contact.merge_capsule_floor(is_on_floor(), get_floor_normal(), profile.maximum_ground_angle_degrees)
+	_update_feature_support(delta)
 	if input_frame.marker_pressed and can_set_marker():
 		SessionManager.set_marker(_marker_transform())
 	_sample_trick_input(delta)
@@ -221,6 +233,7 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		_record_motion_diagnostics(velocity_before_motion)
 		_evaluate_feature_crash_after_motion()
+		_publish_feature_contacts()
 		_resolve_air_snow_collision(incoming_velocity)
 		if state == State.GROUND and contact.grounded:
 			_suppress_into_slope_bounce()
@@ -732,6 +745,7 @@ func _pop(
 	AudioManager.pop_feedback(strength)
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.POP, strength)
 	jump_charge = 0.0
+	_note_feature_takeoff()
 	_enter_air(takeoff_kind, normalized_charge, normal)
 	air_deliberate = true
 	if trick_command.takeoff_rotation_committed and trick_command.takeoff_rotation_impulse.length_squared() > 0.000001:
@@ -1002,6 +1016,7 @@ func _try_capture_rail() -> void:
 		motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 		animation_controller.trigger(SkierAnimationController.AnimationEvent.GRIND_ENTER, rail_entry_severity, lateral_bias)
 		state_changed.emit("Grind")
+		feature_used.emit(_rail_feature_id(), &"rail", &"rail")
 
 func _close_inbound_air_trick() -> void:
 	# Rail capture interrupts air. The inbound rotation is not a landing and
@@ -1477,6 +1492,7 @@ func respawn_at(value: Transform3D, reason: StringName = SessionManager.RESPAWN_
 	rail_capture_blend_remaining = 0.0
 	rail_entry_severity = 0.0
 	_rail_stall_time = 0.0
+	_clear_feature_use_state()
 	bail_recovering = false
 	recent_rail_detach_time = 0.0
 	recent_rail_detach_balance = 0.0
@@ -1600,6 +1616,105 @@ func _rail_feature_id() -> StringName:
 		return &""
 	return StringName(active_rail.get_meta("feature_id", StringName(active_rail.name.to_snake_case())))
 
+func _update_feature_support(delta: float) -> void:
+	_update_feature_contact_cooldowns(delta)
+	var step := maxf(delta, 0.0)
+	if contact.grounded and contact.primary_collider != null:
+		var resolved := _resolve_feature_meta(contact.primary_collider)
+		var feature_id := StringName(resolved.get("feature_id", &""))
+		if feature_id != &"":
+			if feature_id != _support_feature_id or _support_age > 0.0:
+				_support_feature_id = feature_id
+				_support_feature_kind = StringName(resolved.get("feature_kind", &""))
+				_support_time = 0.0
+				_support_ride_emitted = false
+				_support_takeoff_emitted = false
+			_support_time += step
+			_support_age = 0.0
+			if not _support_ride_emitted and _support_time >= maxf(profile.feature_use_min_seconds, 0.0):
+				_support_ride_emitted = true
+				feature_used.emit(_support_feature_id, _support_feature_kind, &"ride")
+			return
+	_support_time = 0.0
+	_support_ride_emitted = false
+	_support_age = minf(_support_age + step, FEATURE_TAKEOFF_SUPPORT_AGE + 1.0)
+
+func _note_feature_takeoff() -> void:
+	# Deliberate charged pops only. The support-age window still credits a pop
+	# released just after the lip while the feature was the last support.
+	if (
+		_support_feature_id != &""
+		and not _support_takeoff_emitted
+		and _support_age <= FEATURE_TAKEOFF_SUPPORT_AGE
+	):
+		_support_takeoff_emitted = true
+		feature_used.emit(_support_feature_id, _support_feature_kind, &"takeoff")
+
+func _publish_feature_contacts() -> void:
+	if state == State.BAIL:
+		return
+	for index: int in get_slide_collision_count():
+		var collision := get_slide_collision(index)
+		if collision == null:
+			continue
+		var collider := collision.get_collider()
+		if collider == null:
+			continue
+		var resolved := _resolve_feature_meta(collider)
+		var feature_id := StringName(resolved.get("feature_id", &""))
+		if feature_id == &"":
+			continue
+		var feature_kind := StringName(resolved.get("feature_kind", &""))
+		if feature_kind != &"wallride" and feature_kind != &"bonk":
+			continue
+		if float(_feature_contact_cooldowns.get(feature_id, 0.0)) > 0.0:
+			continue
+		_feature_contact_cooldowns[feature_id] = FEATURE_CONTACT_COOLDOWN
+		feature_used.emit(feature_id, feature_kind, &"contact")
+
+func _update_feature_contact_cooldowns(delta: float) -> void:
+	if _feature_contact_cooldowns.is_empty():
+		return
+	var step := maxf(delta, 0.0)
+	for feature_id: StringName in _feature_contact_cooldowns.keys():
+		var remaining := float(_feature_contact_cooldowns[feature_id]) - step
+		if remaining <= 0.0:
+			_feature_contact_cooldowns.erase(feature_id)
+		else:
+			_feature_contact_cooldowns[feature_id] = remaining
+
+func _resolve_feature_meta(collider: Object) -> Dictionary:
+	if collider == null:
+		return {}
+	var instance_id := collider.get_instance_id()
+	var cached: Variant = _feature_meta_cache.get(instance_id)
+	if cached is Dictionary:
+		return cached
+	var node := collider as Node
+	var depth := 0
+	var resolved := {"feature_id": &"", "feature_kind": &""}
+	while node != null and depth < 8:
+		if node.has_meta("feature_id"):
+			resolved["feature_id"] = StringName(node.get_meta("feature_id"))
+			resolved["feature_kind"] = StringName(node.get_meta("feature_kind", &""))
+			break
+		node = node.get_parent()
+		depth += 1
+	_feature_meta_cache[instance_id] = resolved
+	if _feature_meta_cache.size() > 128:
+		_feature_meta_cache.clear()
+	return resolved
+
+func _clear_feature_use_state() -> void:
+	_support_feature_id = &""
+	_support_feature_kind = &""
+	_support_time = 0.0
+	_support_age = 0.0
+	_support_ride_emitted = false
+	_support_takeoff_emitted = false
+	_feature_meta_cache.clear()
+	_feature_contact_cooldowns.clear()
+
 func _clear_locomotion_channels() -> void:
 	edge_amount = 0.0
 	pressure_amount = 0.0
@@ -1645,6 +1760,7 @@ func reset_for_benchmark(value: Transform3D, initial_velocity: Vector3 = Vector3
 	rail_pose = 0
 	rail_entry_severity = 0.0
 	_rail_stall_time = 0.0
+	_clear_feature_use_state()
 	bail_time = 0.0
 	bail_recovering = false
 	recent_rail_detach_time = 0.0

@@ -6,8 +6,6 @@ signal challenge_updated(snapshot: Dictionary)
 signal content_event_recorded(event: Dictionary)
 
 const MAX_TRACE_EVENTS := 256
-const FEATURE_APPROACH_DISTANCE := 13.0
-const FEATURE_COMPLETE_DOWNHILL_DISTANCE := 5.0
 
 var telemetry_enabled := OS.is_debug_build() or OS.get_cmdline_user_args().has("--content-trace")
 var challenge_tracker := ParkChallengeTracker.new()
@@ -19,7 +17,6 @@ var _profile: ParkCourseProfile
 var _player: SkierController
 var _spots: Array[ParkSpotSpec] = []
 var _features: Dictionary = {}
-var _approached: Dictionary = {}
 var _completed_in_attempt: Dictionary = {}
 var _route_features: Array[StringName] = []
 var _attempt_start_score := 0
@@ -47,6 +44,7 @@ func configure(profile: ParkCourseProfile, player: SkierController = null) -> vo
 	if _player != null:
 		_player.state_changed.connect(_on_state_changed)
 		_player.rail_finished.connect(_on_rail_finished)
+		_player.feature_used.connect(_on_feature_used)
 		_player.telemetry_updated.connect(_on_player_telemetry)
 		_player.landed.connect(_on_landed)
 		_player.crashed.connect(_on_crashed)
@@ -66,7 +64,6 @@ func _physics_process(_delta: float) -> void:
 	if _player == null or _profile == null:
 		return
 	_update_active_spot(false)
-	_update_feature_flow()
 
 func record_event(kind: StringName, payload: Dictionary = {}) -> void:
 	var event := payload.duplicate(true)
@@ -106,7 +103,6 @@ func _update_active_spot(force: bool) -> void:
 	if active_spot != null and active_spot != nearest:
 		_complete_route()
 	active_spot = nearest
-	_approached.clear()
 	_completed_in_attempt.clear()
 	_route_features.clear()
 	_last_rotation_degrees = 0.0
@@ -119,23 +115,23 @@ func _update_active_spot(force: bool) -> void:
 	record_event(&"spot_entry", {"attempt": int(attempt_counts[active_spot.id])})
 	spot_changed.emit(active_spot)
 
-func _update_feature_flow() -> void:
-	if active_spot == null:
+func _on_feature_used(feature_id: StringName, _feature_kind: StringName, use_kind: StringName) -> void:
+	if _player == null or active_spot == null or feature_id == &"":
 		return
-	var player_course_position := _player.global_position
-	for feature_id: StringName in active_spot.feature_ids:
-		var spec: Dictionary = _features.get(feature_id, {})
-		if spec.is_empty():
-			continue
-		var feature_position := feature_course_position(spec)
-		var distance := Vector2(player_course_position.x - feature_position.x, player_course_position.z - feature_position.z).length()
-		if distance <= FEATURE_APPROACH_DISTANCE and not _approached.has(feature_id):
-			_approached[feature_id] = true
-			record_event(&"feature_approach", {"feature_id": feature_id, "route": spec.route})
-		if _approached.has(feature_id) and not _completed_in_attempt.has(feature_id) and player_course_position.z < feature_position.z - FEATURE_COMPLETE_DOWNHILL_DISTANCE:
-			_completed_in_attempt[feature_id] = true
-			_route_features.append(feature_id)
-			record_event(&"feature_complete", {"feature_id": feature_id, "route": spec.route})
+	if feature_id not in active_spot.feature_ids:
+		return
+	if _completed_in_attempt.has(feature_id):
+		return
+	# Authoritative completion: the controller only emits use events for real
+	# ride/takeoff/rail/contact interactions, so proximity passes never credit.
+	_completed_in_attempt[feature_id] = true
+	_route_features.append(feature_id)
+	var spec: Dictionary = _features.get(feature_id, {})
+	record_event(&"feature_complete", {
+		"feature_id": feature_id,
+		"route": spec.get("route", &"safe"),
+		"use": use_kind,
+	})
 
 func _complete_route() -> void:
 	var route: StringName = &"safe"
@@ -212,14 +208,6 @@ func _active_rail_feature_id() -> StringName:
 		return &""
 	return StringName(_player.active_rail.get_meta("feature_id", StringName(_player.active_rail.name.to_snake_case())))
 
-static func feature_course_position(spec: Dictionary) -> Vector3:
-	if StringName(spec.get("kind", &"")) == &"rail":
-		var points := spec.get("points", []) as Array
-		if not points.is_empty():
-			var encoded := points[0] as Vector3
-			return Vector3(encoded.x, 0.0, encoded.y)
-	return Vector3(float(spec.get("x", 0.0)), 0.0, float(spec.get("z", 0.0)))
-
 func _route_rank(route: StringName) -> int:
 	match route:
 		&"expert": return 2
@@ -231,6 +219,7 @@ func _disconnect_player() -> void:
 		return
 	if _player.state_changed.is_connected(_on_state_changed): _player.state_changed.disconnect(_on_state_changed)
 	if _player.rail_finished.is_connected(_on_rail_finished): _player.rail_finished.disconnect(_on_rail_finished)
+	if _player.feature_used.is_connected(_on_feature_used): _player.feature_used.disconnect(_on_feature_used)
 	if _player.telemetry_updated.is_connected(_on_player_telemetry): _player.telemetry_updated.disconnect(_on_player_telemetry)
 	if _player.landed.is_connected(_on_landed): _player.landed.disconnect(_on_landed)
 	if _player.crashed.is_connected(_on_crashed): _player.crashed.disconnect(_on_crashed)

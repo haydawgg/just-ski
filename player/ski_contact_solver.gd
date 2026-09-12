@@ -30,6 +30,7 @@ var last_normal := Vector3.UP
 var tip_load := 0.0
 var surface_kind := 0
 var surface_class := SurfaceClass.UNKNOWN
+var primary_collider: Object = null
 var grounded_band := 0.5
 var average_hit_position := Vector3.ZERO
 var left_distance := 2.0
@@ -104,6 +105,8 @@ func sample(
 	tip_load = 0.0
 	surface_kind = 0
 	surface_class = SurfaceClass.UNKNOWN
+	primary_collider = null
+	var primary_distance := INF
 	left_distance = distance
 	right_distance = distance
 	left_normal = average_normal
@@ -176,6 +179,9 @@ func sample(
 					right_rear_normal = hit_normal
 			var collider := hit.get("collider") as Object
 			if collider != null:
+				if hit_distance < primary_distance:
+					primary_distance = hit_distance
+					primary_collider = collider
 				if collider.has_meta("ski_surface_kind"):
 					var hit_surface := clampi(int(collider.get_meta("ski_surface_kind")), 0, surface_counts.size() - 1)
 					surface_counts[hit_surface] += 1

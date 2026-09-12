@@ -37,6 +37,7 @@ static func build(parent: Node3D, profile: ParkCourseProfile, physics_profile: S
 static func _apply_content_metadata(feature: Node3D, spec: Dictionary) -> void:
 	var defaults := {
 		"feature_id": StringName(str(spec.get("name", "park_feature")).to_snake_case()),
+		"feature_kind": StringName(spec.get("kind", "feature")),
 		"spot_id": &"unassigned",
 		"route": &"intermediate",
 		"discipline": StringName(spec.get("kind", "feature")),

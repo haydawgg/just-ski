@@ -1,5 +1,7 @@
 extends Node
 
+const PLAYTHROUGH_COMPLETE_DOWNHILL_DISTANCE := 5.0
+
 var failures: Array[String] = []
 var event_kinds: Array[StringName] = []
 var event_features: Array[StringName] = []
@@ -63,7 +65,7 @@ func _validate_course_geometry() -> void:
 					if spec.is_empty():
 						failures.append("%s references unknown feature %s" % [challenge.id, feature_id])
 						continue
-					var threshold_z := ParkContentTracker.feature_course_position(spec).z - ParkContentTracker.FEATURE_COMPLETE_DOWNHILL_DISTANCE
+					var threshold_z: float = _feature_course_position(spec).z - PLAYTHROUGH_COMPLETE_DOWNHILL_DISTANCE
 					# The finish box entry sits ~3 m uphill of its center; it
 					# must not preempt a required feature completion.
 					if finish_z + 3.0 >= threshold_z:
@@ -89,12 +91,17 @@ func _validate_session_yard_terrain_only_flow() -> void:
 	if content.active_spot == null or content.active_spot.id != &"session_yard":
 		failures.append("Session Yard spot did not activate for the probe")
 		return
-	sweep_active = true
-	# The polyline threads between the intermediate/expert approach circles so
-	# only safe-route features complete; the terrain line completes below
-	# z = -33, before the run can finish.
-	if not await _wait_for(func() -> bool: return _feature_completed(&"yard_terrain_line"), 400):
-		failures.append("The clean-line sweep never completed the yard terrain line")
+	# Authoritative completion: drive the controller's feature_use events in
+	# safe-route order. Proximity alone must never credit, so the probe is
+	# not teleported along the polyline anymore.
+	probe.feature_used.emit(&"yard_setup_roller", &"roller", &"ride")
+	await get_tree().physics_frame
+	probe.feature_used.emit(&"yard_small_jump", &"tabletop", &"ride")
+	await get_tree().physics_frame
+	probe.feature_used.emit(&"yard_terrain_line", &"butter", &"ride")
+	await get_tree().physics_frame
+	if not _feature_completed(&"yard_terrain_line"):
+		failures.append("The safe-route uses never completed the yard terrain line")
 		return
 	var completed_before_finish := _completed_challenge(&"yard_terrain_only")
 	if completed_before_finish:
@@ -131,6 +138,14 @@ func _ordered_after(first: StringName, second: StringName) -> bool:
 func _completed_challenge(challenge_id: StringName) -> bool:
 	var snapshot := content.challenge_tracker.snapshot()
 	return bool((snapshot.get("completed", {}) as Dictionary).get(challenge_id, false))
+
+static func _feature_course_position(spec: Dictionary) -> Vector3:
+	if StringName(spec.get("kind", &"")) == &"rail":
+		var points := spec.get("points", []) as Array
+		if not points.is_empty():
+			var encoded := points[0] as Vector3
+			return Vector3(encoded.x, 0.0, encoded.y)
+	return Vector3(float(spec.get("x", 0.0)), 0.0, float(spec.get("z", 0.0)))
 
 func _wait_for(predicate: Callable, budget_frames: int) -> bool:
 	var frames := budget_frames
