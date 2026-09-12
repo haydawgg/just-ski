@@ -9,6 +9,7 @@ const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
 var skier: SkierController
 var resort: Node3D
 var viewport: SubViewport
+var capture_cam: Camera3D
 var results: Array[Dictionary] = []
 var _finish_started := false
 
@@ -34,6 +35,7 @@ func _ready() -> void:
 	var cam := Camera3D.new()
 	cam.fov = 68.0
 	viewport.add_child(cam)
+	capture_cam = cam
 	# Position camera to look downhill at shallow angle (height cue scenario)
 	var n := ParkLayout.snow_normal()
 	var down := ParkLayout.downhill()
@@ -61,11 +63,11 @@ func _run_height_sweep() -> void:
 		skier.contact.average_hit_position = base_pos
 		skier.contact.average_normal = n
 		skier.contact.confidence = 1.0 if h < 0.5 else 0.6
-		# Force shadow update
+		# Force shadow update and read everything synchronously: the live
+		# resort keeps stepping physics (and its own shadow update) on every
+		# yielded frame, which would overwrite this sample with the
+		# background state. Yields happen only for GPU capture below.
 		skier._update_contact_shadow(0.016)
-		await get_tree().process_frame
-		if not RuntimeEnvironment.is_headless():
-			await RenderingServer.frame_post_draw
 		var shadow := skier.get_node_or_null("ContactShadow") as MeshInstance3D
 		var visible := shadow != null and shadow.visible
 		var alpha := 0.0
@@ -74,19 +76,16 @@ func _run_height_sweep() -> void:
 			alpha = float(mat.get_shader_parameter("shadow_opacity"))
 		var shadow_pos := shadow.global_position if shadow != null else Vector3.ZERO
 		var dist_to_ground := (skier.global_position - shadow_pos).length() if shadow != null else 0.0
-		# Separation on screen: project both points via main viewport camera (resort's CameraRig)
-		var cam_rig := skier.get_parent().get_node_or_null("CameraRig") as Node3D
-		var cam3d: Camera3D = null
-		if cam_rig != null:
-			cam3d = cam_rig.get_node_or_null("Camera3D") as Camera3D
-			if cam3d == null:
-				cam3d = cam_rig.find_children("*", "Camera3D", true, false).front() as Camera3D
+		# VFX-04: screen checks must use the same camera that produces the
+		# reference image (the capture cam), never a different rig camera.
 		var screen_separation := 0.0
-		if cam3d != null and cam3d.is_inside_tree():
-			var p_skier = cam3d.unproject_position(skier.global_position)
-			var p_shadow = cam3d.unproject_position(shadow_pos)
+		if capture_cam != null and capture_cam.is_inside_tree():
+			var p_skier = capture_cam.unproject_position(skier.global_position)
+			var p_shadow = capture_cam.unproject_position(shadow_pos)
 			screen_separation = p_skier.distance_to(p_shadow)
-		results.append({"height": h, "visible": visible, "alpha": alpha, "screen_sep": screen_separation, "shadow_y": shadow_pos.y})
+		# VFX-04: store each sample's own skier/shadow transforms so later
+		# checks compare the claimed frame, not the final one.
+		results.append({"height": h, "visible": visible, "alpha": alpha, "screen_sep": screen_separation, "shadow_y": shadow_pos.y, "skier_pos": skier.global_position, "shadow_pos": shadow_pos})
 		print("CONTACT_SHADOW_SAMPLE height %.2f visible %s alpha %.3f screen_sep %.1f" % [h, str(visible), alpha, screen_separation])
 	_evaluate()
 
@@ -110,19 +109,24 @@ func _evaluate() -> void:
 	# Alpha should decrease with height
 	if not (ground.alpha > low.alpha and low.alpha > mid.alpha):
 		reasons.append("alpha not decreasing with height %.3f %.3f %.3f" % [ground.alpha, low.alpha, mid.alpha])
+	# VFX-03: low air must read meaningfully dimmer than grounded snow, not a
+	# fixed dark disk (ordering alone passes even when nearly identical).
+	if ground.alpha - low.alpha < 0.04:
+		reasons.append("low-air shadow not meaningfully dimmer than ground (%.3f vs %.3f)" % [ground.alpha, low.alpha])
 	# Screen separation should increase with height (height cue)
 	if not (high.screen_sep > low.screen_sep and low.screen_sep > ground.screen_sep - 1.0):
 		# Allow small tolerance for ground
 		reasons.append("screen separation not increasing %.1f %.1f %.1f" % [ground.screen_sep, low.screen_sep, high.screen_sep])
-	# Shadow should be directly beneath (XZ distance small)
+	# Shadow should be directly beneath (XZ distance small), evaluated on each
+	# sample's own stored transforms — never the final frame's.
 	for r in results:
-		var shadow := skier.get_node_or_null("ContactShadow") as MeshInstance3D
-		if shadow != null:
-			var horiz := Vector2(skier.global_position.x - shadow.global_position.x, skier.global_position.z - shadow.global_position.z).length()
-			# Allow 2.0m horizontal offset due to slope projection (n has -0.3z component per meter height)
-			if horiz > 2.5:
-				reasons.append("shadow not beneath horiz %.2f at h %.1f" % [horiz, r.height])
-				break
+		var stored_skier := r.get("skier_pos", Vector3.ZERO) as Vector3
+		var stored_shadow := r.get("shadow_pos", Vector3.ZERO) as Vector3
+		var horiz := Vector2(stored_skier.x - stored_shadow.x, stored_skier.z - stored_shadow.z).length()
+		# Allow 2.0m horizontal offset due to slope projection (n has -0.3z component per meter height)
+		if horiz > 2.5:
+			reasons.append("shadow not beneath horiz %.2f at h %.1f" % [horiz, r.height])
+			break
 	if reasons.is_empty():
 		print("CONTACT_SHADOW_PASS: ground alpha %.3f high alpha %.3f sep %.1f->%.1f" % [ground.alpha, high.alpha, ground.screen_sep, high.screen_sep])
 		if RuntimeEnvironment.is_headless():

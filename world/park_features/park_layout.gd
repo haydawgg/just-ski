@@ -4,13 +4,28 @@ extends RefCounted
 const PITCH_DEG := 18.0
 const FACE_THICKNESS := 1.5
 const FACE_WIDTH := 64.0
-const FACE_SLOPE_LENGTH := 337.0
+# Single source of course extent. Raised for the Phase 8 three-jump line so
+# the hero rhythm (~62 m setup, ~72 m setup, ~64 m runout at 18 degrees) and
+# the finish fit with a margin; summit presentation terrain follows this
+# constant through face_half_world_z().
+const FACE_SLOPE_LENGTH := 510.0
 const SURFACE_Y_AT_ORIGIN := 52.0
 const SPAWN_HOVER := 1.15
 const MARKER_HOVER := 0.5
 # Shallow skirt depth used to close the render manifold of profiled snow
 # features (matches the summit terrain's render skirt).
 const RENDER_SKIRT_DEPTH := 0.18
+# Longitudinal gap between the merged lip+table deck and the landing body.
+# Phase 9 closes this with a shared seam row; the constant keeps the course
+# rhythm model and the builder in sync.
+const TABLE_LANDING_SEAM_M := 0.0
+# Render-only base aprons that blend feature footprints into the piste.
+const APRON_REACH_M := 1.0
+const APRON_MIN_OFFSET_M := 0.004
+const APRON_MAX_RISE_M := 0.045
+const APRON_WORN_EMPHASIS := 0.16
+const APRON_BASE_EMPHASIS := 0.08
+const APRON_SKIRT_M := 0.02
 const SNOW_SHADOW := Color("#a9c7d8")
 const SnowSurface := preload("res://world/snow_material.gd")
 
@@ -58,8 +73,10 @@ static func face_center() -> Vector3:
 static func spawn_position(world_z: float = 138.0) -> Vector3:
 	return surface_hover(0.0, world_z, SPAWN_HOVER)
 
-static func hub_position() -> Vector3:
-	return Vector3(0.0, 0.2, -168.0)
+static func hub_position(finish_world_z: float = -227.0) -> Vector3:
+	# BottomHub dressing anchor for the flat finish pad: 1.44 m below the
+	# finish-plane snow height and 13 m downhill of the finish plane.
+	return Vector3(0.0, snow_at(0.0, finish_world_z).y - 1.44, finish_world_z - 13.0)
 
 static func jump_table(physics_profile: SkiPhysicsProfile, design_speed: float, extra_lip_deg: float, drop: float = 0.0, design_pop_strength: float = -1.0) -> Dictionary:
 	var extra := deg_to_rad(extra_lip_deg)
@@ -151,21 +168,29 @@ static func add_tabletop(parent: Node3D, label: String, physics_profile: SkiPhys
 
 	# A raised knuckle rolls progressively back into the piste, giving both the
 	# touchdown and run-out a matched tangent instead of a landing slab edge.
+	# Phase 9: the landing shares the deck's final row so render and collision
+	# are continuous across the knuckle. The two bodies stay separate to keep
+	# the GROOMED deck and PACKED landing surface kinds.
 	var landing_centers: Array[Vector3] = []
 	var landing_widths := PackedFloat32Array()
 	var landing_shoulders := PackedFloat32Array()
 	var run_out_length := clampf(landing_length * 0.28, 3.5, 6.0)
 	var landing_samples := 14
-	var flat_gap := 0.25
-	for sample: int in range(landing_samples):
+	landing_centers.append(deck_centers[-1])
+	landing_widths.append(deck_widths[-1])
+	landing_shoulders.append(deck_shoulders[-1])
+	for sample: int in range(1, landing_samples):
 		var t := float(sample) / float(landing_samples - 1)
-		var distance_along := lip_length + table_length + flat_gap + (landing_length + run_out_length) * t
+		var distance_along := lip_length + table_length + TABLE_LANDING_SEAM_M + (landing_length + run_out_length) * t
 		var landing_t := clampf((landing_length + run_out_length) * t / landing_length, 0.0, 1.0)
 		var height := 0.001 + landing_crown * (1.0 - _smootherstep(landing_t))
 		landing_centers.append(lip_start + down * distance_along + n * height)
-		landing_widths.append(width * lerpf(1.28, 1.62, _smootherstep(t)))
+		landing_widths.append(width * lerpf(1.34, 1.62, _smootherstep(t)))
 		landing_shoulders.append(maxf(height - 0.001, 0.0))
 	_add_profiled_snow_body(root, "Landing", landing_centers, landing_widths, landing_shoulders, n, 0.68, SnowSurface.Kind.PACKED, 0.28, true, SnowSurface.Kind.GROOMED)
+	_add_landing_scrapes(root, landing_centers, landing_widths, landing_shoulders, n)
+	_add_profile_aprons(root, "DeckApron", deck_centers, deck_widths, deck_shoulders, n, true, false)
+	_add_profile_aprons(root, "LandingApron", landing_centers, landing_widths, landing_shoulders, n, false, true)
 	_add_jump_readability_markers(root, lip_centers, lip_widths, lip_shoulders, landing_centers, landing_widths, landing_shoulders, n, readability)
 	root.set_meta("lip_z", lip_z)
 	root.set_meta("table_length", table_length)
@@ -195,6 +220,7 @@ static func add_roller(parent: Node3D, label: String, x: float, z: float, length
 		widths.append(width * lerpf(1.18, 1.0, sin(PI * t)))
 		shoulders.append(shaped_height)
 	_add_profiled_snow_body(root, "RollerSurface", centers, widths, shoulders, n, 0.52, SnowSurface.Kind.PACKED, 0.16, true)
+	_add_profile_aprons(root, "Apron", centers, widths, shoulders, n, true, true)
 	root.set_meta("profile_samples", samples)
 	return root
 
@@ -252,6 +278,7 @@ static func add_butter_pad(parent: Node3D, label: String, x: float, z: float, le
 	root.add_to_group("park_terrain_features")
 	parent.add_child(root)
 	add_slope_box(root, "ButterDeck", x, z, Vector3(width, maxf(height, 0.08), length), 0.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true, height, -1, SnowSurface.PresentationRole.PARK_FEATURE)
+	_add_box_apron(root, "ButterApron", x, z, length, width, maxf(height, 0.08), 0.0)
 	return root
 
 static func add_side_hit(parent: Node3D, label: String, x: float, z: float, length: float, height: float, width: float, yaw_deg: float) -> Node3D:
@@ -277,6 +304,7 @@ static func add_side_hit(parent: Node3D, label: String, x: float, z: float, leng
 		widths.append(width * lerpf(1.34, 1.0, _smootherstep(t)))
 		shoulders.append(shaped_height)
 	_add_profiled_snow_body(root, "SideHitDeck", centers, widths, shoulders, normal, 0.66, SnowSurface.Kind.GROOMED, 0.2, true)
+	_add_profile_aprons(root, "Apron", centers, widths, shoulders, normal, true, false)
 	root.set_meta("profile_samples", samples)
 	return root
 
@@ -762,6 +790,140 @@ static func _hermite(t: float, start_height: float, end_height: float, start_slo
 static func _smootherstep(value: float) -> float:
 	var t := clampf(value, 0.0, 1.0)
 	return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+static func _add_profile_aprons(parent: Node3D, label: String, centers: Array[Vector3], widths: PackedFloat32Array, edge_drops: PackedFloat32Array, normal: Vector3, worn_head: bool, worn_tail: bool) -> void:
+	# Deterministic render-only base blending. The apron welds to the feature's
+	# lateral boundary and feathers outward into the piste so the footprint no
+	# longer ends in a hard rectangular material edge. Long features split into
+	# a worn head/mid/tail so approach and runout carry more traffic disturbance.
+	var count := centers.size()
+	if count < 3 or widths.size() != count or edge_drops.size() != count:
+		return
+	var segments: Array[Dictionary] = []
+	if count >= 9:
+		segments.append({"start": 0, "end": 2, "emphasis": APRON_WORN_EMPHASIS if worn_head else APRON_BASE_EMPHASIS})
+		segments.append({"start": 2, "end": count - 3, "emphasis": APRON_BASE_EMPHASIS})
+		segments.append({"start": count - 3, "end": count - 1, "emphasis": APRON_WORN_EMPHASIS if worn_tail else APRON_BASE_EMPHASIS})
+	else:
+		segments.append({"start": 0, "end": count - 1, "emphasis": APRON_WORN_EMPHASIS if (worn_head or worn_tail) else APRON_BASE_EMPHASIS})
+	for side: float in [-1.0, 1.0]:
+		for segment_index: int in range(segments.size()):
+			var segment: Dictionary = segments[segment_index]
+			var slice_centers: Array[Vector3] = []
+			var slice_widths := PackedFloat32Array()
+			var slice_drops := PackedFloat32Array()
+			for index: int in range(int(segment.start), int(segment.end) + 1):
+				slice_centers.append(centers[index])
+				slice_widths.append(widths[index])
+				slice_drops.append(edge_drops[index])
+			_add_apron_strip(
+				parent,
+				"%s_%s_%d" % [label, "L" if side < 0.0 else "R", segment_index],
+				slice_centers, slice_widths, slice_drops, normal, side, float(segment.emphasis), float(segment_index) * 1.37
+			)
+
+static func _add_landing_scrapes(parent: Node3D, centers: Array[Vector3], widths: PackedFloat32Array, edge_drops: PackedFloat32Array, normal: Vector3) -> void:
+	# Deterministic render-only traffic history: a narrow disturbed band across
+	# the landing center where every skier scrubs speed. No collision; the
+	# surface stamp rides a few centimetres above the packed landing.
+	if centers.size() < 5 or widths.size() != centers.size() or edge_drops.size() != centers.size():
+		return
+	var longitudinal := (centers[-1] - centers[0]).normalized()
+	var right := longitudinal.cross(normal).normalized()
+	if right.length_squared() < 0.001:
+		right = Vector3.RIGHT
+	var start := int(floor(float(centers.size()) * 0.22))
+	var finish := mini(int(ceil(float(centers.size()) * 0.68)), centers.size() - 1)
+	var rows: Array[PackedVector3Array] = []
+	for index: int in range(start, finish + 1):
+		var row := PackedVector3Array()
+		for across: float in [-0.36, 0.0, 0.36]:
+			var shoulder := smoothstep(0.58, 1.0, absf(across))
+			row.append(centers[index] + right * (widths[index] * 0.5 * across) - normal * edge_drops[index] * shoulder + normal * 0.035)
+		rows.append(row)
+	var instance := MeshInstance3D.new()
+	instance.name = "LandingScrape"
+	instance.mesh = _profile_grid_mesh(rows, normal, 0.015, true)
+	instance.material_override = _park_feature_snow_material(SnowSurface.Kind.PACKED, Vector2(longitudinal.x, longitudinal.z), 0.5)
+	instance.set_meta("landing_scrape", true)
+	instance.set_meta("render_surface_only", true)
+	parent.add_child(instance)
+
+static func _add_apron_strip(parent: Node3D, label: String, centers: Array[Vector3], widths: PackedFloat32Array, edge_drops: PackedFloat32Array, normal: Vector3, side: float, emphasis: float, seed_phase: float) -> void:
+	var right := (centers[-1] - centers[0]).normalized().cross(normal).normalized()
+	if right.length_squared() < 0.001:
+		right = Vector3.RIGHT
+	var rows: Array[PackedVector3Array] = []
+	for index: int in range(centers.size()):
+		var center := centers[index]
+		var edge := center + right * (widths[index] * 0.5 * side) - normal * edge_drops[index]
+		var variation := 0.75 + 0.25 * sin(edge.x * 0.31 + edge.z * 0.23 + seed_phase)
+		var mid := edge + right * (side * APRON_REACH_M * 0.5)
+		mid.y = snow_at(mid.x, mid.z).y
+		mid += normal * (APRON_MIN_OFFSET_M + APRON_MAX_RISE_M * 0.62 * variation)
+		var outer := edge + right * (side * APRON_REACH_M)
+		outer.y = snow_at(outer.x, outer.z).y
+		outer += normal * APRON_MIN_OFFSET_M
+		# Keep the lateral column order aligned with +right on both sides so the
+		# generated shell normals stay consistent (bottom faces point down).
+		var columns: Array[Vector3] = [edge, mid, outer]
+		if side < 0.0:
+			columns.reverse()
+		rows.append(PackedVector3Array(columns))
+	var groom := (rows[-1][2] - rows[0][2]).normalized()
+	if groom.length_squared() < 0.001:
+		groom = Vector3.FORWARD
+	var instance := MeshInstance3D.new()
+	instance.name = label
+	instance.mesh = _profile_grid_mesh(rows, normal, APRON_SKIRT_M, true)
+	instance.material_override = _park_feature_snow_material(SnowSurface.Kind.POWDER, Vector2(groom.x, groom.z), emphasis)
+	instance.set_meta("apron_segment", true)
+	instance.set_meta("render_surface_only", true)
+	parent.add_child(instance)
+
+static func _add_box_apron(parent: Node3D, label: String, x: float, z: float, length: float, width: float, box_height: float, yaw_deg: float = 0.0) -> void:
+	# Rounded-rectangle SDF apron for the box-based butter pad. The cap rides a
+	# few millimetres above the collider top while the ring buries the vertical
+	# walls, so the authored rectangle reads as a snow shoulder.
+	var basis := downhill_basis(yaw_deg)
+	var right := basis.x.normalized()
+	var down := -basis.z.normalized()
+	var normal := snow_normal()
+	var center := snow_at(x, z)
+	var half_box := Vector2(width * 0.5, length * 0.5)
+	var radius := clampf(minf(width, length) * 0.22, 0.25, 0.9)
+	var samples := 9
+	var rows: Array[PackedVector3Array] = []
+	for u_index: int in range(samples):
+		var u := lerpf(-half_box.y - APRON_REACH_M, half_box.y + APRON_REACH_M, float(u_index) / float(samples - 1))
+		var row := PackedVector3Array()
+		for v_index: int in range(samples):
+			var v := lerpf(-half_box.x - APRON_REACH_M, half_box.x + APRON_REACH_M, float(v_index) / float(samples - 1))
+			var point := center + right * v + down * u
+			var distance := _rounded_box_distance(Vector2(v, u), half_box, radius)
+			var height := 0.0
+			if distance <= 0.0:
+				height = box_height + 0.003
+			else:
+				var t := clampf(distance / APRON_REACH_M, 0.0, 1.0)
+				var variation := 0.8 + 0.2 * sin(point.x * 0.29 + point.z * 0.37 + 1.7)
+				var cap_height := (box_height + 0.003 - APRON_MIN_OFFSET_M) * variation + APRON_MIN_OFFSET_M
+				height = lerpf(cap_height, APRON_MIN_OFFSET_M, _smootherstep(t))
+			point.y = snow_at(point.x, point.z).y
+			row.append(point + normal * height)
+		rows.append(row)
+	var instance := MeshInstance3D.new()
+	instance.name = label
+	instance.mesh = _profile_grid_mesh(rows, normal, APRON_SKIRT_M, true)
+	instance.material_override = _park_feature_snow_material(SnowSurface.Kind.POWDER, Vector2(down.x, down.z), APRON_BASE_EMPHASIS)
+	instance.set_meta("apron_segment", true)
+	instance.set_meta("render_surface_only", true)
+	parent.add_child(instance)
+
+static func _rounded_box_distance(point: Vector2, half_extents: Vector2, radius: float) -> float:
+	var inner := Vector2(absf(point.x) - (half_extents.x - radius), absf(point.y) - (half_extents.y - radius))
+	var outside := Vector2(maxf(inner.x, 0.0), maxf(inner.y, 0.0))
+	return outside.length() + minf(maxf(inner.x, inner.y), 0.0) - radius
 
 static func _add_profiled_snow_body(
 	parent: Node3D,

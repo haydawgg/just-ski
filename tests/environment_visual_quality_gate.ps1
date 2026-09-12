@@ -1,5 +1,6 @@
 param(
 	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
+	[switch]$HideSkier,
 	[int]$TimeoutSeconds = 120
 )
 
@@ -22,6 +23,15 @@ $env:APPDATA = (Resolve-Path -LiteralPath $godotUserRoaming).Path
 $env:LOCALAPPDATA = (Resolve-Path -LiteralPath $godotUserLocal).Path
 
 $captureDirectory = Join-Path $RepoRoot ".godot_user/captures/snow_depth_after"
+$projectCaptureDirectory = "res://.godot_user/captures/snow_depth_after"
+$captureArguments = @("--capture-dir=$projectCaptureDirectory", "--skip-player-probe")
+if ($HideSkier) {
+	# Phase 11 review variant: same canonical trajectory with the skier hidden,
+	# so the static late-run frame is judged on world composition alone.
+	$captureDirectory = Join-Path $RepoRoot ".godot_user/captures/snow_depth_after_noskier"
+	$projectCaptureDirectory = "res://.godot_user/captures/snow_depth_after_noskier"
+	$captureArguments = @("--capture-dir=$projectCaptureDirectory", "--skip-player-probe", "--hide-skier")
+}
 $logDirectory = Join-Path $RepoRoot ".godot_logs"
 New-Item -ItemType Directory -Path $captureDirectory,$logDirectory -Force | Out-Null
 $captureFiles = @(
@@ -43,10 +53,9 @@ $stderrPath = Join-Path $logDirectory "environment_visual_gate.stderr.log"
 Remove-Item -LiteralPath $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue
 
 $quotedRepoRoot = '"' + $RepoRoot.Replace('"', '\"') + '"'
-$projectCaptureDirectory = "res://.godot_user/captures/snow_depth_after"
 Write-Output "===== GPU environment capture ====="
 $captureProcess = Start-Process -FilePath $godotGui `
-	-ArgumentList @("--path", $quotedRepoRoot, "res://tests/environment_visual_inspection.tscn", "--", "--capture-dir=$projectCaptureDirectory", "--skip-player-probe") `
+	-ArgumentList (@("--path", $quotedRepoRoot, "res://tests/environment_visual_inspection.tscn", "--") + $captureArguments) `
 	-WindowStyle Hidden `
 	-RedirectStandardOutput $stdoutPath `
 	-RedirectStandardError $stderrPath `

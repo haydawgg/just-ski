@@ -221,13 +221,23 @@ func _physics_process(_delta: float) -> void:
 				break
 		if not near_shadow_mesh_found:
 			failures.append("Production %s has no near-field shadow-casting mesh" % asset_id)
-	var mountain_meshes := resort.find_children("*", "MeshInstance3D", true, false).filter(func(node: Node) -> bool: return node.get_parent() != null and (node.get_parent().name.begins_with("FarPeak") or node.get_parent().name.begins_with("HazePeak")))
+	var mountain_meshes: Array[MeshInstance3D] = []
+	for backdrop_root: Node in get_tree().get_nodes_in_group("environment_backdrop"):
+		if str(backdrop_root.get_meta("backdrop_topology", "")).is_empty():
+			continue
+		for mesh_node: Node in backdrop_root.find_children("*", "MeshInstance3D", true, false):
+			var mesh_instance := mesh_node as MeshInstance3D
+			if mesh_instance != null and mesh_instance.mesh != null:
+				mountain_meshes.append(mesh_instance)
 	if mountain_meshes.size() < 8:
 		failures.append("Layered mountain composition was not built")
-	for mountain_node: Node in mountain_meshes:
-		var mountain := mountain_node as MeshInstance3D
-		if mountain != null and not mountain.mesh is ArrayMesh:
+	for mountain: MeshInstance3D in mountain_meshes:
+		if not mountain.mesh is ArrayMesh:
 			failures.append("A distant ridge returned to a repeated primitive silhouette")
+		var mountain_material := mountain.material_override as ShaderMaterial
+		if mountain_material != null and mountain_material.shader != null and mountain_material.shader.resource_path.ends_with("distant_mountain.gdshader"):
+			if float(mountain_material.get_shader_parameter("haze_blend")) > 0.35:
+				failures.append("A distant ridge double-washes global fog with its own haze (%.2f)" % float(mountain_material.get_shader_parameter("haze_blend")))
 	var landmarks := get_tree().get_nodes_in_group("course_landmarks")
 	if landmarks.size() < 8:
 		failures.append("Course edge lacks sparse resort scale landmarks")

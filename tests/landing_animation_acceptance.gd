@@ -26,6 +26,7 @@ func _ready() -> void:
 	_test_uneven_contact_asymmetry()
 	_test_steering_remains_responsive()
 	_test_clean_stomp_presentation()
+	_test_anticipation_preserves_flex_range()
 	AudioManager.shutdown_audio()
 	print("LANDING_ANIMATION_RESULT knee_delta=%.4f pelvis_delta=%.4f ski_delta=%.4f" % [
 		maximum_knee_delta,
@@ -121,6 +122,35 @@ func _test_anticipation_before_contact() -> void:
 		pass
 	if str(late.pose).find("Landing Anticipation") < 0 and float(late.landing_anticipation) > 0.35:
 		failures.append("Near-contact descent did not present landing anticipation")
+	_dispose_rig(rig)
+
+func _test_anticipation_preserves_flex_range() -> void:
+	# CHAR-05 audit: anticipatory descent must never lock the legs straight
+	# before first contact. (Bisected 6B: anticipation ramps to ~0.5 at
+	# 0.1 s-out by design and only reaches 1.0 at contact, so the regime
+	# under test is mid-anticipation with a far gap; the preview IK folds
+	# toward its snow targets rather than extending, which the gate below
+	# pins against future locked-reach regressions.)
+	var rig := _new_rig()
+	var frame := _air_descent_frame(16.0, 0.1)
+	frame.predicted_landing_valid = true
+	frame.predicted_landing_normal = Vector3.UP
+	frame.predicted_landing_point = Vector3(0.0, 0.0, -6.0)
+	frame.left_ground_distance = 1.0
+	frame.right_ground_distance = 1.0
+	frame.seat_distance = 0.54
+	_step(rig, frame, 200, true)
+	var late := rig.debug_snapshot()
+	var anticipation := float(late.landing_anticipation)
+	var knee_l := float((late.left_knee_rotation as Vector3).x)
+	var knee_r := float((late.right_knee_rotation as Vector3).x)
+	print("LANDING_FLEX_SAMPLE anticipation=%.3f knee_l=%.3f knee_r=%.3f" % [anticipation, knee_l, knee_r])
+	if anticipation < 0.35:
+		failures.append("Audit setup did not reach mid landing anticipation (%.3f)" % anticipation)
+		_dispose_rig(rig)
+		return
+	if minf(knee_l, knee_r) < 0.2:
+		failures.append("Landing anticipation locked a leg straight before contact (%.3f/%.3f)" % [knee_l, knee_r])
 	_dispose_rig(rig)
 
 func _test_impact_severity_scaling() -> void:

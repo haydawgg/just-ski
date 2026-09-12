@@ -146,7 +146,14 @@ static func air_preview_targets(
 		return empty
 	var heading := _preview_heading(frame, landing_normal, body_basis)
 	var origin := SkiConstrainedLegIK.project_onto_plane(body_origin, frame.predicted_landing_point, landing_normal)
-	var half_stance := maxf(profile.air_preview_stance_half_width, min_stance * 0.5)
+	# The presentation stance contract holds for preview too: the symmetric
+	# preview width stays inside the same visual maximum (no behavior change
+	# while air_preview_stance_half_width remains below it).
+	var half_stance := clampf(
+		maxf(profile.air_preview_stance_half_width, min_stance * 0.5),
+		0.0,
+		maxf(profile.visual_stance_max_half_width, min_stance * 0.5)
+	)
 	var stance: Dictionary = SkiConstrainedLegIK.stance_ski_targets(origin, heading, landing_normal, half_stance)
 	if not bool(stance.valid):
 		return empty

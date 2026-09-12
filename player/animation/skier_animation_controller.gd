@@ -177,6 +177,9 @@ var _air_apex_weight := 0.0
 var _air_descent_weight := 0.0
 var _air_flex := 0.0
 var _air_phase_name := "Ground"
+## Last ground-pose base loading, bridged into early air so takeoff does not
+## snap from squat to locked-upright. Latched on ground frames only.
+var _takeoff_ground_flex := 0.0
 var _air_style_side := 1.0
 var _smoothed_angular_velocity := Vector3.ZERO
 var _trick_rotation_accumulated := Vector3.ZERO
@@ -1996,6 +1999,11 @@ func _apply_ground_pose(frame: SkierAnimationFrame) -> void:
 	var jump_flex := _jump_anticipation * profile.jump_anticipation_knee_flex
 	var crossover_release := _crossover_release()
 	var flex := maxf(0.2, profile.neutral_knee_flex + speed_flex + jump_flex + _slarve_weight * profile.slarve_leg_flex - crossover_release * profile.crossover_extension)
+	# Takeoff bridge latches base loading only (neutral + speed). Jump
+	# anticipation belongs to the pop reaction that is already extending the
+	# body; caching it would fight the pop and break the takeoff-extension
+	# shape the jump gates pin down.
+	_takeoff_ground_flex = maxf(0.2, profile.neutral_knee_flex + speed_flex)
 	var deep_carve := smoothstep(profile.deep_carve_threshold, 1.0, absf(_carve_target))
 	var leg_load := smoothstep(profile.carve_leg_load_start, profile.carve_leg_load_full, absf(_leg_carve))
 	var pelvis_roll := -_pelvis_carve * profile.carve_hip_roll + _terrain_pelvis_roll_amount
@@ -2119,10 +2127,18 @@ func _apply_switch_skiing_layer() -> void:
 func _apply_air_pose(frame: SkierAnimationFrame) -> void:
 	var rotation_compact := _spin_compactness
 	var phase_compact := clampf(_air_early_weight * 0.55 + _air_apex_weight + _air_descent_weight * 0.3, 0.0, 1.0)
+	# Takeoff bridge: half the last ground loading carries into early air and
+	# decays fast, so entry stays continuous with the lip instead of snapping
+	# to the baseline. Additive (not max): entry meets the ground pose, then
+	# yields to pop extension and apex compaction on their own curves.
+	var takeoff_residual := 0.0
+	if frame.air_time >= 0.0:
+		takeoff_residual = profile.air_takeoff_cache_scale * _takeoff_ground_flex * exp(-maxf(frame.air_time, 0.0) / maxf(profile.air_takeoff_cache_decay, 0.02))
 	_air_flex = clampf(
 		profile.air_takeoff_leg_flex
 		+ _air_size * phase_compact * profile.air_compact_leg_flex
-		+ rotation_compact * minf(profile.air_spin_leg_flex, profile.trick_spin_knee_flex),
+		+ rotation_compact * minf(profile.air_spin_leg_flex, profile.trick_spin_knee_flex)
+		+ takeoff_residual,
 		profile.min_leg_flex,
 		profile.max_leg_flex
 	)
@@ -2151,8 +2167,12 @@ func _apply_air_pose(frame: SkierAnimationFrame) -> void:
 		0.0
 	)
 	_pelvis_target_world = balance_root.to_global(_position_targets[pelvis] as Vector3)
+	# No-trick athletic baseline: slight forward torso independent of jump
+	# size. Yielded to trick/spin AND authored style poses so intentional
+	# shapes keep their distinct silhouettes.
+	var notrick_weight := 1.0 - clampf(maxf(rotation_compact, maxf(_trick_pose_weight, _style_pose_weight)), 0.0, 1.0)
 	_add_rotation(spine, Vector3(
-		-_air_takeoff_weight * 0.035 - _air_size * phase_compact * 0.14 + _air_descent_weight * 0.045,
+		-_air_takeoff_weight * 0.035 - _air_size * phase_compact * 0.14 + _air_descent_weight * 0.045 - profile.air_baseline_torso_pitch * notrick_weight,
 		-_smoothed_angular_velocity.y * 0.008 * _trick_pose_weight,
 		-_smoothed_angular_velocity.z * 0.012 * _trick_pose_weight
 	))
@@ -2171,8 +2191,8 @@ func _apply_air_pose(frame: SkierAnimationFrame) -> void:
 	var arm_open := profile.air_arm_balance_open * (0.32 + _air_descent_weight * 0.68) * (1.0 - rotation_compact * 0.45)
 	var takeoff_swing := _air_takeoff_weight * deliberate_pop * 0.2
 	var asymmetry := profile.stance_asymmetry + leg_settle * 0.25
-	_add_rotation(left_shoulder, Vector3(takeoff_swing - 0.18 - arm_in + asymmetry, 0.0, -arm_open - asymmetry))
-	_add_rotation(right_shoulder, Vector3(takeoff_swing - 0.18 - arm_in - asymmetry, 0.0, arm_open - asymmetry))
+	_add_rotation(left_shoulder, Vector3(takeoff_swing - 0.18 - arm_in + asymmetry + profile.air_baseline_hand_forward * notrick_weight, 0.0, -arm_open - asymmetry))
+	_add_rotation(right_shoulder, Vector3(takeoff_swing - 0.18 - arm_in - asymmetry + profile.air_baseline_hand_forward * notrick_weight, 0.0, arm_open - asymmetry))
 	var arm_shape := silhouette_side * style_phase * profile.air_arm_asymmetry * style_weight
 	_add_rotation(left_shoulder, Vector3(-arm_shape * 0.55, arm_shape * 0.25, -arm_shape))
 	_add_rotation(right_shoulder, Vector3(arm_shape * 0.42, arm_shape * 0.2, -arm_shape * 0.48))
@@ -3435,6 +3455,7 @@ func _reset_pose_immediately(snap_joints: bool = true) -> void:
 	_air_apex_weight = 0.0
 	_air_descent_weight = 0.0
 	_air_flex = 0.0
+	_takeoff_ground_flex = 0.0
 	_air_phase_name = "Ground"
 	_air_style_side = 1.0
 	_smoothed_angular_velocity = Vector3.ZERO

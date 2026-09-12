@@ -29,7 +29,7 @@ func _ready() -> void:
 	_validate_finish_gate_scale(features, profile)
 	if catalog != null:
 		_validate_catalog_colliders(catalog)
-	for asset_id: String in ["park_tree", "route_gate", "grind_rail", "snow_feature", "course_boundary", "lift_tower", "snowmaker", "trail_board", "snow_boulder", "lift_line"]:
+	for asset_id: String in ["park_tree", "route_gate", "grind_rail", "snow_feature", "course_boundary", "lift_tower", "snowmaker", "trail_board", "snow_boulder", "lift_line", "piste_marker", "snow_bank", "lift_station"]:
 		var instances := _instances_for_asset(asset_id)
 		if instances.is_empty():
 			failures.append("Strict production resort did not instantiate %s" % asset_id)

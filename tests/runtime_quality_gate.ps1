@@ -206,12 +206,22 @@ $sceneShards = [ordered]@{
 		"res://tests/environment_asset_production_acceptance.tscn",
 		"res://tests/environment_tree_batch_acceptance.tscn",
 		"res://tests/content_pass_acceptance.tscn",
+		"res://tests/course_rhythm_acceptance.tscn",
+		"res://tests/park_terrain_continuity_acceptance.tscn",
+		"res://tests/snow_lighting_architecture_acceptance.tscn",
+		"res://tests/resort_density_acceptance.tscn",
+		"res://tests/environment_camera_sweep_acceptance.tscn",
+		"res://tests/wedge_viewport_diagnostic.tscn",
+		"res://tests/snow_vfx_acceptance.tscn",
 		"res://tests/park_content_runtime_acceptance.tscn",
 		"res://tests/summit_environment_acceptance.tscn",
 		"res://tests/sunset_environment_acceptance.tscn",
 		"res://tests/camera_low_speed_acceptance.tscn",
 		"res://tests/camera_runtime_stability_acceptance.tscn",
 		"res://tests/camera_airborne_viewport_diagnostic.tscn",
+		"res://tests/camera_collision_destination_acceptance.tscn",
+		"res://tests/camera_convex_crest_follow_acceptance.tscn",
+		"res://tests/camera_kidnapped_reacquire_acceptance.tscn",
 		"res://tests/camera_performance_acceptance.tscn",
 		"res://tests/camera_phase_performance_acceptance.tscn"
 	)
@@ -237,6 +247,7 @@ $sceneShards = [ordered]@{
 		"res://tests/trick_animation_acceptance.tscn",
 		"res://tests/grab_animation_acceptance.tscn",
 		"res://tests/animation_silhouette_acceptance.tscn",
+		"res://tests/contact_stance_acceptance.tscn",
 		"res://tests/animation_polish_acceptance.tscn",
 		"res://tests/animation_transition_regression_acceptance.tscn",
 		"res://tests/animation_presentation_quality_acceptance.tscn",
@@ -267,12 +278,14 @@ $sceneShards = [ordered]@{
 	)
 	"systems-media" = @(
 		"res://tests/runtime_smoke.tscn",
+		"res://tests/canonical_release_run.tscn",
 		"res://tests/profiling_acceptance.tscn",
 		"res://tests/performance_profile_schema_acceptance.tscn",
 		"res://tests/audio_mix_solver_acceptance.tscn",
 		"res://tests/clip_recorder_worker_acceptance.tscn",
 		"res://tests/clip_recorder_lifecycle_acceptance.tscn",
 		"res://tests/settings_acceptance.tscn",
+		"res://tests/display_aspect_acceptance.tscn",
 		"res://tests/debug_telemetry_budget_acceptance.tscn",
 		"res://tests/input_manager_acceptance.tscn",
 		"res://tests/skier_input_frame_acceptance.tscn",
@@ -284,6 +297,11 @@ $sceneShards = [ordered]@{
 		"res://tests/solver_landing_contract_acceptance.tscn",
 		"res://tests/mp4_encoder_acceptance.tscn",
 		"res://tests/visual_evidence_acceptance.tscn"
+	)
+	"release-stress" = @(
+		"res://tests/release_jump_envelope_acceptance.tscn",
+		"res://tests/release_carve_stress_acceptance.tscn",
+		"res://tests/release_cross_state_acceptance.tscn"
 	)
 }
 

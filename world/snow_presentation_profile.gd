@@ -31,9 +31,9 @@ extends Resource
 @export_category("Summit Shadow-Safe Surface")
 @export_range(0.0, 0.2, 0.005) var summit_form_contrast := 0.06
 @export_range(0.0, 0.2, 0.005) var summit_macro_contrast := 0.03
-@export_range(0.0, 1.5, 0.01) var summit_drift_strength := 0.9
+@export_range(0.0, 0.4, 0.005) var summit_drift_strength := 0.16
 @export_range(0.0, 0.3, 0.005) var summit_broad_variation := 0.12
-@export_range(0.2, 0.9, 0.01) var summit_luminance_floor := 0.58
+@export_range(0.2, 0.9, 0.01) var summit_luminance_floor := 0.44
 
 @export_category("Surface Response")
 @export_range(0.2, 1.0, 0.01) var packed_roughness := 0.72
@@ -41,7 +41,7 @@ extends Resource
 @export_range(0.2, 1.0, 0.01) var powder_roughness := 0.84
 @export_range(0.0, 0.3, 0.005) var roughness_variation := 0.09
 @export_range(0.0, 100.0, 0.5) var detail_near_distance := 10.0
-@export_range(1.0, 200.0, 0.5) var detail_far_distance := 58.0
+@export_range(1.0, 200.0, 0.5) var detail_far_distance := 64.0
 
 @export_category("Park Feature Surface")
 @export_range(0.25, 8.0, 0.01) var park_feature_texture_world_size := 1.1

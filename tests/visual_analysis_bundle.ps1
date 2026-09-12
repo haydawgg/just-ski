@@ -479,6 +479,12 @@ if ($Suite -eq "all" -or $Suite -eq "environment") {
 	$rampVariant = "ramp_texture_daytime_{0}" -f $rampScaleLabel
 	$rampOk = Invoke-VisualCapture -SuiteName "environment" -VariantName $rampVariant -Scene "res://tests/ramp_surface_visual_inspection.tscn" -CaptureFps $FixedFps -EnvironmentName "daytime" -CaptureRenderScale $RenderScale -CapturePreset $presetName -UserArguments @()
 	if (-not $rampOk) { $captureFailed = $true }
+	# Phase 9 review variant: the same hero-seam/ramp coverage with the opaque
+	# takeoff/landing guide stamps hidden so geometry and material must carry
+	# readability on their own.
+	$rampNoGuidesVariant = "ramp_texture_daytime_noguides_{0}" -f $rampScaleLabel
+	$rampNoGuidesOk = Invoke-VisualCapture -SuiteName "environment" -VariantName $rampNoGuidesVariant -Scene "res://tests/ramp_surface_visual_inspection.tscn" -CaptureFps $FixedFps -EnvironmentName "daytime" -CaptureRenderScale $RenderScale -CapturePreset $presetName -UserArguments @("--hide-guides")
+	if (-not $rampNoGuidesOk) { $captureFailed = $true }
 	if ($IncludeMotion.IsPresent) {
 		foreach ($environmentName in $matrixEnvironments) {
 			foreach ($captureScale in $matrixRenderScales) {

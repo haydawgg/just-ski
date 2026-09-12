@@ -1394,6 +1394,12 @@ func _update_hint() -> void:
 		hint_label.visible = true
 
 func _show_notice(text: String) -> void:
+	# Phase 12: release/QA captures contain only intentional gameplay UI. The
+	# --clean-capture path suppresses transient notices (including clip-recorder
+	# status) so HUD tooling cannot leak into evidence frames. QA tooling stays
+	# available whenever the flag is absent.
+	if clean_capture_mode:
+		return
 	_notice_text = text
 	notice_time = 2.0
 	_update_notice()

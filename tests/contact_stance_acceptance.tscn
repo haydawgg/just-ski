@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://ccontactstance01"]
+
+[ext_resource type="Script" path="res://tests/contact_stance_acceptance.gd" id="1"]
+
+[node name="ContactStanceAcceptance" type="Node3D"]
+script = ExtResource("1")

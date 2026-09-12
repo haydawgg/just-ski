@@ -783,6 +783,7 @@ func _build_attachments() -> void:
 	var dark := SkierEquipment.material(outfit_profile.boot_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var boot_accent := SkierEquipment.material(outfit_profile.ski_accent_color.darkened(0.32), 0.48, 0.18, outfit_profile.hardgoods_specular)
 	var ski_base := SkierEquipment.material(outfit_profile.ski_base_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
+	var ski_edge := SkierEquipment.material(outfit_profile.ski_edge_color, 0.35, 0.85, outfit_profile.hardgoods_specular)
 	var accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var jacket := SkierEquipment.material(outfit_profile.jacket_color, outfit_profile.cloth_roughness, 0.0, outfit_profile.cloth_specular)
 	var jacket_trim := SkierEquipment.material(outfit_profile.jacket_trim_color, outfit_profile.cloth_roughness, 0.02, outfit_profile.cloth_specular)
@@ -846,7 +847,7 @@ func _build_attachments() -> void:
 		ski_pivot.name = side.capitalize() + "SkiPivot"
 		ski_pivot.position = driver.rest_position(StringName(side + "_ski"))
 		boot_mount.add_child(ski_pivot)
-		SkierEquipment.build_ski(ski_pivot, side, ski_base, accent)
+		SkierEquipment.build_ski(ski_pivot, side, ski_base, accent, ski_edge)
 		equipment_nodes[StringName(side + "_ski")] = ski_pivot
 		_build_equipment_targets(ski_pivot, side)
 		var pole_attachment := _bone_attachment(StringName(side + "_hand"), side.capitalize() + "PoleAttachment")

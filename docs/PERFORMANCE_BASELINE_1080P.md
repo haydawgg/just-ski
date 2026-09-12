@@ -55,6 +55,19 @@ In the comparable sunset High measurement, the change reduced:
 
 Primitives increased because MultiMesh submits the full batch; that is an accepted tradeoff pending representative hardware profiling. Procedural audio work is also bounded and remains well below the maintained average-cost target in the recorded runs.
 
+## Provisional headless CPU characterization
+
+`tests/canonical_release_run.tscn` runs the canonical deterministic release trace (spawn acceleration, linked carves, small/medium/large hero airs, runout, finish) on the headless 60 Hz path and writes `user://canonical_release_profile.json` with frame-time percentiles, event markers, and probe telemetry.
+
+| Revision | Frames | wall p50 | wall p95 | wall p99 | physics p95 | camera distance | fallbacks | airtimes (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Baseline `ebd9276` | 1828 | 8.30 ms | 8.34 ms | 8.44 ms | 8.21 ms | 4.54–5.83 | 0 | 2.08 / 2.63 / 3.25 |
+| Final (Phases 1–11) | 1854 | 8.30 ms | 8.34 ms | 8.45–8.53 ms | 9.9–11.4 ms | 4.54–5.79 | 0 | 2.15 / 2.83 / 3.42 |
+
+These are wall-clock physics-tick measurements under the headless dummy renderer; they are not GPU frame times and do not replace the discrete/integrated matrix above. Wall p50/p95 are unchanged within noise, p99 moved by ≤0.1 ms, and the physics-monitor p95 varies run to run on the same host (8.2 ms baseline vs 9.9–11.4 ms final across two runs) with a larger Phase 8–11 course and dressing set. Treat as a provisional CPU non-regression characterization, not a target-hardware claim.
+
+Final target-hardware performance review: **OUTSTANDING.** The player-following reflection-probe A/B also remains outstanding on target hardware; `Resort.player_probe_summary()` now exposes recapture count, in-air recaptures, and the last interval so the comparison can be recorded, and `.\tests\visual_profile.ps1 -IsolationModes baseline,environment_effects` is the matching capture command.
+
 ## Regression policy
 
 For matching scenarios and hardware identity:

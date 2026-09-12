@@ -50,10 +50,21 @@ static func _replace_main_face_render(parent: Node3D, main_face: StaticBody3D, p
 			# so it cannot blanket-shadow the authored surface at a low sun angle.
 			mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			mesh_instance.set_meta("gi_exclude", true)
+	# Phase 10: the playable corridor and the presentation-only shoulder relief
+	# are separate render regions with different shadow architecture. The
+	# interactive piste uses the standard shadow-receiving snow material; only
+	# the off-corridor relief keeps the shadow-safe summit workaround.
+	var playable_half := clampf(profile.playable_half_width_m, 1.0, ParkLayout.FACE_WIDTH * 0.5)
+	var outer_half := clampf(profile.outer_half_width_m, playable_half + 1.0, ParkLayout.FACE_WIDTH * 0.5)
+	_add_render_region(parent, profile, "SummitPlayableRenderSurface", "playable", -playable_half, playable_half, false)
+	_add_render_region(parent, profile, "SummitReliefRenderSurfaceLeft", "shoulder_left", -outer_half, -playable_half, true)
+	_add_render_region(parent, profile, "SummitReliefRenderSurfaceRight", "shoulder_right", playable_half, outer_half, true)
+
+static func _add_render_region(parent: Node3D, profile: SummitEnvironmentProfile, label: String, region: String, x_min: float, x_max: float, shadow_safe: bool) -> void:
 	var render := MeshInstance3D.new()
-	render.name = "SummitSnowRenderSurface"
-	render.mesh = _create_terrain_mesh(profile)
-	render.material_override = SnowSurface.create(SnowSurface.Kind.GROOMED, Vector2(0.0, -1.0), 0.0, true)
+	render.name = label
+	render.mesh = _create_region_mesh(profile, x_min, x_max)
+	render.material_override = SnowSurface.create(SnowSurface.Kind.GROOMED, Vector2(0.0, -1.0), 0.0, shadow_safe, SnowSurface.PresentationRole.GROUND)
 	render.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	render.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	render.visibility_range_end = maxf(profile.terrain_lod_end_m, 100.0)
@@ -62,33 +73,16 @@ static func _replace_main_face_render(parent: Node3D, main_face: StaticBody3D, p
 	render.set_meta("environment_summit_visual", true)
 	render.set_meta("render_only", true)
 	render.set_meta("gi_exclude", true)
+	render.set_meta("summit_render_region", region)
+	render.set_meta("summit_shadow_receiving", not shadow_safe)
 	render.add_to_group("environment_summit_visual")
 	parent.add_child(render)
-
-static func _terrain_rows(profile: SummitEnvironmentProfile) -> Array[PackedFloat32Array]:
-	# Kept separate from mesh construction so acceptance tests can sample the
-	# exact deterministic heightfield without depending on renderer state.
-	var rows: Array[PackedFloat32Array] = []
-	var face_half_width := ParkLayout.FACE_WIDTH * 0.5
-	var outer_half_width := clampf(profile.outer_half_width_m, profile.playable_half_width_m + 1.0, face_half_width)
-	var spacing := maxf(profile.sample_spacing_m, 0.5)
-	var x_count := maxi(3, ceili((outer_half_width * 2.0) / spacing) + 1)
-	var z_min := -ParkLayout.face_half_world_z()
-	var z_max := ParkLayout.face_half_world_z()
-	var z_count := maxi(3, ceili((z_max - z_min) / spacing) + 1)
-	for row_index: int in range(z_count):
-		var z := lerpf(z_max, z_min, float(row_index) / float(z_count - 1))
-		var row := PackedFloat32Array()
-		for column_index: int in range(x_count):
-			var x := lerpf(-outer_half_width, outer_half_width, float(column_index) / float(x_count - 1))
-			row.append(_terrain_height(x, z, profile))
-		rows.append(row)
-	return rows
 
 static func sample_height(x: float, z: float, profile: SummitEnvironmentProfile) -> float:
 	if profile == null:
 		return ParkLayout.snow_at(x, z).y
 	return _terrain_height(x, z, profile)
+
 
 static func _terrain_height(x: float, z: float, profile: SummitEnvironmentProfile) -> float:
 	var base := ParkLayout.snow_at(x, z)
@@ -107,20 +101,22 @@ static func _terrain_height(x: float, z: float, profile: SummitEnvironmentProfil
 	var relief := clampf(broad + fine - 0.32, 0.0, 1.0)
 	return base.y + profile.surface_offset_m + edge_blend * summit_window * profile.shoulder_amplitude_m * relief
 
-static func _create_terrain_mesh(profile: SummitEnvironmentProfile) -> ArrayMesh:
-	var scalar_rows := _terrain_rows(profile)
-	var row_count := scalar_rows.size()
-	var column_count := scalar_rows[0].size()
-	var face_half_width := clampf(profile.outer_half_width_m, profile.playable_half_width_m + 1.0, ParkLayout.FACE_WIDTH * 0.5)
+static func _create_region_mesh(profile: SummitEnvironmentProfile, x_min: float, x_max: float) -> ArrayMesh:
+	# Each render region samples exactly from x_min to x_max so the playable and
+	# shoulder meshes share an identical boundary column (the edge blend is zero
+	# at the playable edge), leaving no crack or overlap along x = +/- playable.
+	var spacing := maxf(profile.sample_spacing_m, 0.5)
+	var column_count := maxi(2, ceili((x_max - x_min) / spacing) + 1)
 	var z_min := -ParkLayout.face_half_world_z()
 	var z_max := ParkLayout.face_half_world_z()
+	var row_count := maxi(3, ceili((z_max - z_min) / spacing) + 1)
 	var world_rows: Array[PackedVector3Array] = []
 	for row_index: int in range(row_count):
 		var z := lerpf(z_max, z_min, float(row_index) / float(row_count - 1))
 		var world_row := PackedVector3Array()
 		for column_index: int in range(column_count):
-			var x := lerpf(-face_half_width, face_half_width, float(column_index) / float(column_count - 1))
-			world_row.append(Vector3(x, scalar_rows[row_index][column_index], z))
+			var x := lerpf(x_min, x_max, float(column_index) / float(column_count - 1))
+			world_row.append(Vector3(x, _terrain_height(x, z, profile), z))
 		world_rows.append(world_row)
 	var normal := ParkLayout.snow_normal()
 	var bottom_rows: Array[PackedVector3Array] = []
@@ -229,17 +225,24 @@ static func _instantiate_catalog_asset(parent: Node3D, catalog: EnvironmentAsset
 	return instance
 
 static func _backdrop_specs() -> Array[Dictionary]:
+	# Phase 11: multiple topology families and a rebalanced depth ladder so the
+	# close shoulders no longer loom over the ski area. Global environment fog
+	# is the primary aerial-perspective system; the shader only adds a bounded
+	# local blend (haze_blend) on top of it.
 	return [
-		{"name": "HazePeakWest", "position": Vector3(-245.0, 2.0, -520.0), "radius": 128.0, "height": 105.0, "color": Color("#9aafbd"), "yaw": -8.0, "seed": 101},
-		{"name": "HazePeakCenter", "position": Vector3(0.0, -4.0, -565.0), "radius": 155.0, "height": 126.0, "color": Color("#a3b5c0"), "yaw": 4.0, "seed": 203},
-		{"name": "HazePeakEast", "position": Vector3(242.0, 1.0, -510.0), "radius": 135.0, "height": 112.0, "color": Color("#96abb9"), "yaw": 13.0, "seed": 307},
-		{"name": "FarPeakWest", "position": Vector3(-165.0, 13.0, -310.0), "radius": 88.0, "height": 118.0, "color": Color("#6887a0"), "yaw": -11.0, "seed": 11},
-		{"name": "FarPeakMidWest", "position": Vector3(-72.0, 4.0, -356.0), "radius": 62.0, "height": 87.0, "color": Color("#7897ad"), "yaw": 17.0, "seed": 29},
-		{"name": "FarPeakCenter", "position": Vector3(19.0, 2.0, -392.0), "radius": 83.0, "height": 116.0, "color": Color("#6f8fa8"), "yaw": 2.0, "seed": 43},
-		{"name": "FarPeakMidEast", "position": Vector3(101.0, 5.0, -348.0), "radius": 71.0, "height": 91.0, "color": Color("#7897ad"), "yaw": -18.0, "seed": 67},
-		{"name": "FarPeakEast", "position": Vector3(181.0, 14.0, -298.0), "radius": 92.0, "height": 124.0, "color": Color("#66859e"), "yaw": 9.0, "seed": 83},
-		{"name": "WestShoulder", "position": Vector3(-138.0, 22.0, -88.0), "radius": 52.0, "height": 68.0, "color": Color("#718fa5"), "yaw": 24.0, "seed": 127},
-		{"name": "EastShoulder", "position": Vector3(141.0, 20.0, -76.0), "radius": 47.0, "height": 79.0, "color": Color("#6b899f"), "yaw": -21.0, "seed": 149},
+		{"name": "LongRidgeWest", "topology": "long_ridge", "position": Vector3(-240.0, 18.0, -250.0), "radius": 150.0, "height": 58.0, "color": Color("#63819a"), "yaw": -6.0, "seed": 211},
+		{"name": "LowRidgeCenter", "topology": "low_ridge", "position": Vector3(0.0, 20.0, -258.0), "radius": 180.0, "height": 34.0, "color": Color("#6d8ba3"), "yaw": 3.0, "seed": 223},
+		{"name": "LongRidgeEast", "topology": "long_ridge", "position": Vector3(245.0, 17.0, -240.0), "radius": 145.0, "height": 55.0, "color": Color("#63819a"), "yaw": 7.0, "seed": 229},
+		{"name": "ShoulderNorthWest", "topology": "shoulder", "position": Vector3(-210.0, 14.0, -190.0), "radius": 90.0, "height": 72.0, "color": Color("#6f8fa7"), "yaw": 20.0, "seed": 233},
+		{"name": "ShoulderNorthEast", "topology": "shoulder", "position": Vector3(215.0, 15.0, -175.0), "radius": 86.0, "height": 76.0, "color": Color("#6f8fa7"), "yaw": -18.0, "seed": 239},
+		{"name": "SaddleRidgeWest", "topology": "saddle", "position": Vector3(-120.0, 6.0, -300.0), "radius": 110.0, "height": 105.0, "color": Color("#6889a2"), "yaw": -9.0, "seed": 241},
+		{"name": "SaddleRidgeEast", "topology": "saddle", "position": Vector3(135.0, 8.0, -285.0), "radius": 105.0, "height": 100.0, "color": Color("#6889a2"), "yaw": 11.0, "seed": 251},
+		{"name": "FarPeakWest", "topology": "sharp_peak", "position": Vector3(-190.0, 10.0, -380.0), "radius": 80.0, "height": 150.0, "color": Color("#7897ad"), "yaw": -11.0, "seed": 11},
+		{"name": "FarPeakCenter", "topology": "sharp_peak", "position": Vector3(15.0, 2.0, -420.0), "radius": 88.0, "height": 165.0, "color": Color("#6f8fa8"), "yaw": 2.0, "seed": 43},
+		{"name": "FarPeakEast", "topology": "sharp_peak", "position": Vector3(205.0, 12.0, -360.0), "radius": 84.0, "height": 148.0, "color": Color("#7897ad"), "yaw": 9.0, "seed": 83},
+		{"name": "HazePeakWest", "topology": "massif", "position": Vector3(-260.0, 0.0, -560.0), "radius": 150.0, "height": 120.0, "color": Color("#9aafbd"), "yaw": -8.0, "seed": 101},
+		{"name": "HazePeakCenter", "topology": "massif", "position": Vector3(10.0, -6.0, -600.0), "radius": 190.0, "height": 140.0, "color": Color("#a3b5c0"), "yaw": 4.0, "seed": 203},
+		{"name": "HazePeakEast", "topology": "massif", "position": Vector3(250.0, 0.0, -545.0), "radius": 160.0, "height": 125.0, "color": Color("#96abb9"), "yaw": 13.0, "seed": 307},
 	]
 
 static func _add_ridge(parent: Node3D, profile: SummitEnvironmentProfile, spec: Dictionary) -> void:
@@ -248,16 +251,18 @@ static func _add_ridge(parent: Node3D, profile: SummitEnvironmentProfile, spec: 
 	root.position = spec.position
 	root.rotation_degrees.y = float(spec.yaw)
 	root.set_meta("environment_backdrop", true)
+	root.set_meta("backdrop_topology", str(spec.get("topology", "massif")))
 	root.add_to_group("environment_backdrop")
 	var mountain := MeshInstance3D.new()
 	mountain.name = "RidgeBody"
-	mountain.mesh = _create_ridge_mesh(float(spec.radius), float(spec.height), int(spec.seed))
+	mountain.mesh = _create_topology_mesh(float(spec.radius), float(spec.height), int(spec.seed), str(spec.get("topology", "massif")))
 	var rock_material := ShaderMaterial.new()
 	rock_material.shader = DISTANT_MOUNTAIN_SHADER
 	rock_material.set_shader_parameter("base_color", Color(spec.color).lightened(0.08))
 	rock_material.set_shader_parameter("haze_color", Color("#b4c2ca"))
 	rock_material.set_shader_parameter("haze_start_distance", 170.0)
 	rock_material.set_shader_parameter("haze_end_distance", 620.0)
+	rock_material.set_shader_parameter("haze_blend", float(spec.get("haze_blend", 0.28)))
 	rock_material.set_shader_parameter("facet_value_range", 0.12)
 	rock_material.set_shader_parameter("mountain_height", float(spec.height))
 	mountain.material_override = rock_material
@@ -268,38 +273,99 @@ static func _add_ridge(parent: Node3D, profile: SummitEnvironmentProfile, spec: 
 	root.add_child(mountain)
 	parent.add_child(root)
 
+# Topology families: each entry defines the ring silhouette and footprint
+# stretch. Saddle and massif place multiple summits inside one ridge mesh.
+const TOPOLOGY_PROFILES := {
+	"massif": {
+		"ring_heights": [-0.55, -0.2, 0.0, 0.16, 0.32, 0.48, 0.64, 0.8, 0.93, 1.0],
+		"ring_scales": [1.42, 1.24, 1.06, 0.94, 0.78, 0.64, 0.5, 0.34, 0.16, 0.0],
+		"x_stretch": 1.7, "z_stretch": 1.05, "ridge_primary": 5.0, "ridge_secondary": 9.0,
+		"summits": [{"x": -0.34, "z": 0.05, "scale": 0.78, "height": 0.82}, {"x": 0.0, "z": -0.04, "scale": 1.0, "height": 1.0}, {"x": 0.38, "z": 0.02, "scale": 0.72, "height": 0.78}],
+	},
+	"sharp_peak": {
+		"ring_heights": [-0.55, -0.2, 0.0, 0.16, 0.32, 0.48, 0.64, 0.8, 0.93, 1.0],
+		"ring_scales": [1.0, 0.82, 0.66, 0.52, 0.4, 0.3, 0.22, 0.14, 0.07, 0.0],
+		"x_stretch": 0.9, "z_stretch": 0.72, "ridge_primary": 6.0, "ridge_secondary": 11.0,
+		"summits": [{"x": 0.0, "z": 0.0, "scale": 1.0, "height": 1.0}],
+	},
+	"saddle": {
+		"ring_heights": [-0.55, -0.2, 0.0, 0.16, 0.32, 0.48, 0.64, 0.8, 0.93, 1.0],
+		"ring_scales": [1.28, 1.12, 0.96, 0.84, 0.7, 0.58, 0.44, 0.3, 0.13, 0.0],
+		"x_stretch": 1.8, "z_stretch": 0.9, "ridge_primary": 5.0, "ridge_secondary": 8.0,
+		"summits": [{"x": -0.42, "z": 0.0, "scale": 0.74, "height": 0.88}, {"x": 0.42, "z": -0.03, "scale": 0.7, "height": 0.82}],
+	},
+	"long_ridge": {
+		"ring_heights": [-0.55, -0.2, 0.0, 0.16, 0.32, 0.48, 0.64, 0.8, 0.93, 1.0],
+		"ring_scales": [1.18, 1.08, 0.98, 0.9, 0.8, 0.68, 0.54, 0.36, 0.16, 0.0],
+		"x_stretch": 2.3, "z_stretch": 0.55, "ridge_primary": 4.0, "ridge_secondary": 7.0,
+		"summits": [{"x": -0.3, "z": 0.0, "scale": 0.82, "height": 0.9}, {"x": 0.02, "z": 0.0, "scale": 1.0, "height": 1.0}, {"x": 0.36, "z": 0.0, "scale": 0.78, "height": 0.86}],
+	},
+	"shoulder": {
+		"ring_heights": [-0.55, -0.2, 0.0, 0.16, 0.32, 0.48, 0.64, 0.8, 0.93, 1.0],
+		"ring_scales": [1.12, 1.02, 0.92, 0.82, 0.7, 0.58, 0.44, 0.28, 0.12, 0.0],
+		"x_stretch": 1.45, "z_stretch": 0.8, "ridge_primary": 5.0, "ridge_secondary": 9.0,
+		"summits": [{"x": 0.3, "z": -0.05, "scale": 1.0, "height": 1.0}],
+	},
+	"low_ridge": {
+		"ring_heights": [-0.55, -0.2, 0.0, 0.16, 0.32, 0.48, 0.64, 0.8, 0.93, 1.0],
+		"ring_scales": [1.24, 1.14, 1.04, 0.94, 0.84, 0.72, 0.58, 0.4, 0.18, 0.0],
+		"x_stretch": 2.6, "z_stretch": 0.7, "ridge_primary": 3.0, "ridge_secondary": 6.0,
+		"summits": [{"x": -0.2, "z": 0.0, "scale": 0.9, "height": 0.9}, {"x": 0.24, "z": 0.02, "scale": 0.86, "height": 0.94}],
+	},
+}
+
 static func _create_ridge_mesh(radius: float, height: float, seed: int) -> ArrayMesh:
+	return _create_topology_mesh(radius, height, seed, "massif")
+
+static func _create_topology_mesh(radius: float, height: float, seed: int, topology: String) -> ArrayMesh:
+	var params: Dictionary = TOPOLOGY_PROFILES.get(topology, TOPOLOGY_PROFILES["massif"])
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var summit_index := 0
+	for summit: Dictionary in params.summits:
+		_append_ridge_body(
+			st,
+			radius * float(summit.scale),
+			height * float(summit.height),
+			seed + summit_index * 17,
+			params,
+			Vector2(float(summit.x), float(summit.z)) * radius
+		)
+		summit_index += 1
+	st.generate_normals()
+	return st.commit()
+
+static func _append_ridge_body(st: SurfaceTool, radius: float, height: float, seed: int, params: Dictionary, peak_offset: Vector2) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
 	var segments := 32
-	var ring_heights := [-height * 0.55, -height * 0.2, 0.0, height * 0.16, height * 0.32, height * 0.48, height * 0.64, height * 0.8, height * 0.93, height]
-	var ring_scales := [1.32, 1.16, 1.0, 0.89, 0.73, 0.60, 0.44, 0.28, 0.13, 0.0]
-	var ring_points: Array[PackedVector3Array] = []
-	var peak_offset := Vector2(rng.randf_range(-0.14, 0.14), rng.randf_range(-0.12, 0.12)) * radius
+	var ring_heights: Array = params.ring_heights
+	var ring_scales: Array = params.ring_scales
+	var x_stretch := float(params.x_stretch)
+	var z_stretch := float(params.z_stretch)
+	var ridge_primary := float(params.ridge_primary)
+	var ridge_secondary := float(params.ridge_secondary)
+	var ridge_points: Array[PackedVector3Array] = []
 	for ring_index: int in range(ring_heights.size()):
 		var points := PackedVector3Array()
 		var center_offset := peak_offset * (float(ring_index) / float(ring_heights.size() - 1))
 		for segment: int in range(segments):
 			var angle := TAU * float(segment) / float(segments)
-			var ridge := sin(angle * 5.0 + float(seed)) * 0.12 + sin(angle * 9.0 + 0.4) * 0.07
+			var ridge := sin(angle * ridge_primary + float(seed)) * 0.12 + sin(angle * ridge_secondary + 0.4) * 0.07
 			var irregularity := 1.0 + ridge + rng.randf_range(-0.035, 0.035)
 			var ring_radius := radius * float(ring_scales[ring_index]) * irregularity
 			var ring_y := float(ring_heights[ring_index]) + sin(angle * 3.0 + seed) * height * 0.08 * sin(float(ring_index) / 9.0 * PI)
-			points.append(Vector3(cos(angle) * ring_radius * 1.3 + center_offset.x, ring_y, sin(angle) * ring_radius * 0.78 + center_offset.y))
-		ring_points.append(points)
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for ring_index: int in range(ring_points.size() - 1):
+			points.append(Vector3(cos(angle) * ring_radius * x_stretch + center_offset.x, ring_y, sin(angle) * ring_radius * z_stretch + center_offset.y))
+		ridge_points.append(points)
+	for ring_index: int in range(ridge_points.size() - 1):
 		for segment: int in range(segments):
 			var next := (segment + 1) % segments
-			var a := ring_points[ring_index][segment]
-			var b := ring_points[ring_index][next]
-			var c := ring_points[ring_index + 1][next]
-			var d := ring_points[ring_index + 1][segment]
+			var a := ridge_points[ring_index][segment]
+			var b := ridge_points[ring_index][next]
+			var c := ridge_points[ring_index + 1][next]
+			var d := ridge_points[ring_index + 1][segment]
 			st.add_vertex(a); st.add_vertex(b); st.add_vertex(c)
 			st.add_vertex(a); st.add_vertex(c); st.add_vertex(d)
-	st.generate_normals()
-	return st.commit()
 
 static func _add_smooth_tri(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, normal_a: Vector3, normal_b: Vector3, normal_c: Vector3, uv_a: Vector2, uv_b: Vector2, uv_c: Vector2) -> void:
 	for vertex: Array in [[a, normal_a, uv_a], [b, normal_b, uv_b], [c, normal_c, uv_c]]:

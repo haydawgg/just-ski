@@ -11,6 +11,10 @@ const SHOTS: Array[Dictionary] = [
 	{"id": "lip", "label": "Tabletop lip", "feature": "SmallTable", "x": -19.0, "z": 111.5, "yaw": -15.0},
 	{"id": "deck", "label": "Tabletop deck and knuckle", "feature": "SmallTable", "x": -19.0, "z": 106.0, "yaw": -15.0},
 	{"id": "landing", "label": "Tabletop landing", "feature": "SmallTable", "x": -19.0, "z": 96.0, "yaw": -15.0},
+	{"id": "medium_deck", "label": "Medium tabletop deck", "feature": "MediumTable", "x": -19.0, "z": 8.0, "yaw": -15.0},
+	{"id": "medium_landing", "label": "Medium tabletop landing", "feature": "MediumTable", "x": -19.0, "z": -8.0, "yaw": -15.0},
+	{"id": "large_knuckle", "label": "Large tabletop knuckle", "feature": "LargeTable", "x": -19.0, "z": -116.0, "yaw": -15.0},
+	{"id": "large_landing", "label": "Large tabletop landing", "feature": "LargeTable", "x": -19.0, "z": -138.0, "yaw": -15.0},
 	{"id": "roller", "label": "Summit roller", "feature": "SummitRollerB", "x": -7.0, "z": 124.0, "yaw": -15.0},
 	{"id": "berm", "label": "Upper berm", "feature": "UpperBermLeft", "x": -8.0, "z": 102.0, "yaw": -16.0},
 	{"id": "side_hit", "label": "Upper side hit", "feature": "UpperLeftSideHit", "x": -28.0, "z": 101.0, "yaw": -18.0},
@@ -22,6 +26,7 @@ var visual_environment := "daytime"
 var visual_render_scale := 1.0
 var visual_seed := 0
 var fixed_fps := 60
+var hide_guides := false
 var frame_count := 0
 var shot_index := 0
 var capture_failed := false
@@ -59,6 +64,8 @@ func _ready() -> void:
 		return
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if hide_guides:
+		_apply_guide_hiding()
 	if not _configure_gameplay_camera_fixture():
 		capture_failed = true
 		call_deferred("_finish", 1)
@@ -82,6 +89,8 @@ func _parse_visual_arguments() -> void:
 			var seed_text := argument.trim_prefix("--visual-seed=")
 			if seed_text.is_valid_int():
 				visual_seed = int(seed_text)
+		elif argument == "--hide-guides":
+			hide_guides = true
 
 
 func _apply_visual_environment() -> void:
@@ -92,6 +101,14 @@ func _apply_visual_environment() -> void:
 	GameSettings.set_pending("environment_preset", preset)
 	GameSettings.apply_pending()
 
+
+func _apply_guide_hiding() -> void:
+	# The Phase 9 gate requires the lip/knuckle/landing to read from geometry
+	# and material alone; guides may stay as restrained gameplay aids afterward.
+	for node: Node in get_tree().get_nodes_in_group("park_readability_markers"):
+		if node is GeometryInstance3D:
+			(node as GeometryInstance3D).visible = false
+	print("RAMP_SURFACE_GUIDES_HIDDEN: park_readability_markers suppressed for geometry review")
 
 func _configure_gameplay_camera_fixture() -> bool:
 	var skier := get_node_or_null("Resort/Skier") as SkierController

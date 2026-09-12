@@ -30,6 +30,7 @@ func _build_meshes() -> void:
 	var accent := SkierEquipment.material(outfit_profile.ski_accent_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
 	var boot_accent := SkierEquipment.material(outfit_profile.ski_accent_color.darkened(0.32), 0.48, 0.18, outfit_profile.hardgoods_specular)
 	var ski_base := SkierEquipment.material(outfit_profile.ski_base_color, outfit_profile.ski_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
+	var ski_edge := SkierEquipment.material(outfit_profile.ski_edge_color, 0.35, 0.85, outfit_profile.hardgoods_specular)
 	var lens := SkierEquipment.material(outfit_profile.goggle_lens_color, outfit_profile.lens_roughness, outfit_profile.lens_metallic, outfit_profile.lens_specular)
 	var frame := SkierEquipment.material(outfit_profile.goggle_frame_color, 0.36, 0.18, outfit_profile.hardgoods_specular)
 	var helmet := SkierEquipment.material(outfit_profile.helmet_color, outfit_profile.hardgoods_roughness, outfit_profile.hardgoods_metallic, outfit_profile.hardgoods_specular)
@@ -57,7 +58,7 @@ func _build_meshes() -> void:
 		SkierEquipment.add_capsule(driver.joint(StringName(side + "_hip")), side.capitalize() + "Thigh", 0.082, 0.51, Vector3(0.0, -0.235, 0.0), pants)
 		SkierEquipment.add_capsule(driver.joint(StringName(side + "_knee")), side.capitalize() + "Shin", 0.070, 0.47, Vector3(0.0, -0.215, 0.0), pants)
 		SkierEquipment.build_boot(driver.joint(StringName(side + "_boot")), side, dark, boot_accent)
-		SkierEquipment.build_ski(driver.joint(StringName(side + "_ski")), side, ski_base, accent)
+		SkierEquipment.build_ski(driver.joint(StringName(side + "_ski")), side, ski_base, accent, ski_edge)
 		SkierEquipment.add_capsule(driver.joint(StringName(side + "_shoulder")), side.capitalize() + "UpperArm", 0.075, 0.46, Vector3(0.0, -0.21, 0.0), jacket)
 		SkierEquipment.add_capsule(driver.joint(StringName(side + "_elbow")), side.capitalize() + "Forearm", 0.060, 0.4, Vector3(0.0, -0.18, 0.0), jacket)
 		# Elongated hand with the outfit glove color (not boot dark): reads as

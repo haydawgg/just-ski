@@ -135,7 +135,7 @@ if ($workflow -notmatch 'windows-2025' -or $workflow -notmatch 'actions/cache@v4
 if ($workflow -notmatch '(?m)^  static:' -or $workflow -notmatch '(?m)^  runtime:' -or $workflow -notmatch '(?m)^  quality:') {
 	$failures.Add("Quality Gate workflow is missing separate static, runtime, and required quality jobs.")
 }
-foreach ($requiredShard in @("environment-camera", "physics", "animation", "tricks-gameplay", "systems-media")) {
+foreach ($requiredShard in @("environment-camera", "physics", "animation", "tricks-gameplay", "systems-media", "release-stress")) {
 	if ($workflow -notmatch ([regex]::Escape("- $requiredShard"))) {
 		$failures.Add("Quality Gate workflow is missing runtime shard $requiredShard.")
 	}

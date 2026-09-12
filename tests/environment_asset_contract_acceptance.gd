@@ -38,7 +38,7 @@ func _validate_catalog() -> void:
 		failures.append("Normal runtime must select authored scenes through AUTO mode")
 	for reason: String in catalog.validate(true):
 		failures.append("Strict production catalog validation failed: %s" % reason)
-	for required_asset_id: String in ["park_tree", "route_gate", "grind_rail", "snow_feature", "course_boundary", "lift_tower", "snowmaker", "trail_board", "snow_boulder", "lift_line"]:
+	for required_asset_id: String in ["park_tree", "route_gate", "grind_rail", "snow_feature", "course_boundary", "lift_tower", "snowmaker", "trail_board", "snow_boulder", "lift_line", "piste_marker", "snow_bank", "lift_station"]:
 		var definition := catalog.definition_for(required_asset_id)
 		if definition == null:
 			failures.append("Catalog is missing production asset %s" % required_asset_id)

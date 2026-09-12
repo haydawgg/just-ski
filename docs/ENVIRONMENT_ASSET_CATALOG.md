@@ -6,7 +6,8 @@ The runtime environment uses `res://resources/environment/default_environment_as
 
 The production source scenes live in `res://assets/environment/production/`:
 
-- Trees, route gates, boundary fences, lift towers, snowmakers, trail boards, and summit boulders use concrete low-poly render scenes. Physical props have separate collision companions and all concrete scenes build `Render/LOD0` and `Render/LOD1` nodes. The summit lift line is a decoration scene with opaque cable/chair silhouettes and no collider.
+- Trees, route gates, boundary fences, lift towers, snowmakers, trail boards, summit boulders, piste markers, snow banks, and the lift station use concrete low-poly render scenes. Physical props have separate collision companions and all concrete scenes build `Render/LOD0` and `Render/LOD1` nodes. The summit lift line is a decoration scene with opaque cable/chair silhouettes and no collider.
+- Trees expose four structural conifer families (tall/narrow, broad/mature, juvenile, snow-heavy) selected per placement. The runtime batches them into deterministic spatial MultiMesh chunks so visibility/LOD is evaluated per course section instead of one whole-course batch.
 - Rails and sculpted snow features use authored parametric scene templates. Their path/dimensions come from the course specification, and the same generated geometry remains authoritative for rendering and collision.
 
 Production scene requirements:

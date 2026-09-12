@@ -11,7 +11,7 @@ extends Resource
 @export var backdrop_enabled := true
 @export var dressing_enabled := true
 @export_range(0.5, 8.0, 0.5) var sample_spacing_m := 3.0
-@export_range(8.0, 31.0, 0.5) var playable_half_width_m := 24.0
+@export_range(8.0, 31.0, 0.5) var playable_half_width_m := 27.0
 @export_range(24.0, 32.0, 0.5) var outer_half_width_m := 31.5
 @export_range(0.0, 3.0, 0.05) var shoulder_amplitude_m := 0.65
 @export_range(0.0, 0.2, 0.001) var relief_frequency := 0.032

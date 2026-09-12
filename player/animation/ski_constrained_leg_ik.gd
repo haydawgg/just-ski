@@ -64,6 +64,94 @@ static func separate_ski_span(
 		return [left_boot, right_boot]
 	return [left_boot - axis * push, right_boot + axis * push]
 
+## Presentation stance decoupling (CHAR-01). Physical snow probes sample wide
+## for stability; the rendered skis must not inherit that footprint. Each side
+## keeps its snow height, terrain normal and longitudinal offset — only the
+## lateral ski centers are reprojected around the body center into
+## profile-driven bounds: the preferred athletic width on even terrain,
+## clamped actuals within [min, max] on uneven terrain, with bounded extra
+## widening only on strongly uneven support. A single valid side is clamped
+## to the same maximum. Pure math; contact confidence stays authoritative
+## with the gameplay solver.
+const VISUAL_STANCE_EVEN_HEIGHT_BAND := 0.15
+const VISUAL_STANCE_EVEN_NORMAL_DOT := 0.94
+const VISUAL_STANCE_UNEVEN_HEIGHT_BAND := 0.30
+
+static func reproject_visual_ski_centers(
+	left_hit: Vector3,
+	right_hit: Vector3,
+	left_normal: Vector3,
+	right_normal: Vector3,
+	body_center: Vector3,
+	body_basis: Basis,
+	min_half: float,
+	preferred_half: float,
+	max_half: float,
+	uneven_extra_half: float,
+	left_valid: bool,
+	right_valid: bool
+) -> Dictionary:
+	var result := {"left": left_hit, "right": right_hit}
+	var lateral := body_basis.x
+	if lateral.length_squared() < 0.5 or not lateral.is_finite():
+		lateral = Vector3.RIGHT
+	else:
+		lateral = lateral.normalized()
+	var up := body_basis.y
+	if up.length_squared() < 0.5 or not up.is_finite():
+		up = Vector3.UP
+	else:
+		up = up.normalized()
+	var forward := body_basis.z
+	if forward.length_squared() < 0.5 or not forward.is_finite():
+		forward = Vector3.BACK
+	else:
+		forward = forward.normalized()
+	if not body_center.is_finite():
+		return result
+	var safe_min := maxf(min_half, 0.0)
+	var safe_max := maxf(max_half, safe_min)
+	var safe_preferred := clampf(preferred_half, safe_min, safe_max)
+	var safe_extra := maxf(uneven_extra_half, 0.0)
+	var left_ok := left_valid and left_hit.is_finite()
+	var right_ok := right_valid and right_hit.is_finite()
+	if not left_ok and not right_ok:
+		return result
+	var height_diff := 0.0
+	var normal_dot := 1.0
+	if left_ok and right_ok:
+		height_diff = absf((left_hit - right_hit).dot(up))
+		var settled_left := left_normal if left_normal.is_finite() and left_normal.length_squared() > 0.001 else up
+		var settled_right := right_normal if right_normal.is_finite() and right_normal.length_squared() > 0.001 else up
+		normal_dot = clampf(settled_left.normalized().dot(settled_right.normalized()), -1.0, 1.0)
+	var even := left_ok and right_ok and height_diff <= VISUAL_STANCE_EVEN_HEIGHT_BAND and normal_dot >= VISUAL_STANCE_EVEN_NORMAL_DOT
+	var allowance := safe_max
+	if height_diff > VISUAL_STANCE_UNEVEN_HEIGHT_BAND:
+		allowance += safe_extra
+	if left_ok:
+		if even:
+			result.left = _with_lateral_span(left_hit, body_center, lateral, up, forward, -safe_preferred)
+		else:
+			result.left = _with_lateral_span(left_hit, body_center, lateral, up, forward, _signed_span_clamp((left_hit - body_center).dot(lateral), safe_min, allowance, -1.0))
+	if right_ok:
+		if even:
+			result.right = _with_lateral_span(right_hit, body_center, lateral, up, forward, safe_preferred)
+		else:
+			result.right = _with_lateral_span(right_hit, body_center, lateral, up, forward, _signed_span_clamp((right_hit - body_center).dot(lateral), safe_min, allowance, 1.0))
+	return result
+
+static func _with_lateral_span(hit: Vector3, center: Vector3, lateral: Vector3, up: Vector3, forward: Vector3, new_lateral: float) -> Vector3:
+	var rel := hit - center
+	return center + lateral * new_lateral + forward * rel.dot(forward) + up * rel.dot(up)
+
+static func _signed_span_clamp(value: float, min_abs: float, max_abs: float, fallback_sign: float) -> float:
+	var sign := signf(value)
+	if absf(sign) < 0.5:
+		sign = signf(fallback_sign)
+		if absf(sign) < 0.5:
+			sign = 1.0
+	return sign * clampf(absf(value), min_abs, max_abs)
+
 ## Shared ski-contact frame used by ground probes, rail stance, spawn, and AIR
 ## predicted-surface preview. Degenerate heading/normal fall back without
 ## producing a non-finite basis.

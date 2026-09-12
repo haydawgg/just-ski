@@ -9,11 +9,14 @@ render_mode shadows_disabled, blend_mix, depth_draw_opaque, cull_back, diffuse_b
 
 // These values are deliberately profile-driven so summit form can be tuned
 // independently from the playable snow materials without changing collision.
+// Phase 10 keeps the workaround scoped to the presentation-only shoulders and
+// bounds its value manipulation to multiplicative variation: additive drift
+// plus a high luminance floor compressed terrain values into flat white.
 uniform float summit_form_contrast : hint_range(0.0, 0.2) = 0.06;
 uniform float summit_macro_contrast : hint_range(0.0, 0.2) = 0.03;
-uniform float summit_drift_strength : hint_range(0.0, 1.5) = 0.9;
+uniform float summit_drift_strength : hint_range(0.0, 0.4) = 0.16;
 uniform float summit_broad_variation : hint_range(0.0, 0.3) = 0.12;
-uniform float summit_luminance_floor : hint_range(0.2, 0.9) = 0.58;
+uniform float summit_luminance_floor : hint_range(0.2, 0.9) = 0.44;
 
 void vertex() {
 	snow_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -42,7 +45,7 @@ void fragment() {
 	surface_albedo *= form_value * macro_value;
 	float drift_value = (snow_value_noise(snow_world_position.xz * 0.18) - 0.5) * summit_drift_strength;
 	float broad_value = (broad_variation - 0.5) * summit_broad_variation;
-	surface_albedo += vec3(drift_value + broad_value);
+	surface_albedo *= 1.0 + drift_value + broad_value;
 	float varied_luminance = dot(surface_albedo, vec3(0.2126, 0.7152, 0.0722));
 	if (varied_luminance < summit_luminance_floor) {
 		surface_albedo += vec3(summit_luminance_floor - varied_luminance);

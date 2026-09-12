@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3 uid="uid://ccanonicalreleaserun1"]
+
+[ext_resource type="Script" path="res://tests/canonical_release_run.gd" id="1"]
+[ext_resource type="PackedScene" path="res://world/resort.tscn" id="2"]
+
+[node name="CanonicalReleaseRun" type="Node"]
+script = ExtResource("1")
+
+[node name="Resort" parent="." instance=ExtResource("2")]

@@ -50,6 +50,7 @@ var recovery_scenario_id := "environment.recovery.oob"
 var recovery_triggered := false
 var recovery_capture_finished := false
 var recovery_events: Array[Dictionary] = []
+var hide_skier := false
 
 func _ready() -> void:
 	_parse_visual_arguments()
@@ -93,6 +94,10 @@ func _ready() -> void:
 	var skier := get_node_or_null("Resort/Skier") as SkierController
 	if skier != null:
 		skier.landed.connect(_on_gameplay_landed)
+		if hide_skier:
+			# Phase 11 review variant: the static late-run frame must read as a
+			# believable resort without the character carrying the composition.
+			skier.visible = false
 	var course_recovery := get_node_or_null("Resort/CourseRecovery")
 	if course_recovery != null:
 		course_recovery.connect("recovery_started", Callable(self, "_on_recovery_started"))
@@ -123,6 +128,8 @@ func _parse_visual_arguments() -> void:
 			capture_motion = true
 		elif argument == "--capture-recovery":
 			capture_recovery = true
+		elif argument == "--hide-skier":
+			hide_skier = true
 		elif argument.begins_with("--motion-behavior="):
 			motion_behavior = argument.trim_prefix("--motion-behavior=").to_lower()
 		elif argument.begins_with("--motion-duration="):

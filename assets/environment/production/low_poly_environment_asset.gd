@@ -7,12 +7,38 @@ extends Node3D
 ## from meter-valued primitives so the scene remains easy to audit, recolor,
 ## and replace with a reviewed GLB later without changing the catalog API.
 
-enum AssetKind { PARK_TREE, ROUTE_GATE, COURSE_BOUNDARY, LIFT_TOWER, SNOWMAKER, TRAIL_BOARD, SNOW_BOULDER }
+enum AssetKind { PARK_TREE, ROUTE_GATE, COURSE_BOUNDARY, LIFT_TOWER, SNOWMAKER, TRAIL_BOARD, SNOW_BOULDER, PISTE_MARKER, SNOW_BANK, LIFT_STATION }
 
-const DEFAULT_LOD_DISTANCES := Vector3(35.0, 105.0, 230.0)
+const DEFAULT_LOD_DISTANCES := Vector3(48.0, 96.0, 235.0)
 const CONIFER_ALBEDO := preload("res://assets/materials/alpine_props/conifer_needles_albedo_512.png")
 const GRANITE_ALBEDO := preload("res://assets/materials/alpine_props/snowy_granite_albedo_512.png")
 const METAL_ALBEDO := preload("res://assets/materials/alpine_props/weathered_metal_albedo_512.png")
+# Structural conifer families. Family 0 remains the nominal catalog silhouette;
+# the other families vary width, tier heights, and snow load. `mat` indexes the
+# dark/mid/light needle materials so families read as different trees even at
+# distance where only value structure survives.
+const TREE_FAMILY_PROFILES: Array[Dictionary] = [
+	{"trunk_h": 3.0, "sway": 1.0, "tiers": [
+		{"r": 1.50, "h": 2.4, "y": 2.50, "mat": 0, "cap_r": 1.10, "cap_h": 0.42, "cap_y": 3.52},
+		{"r": 1.18, "h": 2.1, "y": 3.70, "mat": 1, "cap_r": 0.86, "cap_h": 0.40, "cap_y": 4.59},
+		{"r": 0.82, "h": 1.8, "y": 4.85, "mat": 2, "cap_r": 0.56, "cap_h": 0.32, "cap_y": 5.60},
+	]},
+	{"trunk_h": 2.9, "sway": 0.75, "tiers": [
+		{"r": 1.62, "h": 2.2, "y": 2.45, "mat": 0, "cap_r": 1.22, "cap_h": 0.44, "cap_y": 3.32},
+		{"r": 1.28, "h": 1.9, "y": 3.55, "mat": 1, "cap_r": 0.96, "cap_h": 0.40, "cap_y": 4.26},
+		{"r": 0.94, "h": 1.7, "y": 4.55, "mat": 2, "cap_r": 0.64, "cap_h": 0.34, "cap_y": 5.18},
+	]},
+	{"trunk_h": 2.5, "sway": 0.55, "tiers": [
+		{"r": 1.05, "h": 1.9, "y": 2.05, "mat": 1, "cap_r": 0.78, "cap_h": 0.34, "cap_y": 2.82},
+		{"r": 0.80, "h": 1.6, "y": 3.00, "mat": 2, "cap_r": 0.58, "cap_h": 0.30, "cap_y": 3.60},
+		{"r": 0.52, "h": 1.4, "y": 3.85, "mat": 2, "cap_r": 0.36, "cap_h": 0.26, "cap_y": 4.42},
+	]},
+	{"trunk_h": 3.1, "sway": 0.9, "tiers": [
+		{"r": 1.34, "h": 2.1, "y": 2.40, "mat": 0, "cap_r": 1.24, "cap_h": 0.56, "cap_y": 3.32},
+		{"r": 1.02, "h": 1.8, "y": 3.55, "mat": 1, "cap_r": 0.94, "cap_h": 0.50, "cap_y": 4.34},
+		{"r": 0.68, "h": 1.6, "y": 4.55, "mat": 1, "cap_r": 0.62, "cap_h": 0.44, "cap_y": 5.28},
+	]},
+]
 
 @export var asset_kind: AssetKind = AssetKind.PARK_TREE
 
@@ -53,34 +79,48 @@ func build_now() -> void:
 			_build_trail_board(lod0, lod1)
 		AssetKind.SNOW_BOULDER:
 			_build_snow_boulder(lod0, lod1)
+		AssetKind.PISTE_MARKER:
+			_build_piste_marker(lod0, lod1)
+		AssetKind.SNOW_BANK:
+			_build_snow_bank(lod0, lod1)
+		AssetKind.LIFT_STATION:
+			_build_lift_station(lod0, lod1)
 
 func _build_tree(lod0: Node3D, lod1: Node3D) -> void:
 	add_to_group("park_trees")
 	set_meta("readability_category", "landmark")
 	var variant := int(get_meta("style_variant", 0))
-	var sway := sin(float(variant) * 1.73) * 0.12
-	var counter_sway := cos(float(variant) * 1.21) * 0.09
+	var family := posmod(int(get_meta("tree_family", variant)), TREE_FAMILY_PROFILES.size())
+	var profile: Dictionary = TREE_FAMILY_PROFILES[family]
+	var sway := sin(float(variant) * 1.73) * 0.12 * float(profile.sway)
+	var counter_sway := cos(float(variant) * 1.21) * 0.09 * float(profile.sway)
 	var bark := _material(Color("#59483b"), 0.9)
 	var color_shift := float(variant % 4) * 0.035
 	# The texture supplies needle-scale breakup; these pale tints preserve the
 	# original three-tier value hierarchy because albedo colors multiply maps.
 	# The conifer map averages ~58/255 luminance, so tints stay near-white to
 	# keep the effective canopy out of near-black under sun.
-	var needle_dark := _material(Color("#c9d8d2").lightened(color_shift), 0.86, 0.0, 1.0, false, CONIFER_ALBEDO, 2.0)
-	var needle_mid := _material(Color("#dbe5e0").lightened(color_shift), 0.84, 0.0, 1.0, false, CONIFER_ALBEDO, 1.7)
-	var needle_light := _material(Color("#e9f0ec").lightened(color_shift), 0.82, 0.0, 1.0, false, CONIFER_ALBEDO, 1.45)
+	var needle_materials: Array[StandardMaterial3D] = [
+		_material(Color("#c9d8d2").lightened(color_shift), 0.86, 0.0, 1.0, false, CONIFER_ALBEDO, 2.0),
+		_material(Color("#dbe5e0").lightened(color_shift), 0.84, 0.0, 1.0, false, CONIFER_ALBEDO, 1.7),
+		_material(Color("#e9f0ec").lightened(color_shift), 0.82, 0.0, 1.0, false, CONIFER_ALBEDO, 1.45),
+	]
 	# Snow caps stay flat: binding the 2K piste diffuse to 0.3 m cones costs a
 	# full-residency sampler for no readable detail and risks distance shimmer.
 	var snow_cap := _material(Color("#edf4f5"), 0.96)
-	_add_cylinder(lod0, "Trunk", 0.24, 0.32, 3.0, Vector3(0.0, 1.5, 0.0), bark, 8, 0.0, 105.0)
-	_add_cone(lod0, "LowerCanopy", 0.12, 1.50, 2.4, Vector3(sway, 2.5, counter_sway), needle_dark, 9, 0.0, 105.0)
-	_add_cone(lod0, "LowerSnowCap", 0.05, 1.10, 0.42, Vector3(sway, 3.52, counter_sway), snow_cap, 9, 0.0, 105.0)
-	_add_cone(lod0, "MiddleCanopy", 0.10, 1.18, 2.1, Vector3(-counter_sway, 3.7, sway * 0.6), needle_mid, 9, 0.0, 105.0)
-	_add_cone(lod0, "MiddleSnowCap", 0.04, 0.86, 0.4, Vector3(-counter_sway, 4.59, sway * 0.6), snow_cap, 9, 0.0, 105.0)
-	_add_cone(lod0, "UpperCanopy", 0.04, 0.82, 1.8, Vector3(sway * 0.45, 4.85, -counter_sway), needle_light, 8, 0.0, 105.0)
-	_add_cone(lod0, "UpperSnowCap", 0.02, 0.56, 0.32, Vector3(sway * 0.45, 5.60, -counter_sway), snow_cap, 8, 0.0, 105.0)
-	_add_cylinder(lod1, "TrunkLow", 0.24, 0.31, 3.0, Vector3(0.0, 1.5, 0.0), bark, 6, 82.0, 230.0)
-	_add_cone(lod1, "CanopyLow", 0.05, 1.45, 4.2, Vector3(sway * 0.4, 3.7, counter_sway * 0.4), needle_mid, 7, 82.0, 230.0)
+	var trunk_height := float(profile.trunk_h)
+	_add_cylinder(lod0, "Trunk", 0.24, 0.32, trunk_height, Vector3(0.0, trunk_height * 0.5, 0.0), bark, 8, 0.0, 105.0)
+	var tier_labels := ["Lower", "Middle", "Upper"]
+	var tier_sway := [sway, -counter_sway, sway * 0.45]
+	var tier_counter := [counter_sway, sway * 0.6, -counter_sway]
+	var tiers: Array = profile.tiers
+	for tier_index: int in range(tiers.size()):
+		var tier: Dictionary = tiers[tier_index]
+		var label: String = tier_labels[min(tier_index, tier_labels.size() - 1)]
+		_add_cone(lod0, label + "Canopy", 0.05, float(tier.r), float(tier.h), Vector3(float(tier_sway[tier_index]), float(tier.y), float(tier_counter[tier_index])), needle_materials[int(tier.mat)], 9 if tier_index == 0 else 8, 0.0, 105.0)
+		_add_cone(lod0, label + "SnowCap", 0.03, float(tier.cap_r), float(tier.cap_h), Vector3(float(tier_sway[tier_index]), float(tier.cap_y), float(tier_counter[tier_index])), snow_cap, 9 if tier_index == 0 else 8, 0.0, 105.0)
+	_add_cylinder(lod1, "TrunkLow", 0.24, 0.31, trunk_height, Vector3(0.0, trunk_height * 0.5, 0.0), bark, 6, 82.0, 230.0)
+	_add_cone(lod1, "CanopyLow", 0.05, 1.45, 4.2, Vector3(sway * 0.4, 3.7, counter_sway * 0.4), needle_materials[1], 7, 82.0, 230.0)
 	_add_cone(lod1, "CanopySnowLow", 0.03, 0.9, 0.42, Vector3(sway * 0.4, 5.56, counter_sway * 0.4), snow_cap, 7, 82.0, 230.0)
 
 func _build_gate(lod0: Node3D, lod1: Node3D) -> void:
@@ -173,6 +213,51 @@ func _build_snow_boulder(lod0: Node3D, lod1: Node3D) -> void:
 	_add_rock(lod0, "BoulderSnow", Vector3(width * 0.64, height * 0.24, depth * 0.58), Vector3(-width * 0.08, height * 0.91, -depth * 0.06), snow, 0.0, 110.0, 7)
 	_add_rock(lod0, "BoulderSnowLobe", Vector3(width * 0.32, height * 0.16, depth * 0.30), Vector3(width * 0.22, height * 0.90, depth * 0.14), snow, 0.0, 110.0, 7)
 	_add_rock(lod1, "BoulderLow", Vector3(width * 1.04, height * 0.94, depth * 0.98), Vector3(0.0, height * 0.47, 0.0), rock, 82.0, 230.0, 7)
+
+func _build_piste_marker(lod0: Node3D, lod1: Node3D) -> void:
+	add_to_group("course_landmarks")
+	add_to_group("resort_density_props")
+	set_meta("readability_category", "piste_marker")
+	set_meta("non_colliding", true)
+	var pole := _material(Color("#5b6f78"), 0.7, 0.0, 1.0, false, METAL_ALBEDO, 0.4)
+	var reflector := _material(Color("#e6a23c"), 0.55)
+	var base := _material(Color("#41535c"), 0.82, 0.0, 1.0, false, METAL_ALBEDO, 0.5)
+	_add_cylinder(lod0, "MarkerBase", 0.14, 0.16, 0.08, Vector3(0.0, 0.04, 0.0), base, 8, 0.0, 105.0)
+	_add_cylinder(lod0, "MarkerPole", 0.035, 0.045, 1.18, Vector3(0.0, 0.63, 0.0), pole, 6, 0.0, 105.0)
+	_add_box(lod0, "MarkerReflector", Vector3(0.28, 0.2, 0.06), Vector3(0.0, 1.16, 0.0), reflector, 0.0, 105.0, false)
+	_add_box(lod1, "MarkerLow", Vector3(0.24, 1.3, 0.1), Vector3(0.0, 0.65, 0.0), pole, 90.0, 220.0)
+
+func _build_snow_bank(lod0: Node3D, lod1: Node3D) -> void:
+	add_to_group("resort_density_props")
+	set_meta("readability_category", "snow_bank")
+	var variant := int(get_meta("style_variant", 0))
+	var drift := _material(Color("#e8f1f3").lightened(float(variant % 3) * 0.02), 0.94)
+	var shade := _material(Color("#c2d2d8").lightened(float(variant % 2) * 0.03), 0.9)
+	var width := 3.2
+	var height := 0.62
+	var depth := 2.4
+	_add_rock(lod0, "BankBody", Vector3(width, height, depth), Vector3(0.0, height * 0.5, 0.0), drift, 0.0, 110.0, 9 + variant % 3)
+	_add_rock(lod0, "BankLobe", Vector3(width * 0.52, height * 0.86, depth * 0.56), Vector3(width * 0.24, height * 0.43, depth * 0.18), shade, 0.0, 110.0, 8)
+	_add_rock(lod0, "BankCrest", Vector3(width * 0.62, height * 0.4, depth * 0.5), Vector3(-width * 0.1, height * 0.72, -depth * 0.05), _material(Color("#f1f7f8"), 0.97), 0.0, 110.0, 8)
+	_add_box(lod1, "BankLow", Vector3(width * 0.98, height * 0.78, depth * 0.98), Vector3(0.0, height * 0.39, 0.0), drift, 86.0, 230.0)
+
+func _build_lift_station(lod0: Node3D, lod1: Node3D) -> void:
+	add_to_group("course_landmarks")
+	add_to_group("resort_density_props")
+	set_meta("readability_category", "resort_lift")
+	set_meta("non_colliding", true)
+	var metal := _material(Color("#536d78"), 0.62, 0.0, 1.0, false, METAL_ALBEDO, 1.1)
+	var accent := _material(Color("#dbaa57"), 0.7, 0.0, 1.0, false, METAL_ALBEDO, 0.72)
+	var roof := _material(Color("#42575f"), 0.68, 0.0, 1.0, false, METAL_ALBEDO, 1.3)
+	var snow_cap := _material(Color("#edf4f5"), 0.96)
+	for offset: Vector3 in [Vector3(-1.9, 0.0, -2.2), Vector3(1.9, 0.0, -2.2), Vector3(-1.9, 0.0, 2.2), Vector3(1.9, 0.0, 2.2)]:
+		_add_cylinder(lod0, "StationPost", 0.11, 0.15, 4.8, offset + Vector3(0.0, 2.4, 0.0), metal, 7, 0.0, 150.0)
+	_add_box(lod0, "StationRoof", Vector3(4.4, 0.3, 5.0), Vector3(0.0, 4.95, 0.0), roof, 0.0, 150.0)
+	_add_box(lod0, "StationRoofSnow", Vector3(4.5, 0.14, 5.1), Vector3(0.0, 5.16, 0.0), snow_cap, 0.0, 150.0, false)
+	_add_cylinder(lod0, "StationBullwheel", 0.52, 0.52, 0.22, Vector3(0.0, 4.62, -2.6), accent, 12, 0.0, 150.0, Vector3(90.0, 0.0, 0.0))
+	_add_box(lod0, "StationCableEntry", Vector3(3.4, 0.16, 0.4), Vector3(0.0, 4.25, -2.7), metal, 0.0, 150.0)
+	_add_box(lod0, "StationBackWall", Vector3(4.0, 3.4, 0.22), Vector3(0.0, 1.9, 2.3), roof, 0.0, 150.0)
+	_add_box(lod1, "StationLow", Vector3(4.4, 5.2, 5.0), Vector3(0.0, 2.6, 0.0), metal, 130.0, 320.0)
 
 func _add_rock(parent: Node3D, node_name: String, size: Vector3, position: Vector3, material: Material, begin: float, end: float, segments: int) -> MeshInstance3D:
 	var instance := MeshInstance3D.new()

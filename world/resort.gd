@@ -57,6 +57,8 @@ var _probe_time_since_capture := 0.0
 var _probe_refresh_pending := false
 var _probe_refresh_parity := false
 var player_probe_recaptures := 0
+var _probe_recaptures_in_air := 0
+var _probe_last_interval_seconds := 0.0
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--session-yard"):
@@ -77,6 +79,7 @@ func _ready() -> void:
 	_build_player_probe()
 
 func _process(delta: float) -> void:
+	_refresh_hdr_presentation_state()
 	_update_player_probe(delta)
 
 func _validate_environment_asset_catalog() -> void:
@@ -211,7 +214,13 @@ func _build_resort() -> void:
 	var main_face := ParkLayout.add_slope_box(self, "MainSnowFace", 0.0, 0.0, Vector3(ParkLayout.FACE_WIDTH, ParkLayout.FACE_THICKNESS, face_len), 0.0, SNOW, SnowSurface.Kind.POWDER, true, 0.0, SnowSurface.Kind.GROOMED)
 	if summit_environment_profile != null and summit_environment_profile.enabled:
 		SummitEnvironmentBuilderModule.build(self, main_face, summit_environment_profile, environment_asset_catalog)
-	_add_box("BottomHub", Vector3(92.0, 1.5, 92.0), Vector3(0.0, 2.4, -181.0), Vector3.ZERO, SNOW, true, SnowSurface.Kind.POWDER, SnowSurface.Kind.PACKED)
+	# The BottomHub is the flat finish pad. Its pad top meets the face surface
+	# at a crease 5 m uphill of the finish plane, so the runout rolls from the
+	# 18-degree grade into a flat finish without a step.
+	var finish_z := course_profile.finish_trigger_world_z() if course_profile != null else -227.0
+	var hub_crease_z := finish_z + 5.0
+	var hub_top := ParkLayout.snow_at(0.0, hub_crease_z).y
+	_add_box("BottomHub", Vector3(92.0, 1.5, 92.0), Vector3(0.0, hub_top - 0.75, hub_crease_z - 31.0), Vector3.ZERO, SNOW, true, SnowSurface.Kind.POWDER, SnowSurface.Kind.PACKED)
 	ParkLayout.add_slope_box(self, "LeftBank", -36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), -10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
 	ParkLayout.add_slope_box(self, "RightBank", 36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), 10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
 	course_features = ParkCourseBuilderModule.build(self, course_profile, physics_profile, environment_asset_catalog)
@@ -275,7 +284,7 @@ func _build_finish_trigger() -> void:
 	finish_trigger.collision_layer = 0
 	finish_trigger.collision_mask = 2
 	finish_trigger.monitoring = true
-	finish_trigger.position = ParkLayout.snow_at(0.0, course_profile.finish_trigger_world_z() if course_profile != null else -155.0) + ParkLayout.snow_normal() * 1.5
+	finish_trigger.position = ParkLayout.snow_at(0.0, course_profile.finish_trigger_world_z() if course_profile != null else -227.0) + ParkLayout.snow_normal() * 1.5
 	finish_trigger.basis = ParkLayout.downhill_basis()
 	var shape_node := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -291,7 +300,7 @@ func _build_finish_trigger() -> void:
 		# already-finished runs are rejected.
 		if player.scoring.finished:
 			return
-		var finish_plane_z := course_profile.finish_trigger_world_z() if course_profile != null else -155.0
+		var finish_plane_z := course_profile.finish_trigger_world_z() if course_profile != null else -227.0
 		# Entries detected within a tick of the plane are normal crossings;
 		# only a clearly downhill-side entry (re-entry from behind) is rejected.
 		if player.global_position.z < finish_plane_z - 1.5:
@@ -351,8 +360,8 @@ func _add_box(label: String, size: Vector3, position: Vector3, rotation_degrees:
 	add_child(body)
 	return body
 
-func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: float = 0.0, variant: int = 0) -> void:
-	if tree_batch != null and _add_batched_tree(position, scale_multiplier, yaw_degrees, variant):
+func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: float = 0.0, variant: int = 0, family: int = -1) -> void:
+	if tree_batch != null and _add_batched_tree(position, scale_multiplier, yaw_degrees, variant, family):
 		return
 	if _try_add_environment_asset("park_tree", position, yaw_degrees, Vector3.ONE * scale_multiplier, Color.TRANSPARENT, variant):
 		return
@@ -372,6 +381,8 @@ func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: fl
 	root.set_meta("collision_policy", "SOLID")
 	root.set_meta("nominal_size_m", Vector3(3.0, 6.0, 3.0) * scale_multiplier)
 	root.set_meta("readability_category", "landmark")
+	root.set_meta("style_variant", variant)
+	root.set_meta("tree_family", posmod(family if family >= 0 else variant, 4))
 	var trunk_shape := CollisionShape3D.new()
 	var cylinder := CylinderShape3D.new()
 	cylinder.radius = 0.32
@@ -454,6 +465,13 @@ func _add_tree_clusters() -> void:
 		Vector4(44.0, -91.0, 0.86, -35.0), Vector4(51.0, -99.0, 1.2, 17.0), Vector4(43.0, -107.0, 0.96, 38.0), Vector4(48.0, -114.0, 0.72, -8.0),
 		Vector4(-44.0, -130.0, 1.22, 25.0), Vector4(-51.0, -138.0, 0.9, -17.0), Vector4(-42.0, -145.0, 1.05, 6.0),
 		Vector4(45.0, -157.0, 0.92, -24.0), Vector4(-48.0, -164.0, 1.08, 18.0), Vector4(47.0, -173.0, 0.82, 36.0), Vector4(-45.0, -181.0, 0.96, -9.0),
+		# Phase 11 near-lane parallax band: closer clusters give the edge speed
+		# cues while staying well outside the +/-27 m competition corridor.
+		Vector4(-36.0, 118.0, 1.10, -14.0), Vector4(36.5, 108.0, 0.92, 26.0), Vector4(-37.5, 66.0, 0.86, 12.0),
+		Vector4(37.0, 30.0, 1.18, -22.0), Vector4(-35.5, -2.0, 0.94, 33.0), Vector4(36.0, -44.0, 1.06, -9.0),
+		Vector4(-37.0, -92.0, 0.82, 20.0), Vector4(35.5, -120.0, 1.14, -27.0), Vector4(-36.5, -150.0, 0.9, 8.0),
+		Vector4(37.5, -196.0, 1.02, 31.0), Vector4(-35.0, -210.0, 1.24, -16.0), Vector4(36.5, -228.0, 0.88, 5.0),
+		Vector4(-38.0, 44.0, 1.08, -30.0), Vector4(38.0, -70.0, 0.96, 18.0), Vector4(-35.8, -34.0, 1.16, 24.0), Vector4(36.8, 88.0, 1.0, -11.0),
 	]
 	var jitter := RandomNumberGenerator.new()
 	jitter.seed = 3817
@@ -461,14 +479,15 @@ func _add_tree_clusters() -> void:
 		var spec := tree_specs[index]
 		var x_offset := jitter.randf_range(-1.8, 1.8)
 		var z_offset := jitter.randf_range(-2.6, 2.6)
-		_add_tree(ParkLayout.snow_at(spec.x + x_offset, spec.y + z_offset), spec.z * jitter.randf_range(0.92, 1.08), spec.w + jitter.randf_range(-7.0, 7.0), index % 3)
+		_add_tree(ParkLayout.snow_at(spec.x + x_offset, spec.y + z_offset), spec.z * jitter.randf_range(0.92, 1.08), spec.w + jitter.randf_range(-7.0, 7.0), index % 3, index % 4)
 	if tree_batch != null:
 		tree_batch.commit()
 
-func _add_batched_tree(position: Vector3, scale_multiplier: float, yaw_degrees: float, variant: int) -> bool:
+func _add_batched_tree(position: Vector3, scale_multiplier: float, yaw_degrees: float, variant: int, family: int = -1) -> bool:
 	var definition := environment_asset_catalog.definition_for("park_tree") if environment_asset_catalog != null else null
 	if definition == null or definition.collision_scene == null:
 		return false
+	var resolved_family := posmod(family if family >= 0 else variant, 4)
 	var root := Node3D.new()
 	root.name = "park_tree"
 	root.position = position
@@ -478,6 +497,7 @@ func _add_batched_tree(position: Vector3, scale_multiplier: float, yaw_degrees: 
 	root.set_meta("asset_id", "park_tree")
 	root.set_meta("asset_source", "production_multimesh")
 	root.set_meta("style_variant", variant)
+	root.set_meta("tree_family", resolved_family)
 	root.set_meta("asset_class", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
 	root.set_meta("collision_policy", EnvironmentAssetDefinition.AssetClass.keys()[definition.asset_class])
 	root.set_meta("nominal_size_m", definition.nominal_size_m * scale_multiplier)
@@ -489,7 +509,7 @@ func _add_batched_tree(position: Vector3, scale_multiplier: float, yaw_degrees: 
 	root.add_child(collision_root)
 	add_child(root)
 	_configure_environment_collisions(collision_root, definition.asset_class, "park_tree")
-	tree_batch.add_tree(root.transform, variant)
+	tree_batch.add_tree(root.transform, variant, resolved_family)
 	return true
 
 func _add_distant_terrain_skirt() -> void:
@@ -530,19 +550,9 @@ func _add_distant_ridges() -> void:
 	if summit_environment_profile != null and summit_environment_profile.enabled and summit_environment_profile.backdrop_enabled:
 		SummitEnvironmentBuilderModule.build_backdrop(self, summit_environment_profile)
 		return
-	# Layered low-poly peaks give the downhill view a destination and a useful
-	# sense of scale without adding collision or expensive terrain geometry.
-	_add_mountain_peak("HazePeakWest", Vector3(-245.0, 2.0, -520.0), 128.0, 105.0, Color("#9aafbd"), -8.0, 101)
-	_add_mountain_peak("HazePeakCenter", Vector3(0.0, -4.0, -565.0), 155.0, 126.0, Color("#a3b5c0"), 4.0, 203)
-	_add_mountain_peak("HazePeakEast", Vector3(242.0, 1.0, -510.0), 135.0, 112.0, Color("#96abb9"), 13.0, 307)
-	_add_mountain_peak("FarPeakWest", Vector3(-165.0, 13.0, -310.0), 88.0, 118.0, Color("#6887a0"), -11.0, 11)
-	_add_mountain_peak("FarPeakMidWest", Vector3(-72.0, 4.0, -356.0), 62.0, 87.0, Color("#7897ad"), 17.0, 29)
-	_add_mountain_peak("FarPeakCenter", Vector3(19.0, 2.0, -392.0), 83.0, 116.0, Color("#6f8fa8"), 2.0, 43)
-	_add_mountain_peak("FarPeakMidEast", Vector3(101.0, 5.0, -348.0), 71.0, 91.0, Color("#7897ad"), -18.0, 67)
-	_add_mountain_peak("FarPeakEast", Vector3(181.0, 14.0, -298.0), 92.0, 124.0, Color("#66859e"), 9.0, 83)
-	_add_mountain_peak("WestShoulder", Vector3(-138.0, 22.0, -88.0), 52.0, 68.0, Color("#718fa5"), 24.0, 127)
-	_add_mountain_peak("EastShoulder", Vector3(141.0, 20.0, -76.0), 47.0, 79.0, Color("#6b899f"), -21.0, 149)
-	# _add_high_haze() disabled for gate stability - high plane at 320m may cause driver leak in headless
+	# The graybox fallback builds the same authored topology ladder instead of
+	# duplicating backdrop data in two places.
+	SummitEnvironmentBuilderModule.build_backdrop(self, SummitEnvironmentProfile.new())
 
 func _add_high_haze() -> void:
 	var haze := MeshInstance3D.new()
@@ -578,6 +588,7 @@ func _add_mountain_peak(label: String, position: Vector3, radius: float, height:
 	rock_material.set_shader_parameter("haze_color", Color("#b4c2ca"))
 	rock_material.set_shader_parameter("haze_start_distance", 170.0)
 	rock_material.set_shader_parameter("haze_end_distance", 620.0)
+	rock_material.set_shader_parameter("haze_blend", 0.28)
 	rock_material.set_shader_parameter("facet_value_range", 0.12)
 	rock_material.set_shader_parameter("mountain_height", height)
 	mountain.material_override = rock_material
@@ -599,8 +610,49 @@ func _add_course_dressing() -> void:
 	_add_snowmaker(ParkLayout.snow_at(45.0, -75.0), -12.0)
 	_add_trail_board(ParkLayout.snow_at(-42.0, 119.0), Color("#5d8891"))
 	_add_trail_board(ParkLayout.snow_at(42.0, -47.0), Color("#c08a55"))
-	_add_lift_tower(ParkLayout.snow_at(-30.0, 126.0), 6.5)
-	_add_lift_tower(ParkLayout.snow_at(31.0, 42.0), 5.5)
+	# Phase 11: one coherent lift chain down the resort edge. The station caps
+	# the top, five towers pin the span joints, and four slope-aligned cable
+	# spans read continuously from the upper course into the lower runout.
+	var lift_x := 30.2
+	var station_z := 156.6
+	var tower_zs: Array[float] = [103.4, 50.2, -3.0, -56.2, -109.4]
+	var span_zs: Array[float] = [130.0, 76.8, 23.6, -29.6]
+	_add_lift_station(ParkLayout.snow_at(31.5, station_z), 180.0)
+	for tower_z: float in tower_zs:
+		_add_lift_tower(ParkLayout.snow_at(lift_x, tower_z), 6.3)
+	for span_z: float in span_zs:
+		_add_lift_line_span(ParkLayout.snow_at(lift_x, span_z))
+	# Snow build-up around infrastructure.
+	_add_snow_bank(ParkLayout.snow_at(33.6, station_z), 1.05, 18.0, 0)
+	for tower_z: float in tower_zs:
+		_add_snow_bank(ParkLayout.snow_at(32.4, tower_z + 2.2), 0.85, -24.0, 1)
+	_add_snow_bank(ParkLayout.snow_at(45.0, 91.0), 0.9, 12.0, 2)
+	_add_snow_bank(ParkLayout.snow_at(-46.0, -20.0), 1.05, -18.0, 0)
+	_add_snow_bank(ParkLayout.snow_at(47.0, -75.0), 0.8, 28.0, 1)
+	_add_snow_bank(ParkLayout.snow_at(-48.5, -84.0), 0.9, 6.0, 2)
+	_add_snow_bank(ParkLayout.snow_at(48.5, -132.0), 0.95, -14.0, 0)
+	# Piste markers bound the corridor with regular near-field parallax.
+	var marker_z := 134.0
+	while marker_z >= -238.0:
+		_add_piste_marker(ParkLayout.snow_at(-32.0, marker_z), 180.0)
+		_add_piste_marker(ParkLayout.snow_at(32.0, marker_z), 0.0)
+		marker_z -= 24.0
+
+func _add_piste_marker(position: Vector3, yaw_degrees: float) -> void:
+	if _try_add_environment_asset("piste_marker", position, yaw_degrees, Vector3.ONE):
+		return
+
+func _add_snow_bank(position: Vector3, scale: float, yaw_degrees: float, variant: int) -> void:
+	if _try_add_environment_asset("snow_bank", position, yaw_degrees, Vector3.ONE * scale, Color.TRANSPARENT, variant):
+		return
+
+func _add_lift_station(position: Vector3, yaw_degrees: float) -> void:
+	if _try_add_environment_asset("lift_station", position, yaw_degrees, Vector3.ONE):
+		return
+
+func _add_lift_line_span(position: Vector3) -> void:
+	if _try_add_environment_asset("lift_line", position, 0.0, Vector3.ONE, Color.TRANSPARENT, 0, true):
+		return
 
 func _add_lower_run_hub_dressing() -> void:
 	# These are deliberately cataloged DECORATION assets. They add edge scale to
@@ -612,15 +664,16 @@ func _add_lower_run_hub_dressing() -> void:
 		{"zone": "lower_run", "asset_id": "snow_boulder", "x": 29.0, "z": -43.0, "scale": 0.92, "yaw": -21.0, "variant": 1},
 		{"zone": "lower_run", "asset_id": "snow_boulder", "x": -30.5, "z": -61.0, "scale": 1.28, "yaw": 32.0, "variant": 2},
 		{"zone": "lower_run", "asset_id": "snow_boulder", "x": -30.0, "z": -70.0, "scale": 0.86, "yaw": -8.0, "variant": 0},
-		{"zone": "finale", "asset_id": "snow_boulder", "x": -29.5, "z": -94.0, "scale": 1.08, "yaw": 19.0, "variant": 1},
-		{"zone": "finale", "asset_id": "snow_boulder", "x": 29.0, "z": -103.0, "scale": 1.22, "yaw": -28.0, "variant": 2},
-		{"zone": "finale", "asset_id": "snow_boulder", "x": -30.0, "z": -123.0, "scale": 0.9, "yaw": 6.0, "variant": 0},
-		{"zone": "finale", "asset_id": "snow_boulder", "x": 30.5, "z": -133.0, "scale": 1.14, "yaw": 27.0, "variant": 1},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": -29.5, "z": -146.0, "scale": 1.08, "yaw": 19.0, "variant": 1},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": 29.0, "z": -155.0, "scale": 1.22, "yaw": -28.0, "variant": 2},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": -30.0, "z": -175.0, "scale": 0.9, "yaw": 6.0, "variant": 0},
+		{"zone": "finale", "asset_id": "snow_boulder", "x": 30.5, "z": -185.0, "scale": 1.14, "yaw": 27.0, "variant": 1},
 		{"zone": "hub", "asset_id": "snow_boulder", "x": -31.0, "z": -14.0, "scale": 1.16, "yaw": -16.0, "variant": 2},
 		{"zone": "hub", "asset_id": "snow_boulder", "x": 31.0, "z": -12.0, "scale": 0.94, "yaw": 24.0, "variant": 0},
 		{"zone": "hub", "asset_id": "snow_boulder", "x": -27.0, "z": 14.0, "scale": 1.3, "yaw": 9.0, "variant": 1},
 		{"zone": "hub", "asset_id": "snow_boulder", "x": 27.0, "z": 16.0, "scale": 0.88, "yaw": -31.0, "variant": 2},
 	]
+	var finish_z := course_profile.finish_trigger_world_z() if course_profile != null else -227.0
 	for placement: Dictionary in placements:
 		var zone := str(placement.get("zone", "lower_run"))
 		var x := float(placement.get("x", 0.0))
@@ -629,7 +682,7 @@ func _add_lower_run_hub_dressing() -> void:
 		if zone == "hub":
 			# BottomHub is a flat authored pad rather than the sloped face. Keep
 			# the logical hub anchor as the source for its world placement.
-			position = ParkLayout.hub_position() + Vector3(x, 3.0, z)
+			position = ParkLayout.hub_position(finish_z) + Vector3(x, 3.0, z)
 		var metadata := {
 			"dressing_zone": zone,
 			"dressing_expected_position": position,
@@ -956,12 +1009,26 @@ func _move_probe_and_capture(target: Vector3) -> void:
 	# whenever its transform moves, so no continuous easing is used.
 	if player_probe == null:
 		return
+	_probe_last_interval_seconds = _probe_time_since_capture if player_probe_recaptures > 0 else 0.0
+	if player != null and player.state == SkierController.State.AIR:
+		_probe_recaptures_in_air += 1
 	player_probe.global_position = target
 	player_probe.update_mode = ReflectionProbe.UPDATE_ONCE
 	_probe_capture_position = target
 	_probe_time_since_capture = 0.0
 	_probe_refresh_pending = false
 	player_probe_recaptures += 1
+
+func player_probe_summary() -> Dictionary:
+	# Phase 12 telemetry so recapture cost/frequency can be compared on
+	# target hardware instead of relying on the policy constants alone.
+	return {
+		"allowed": _player_probe_allowed,
+		"visible": player_probe != null and player_probe.visible,
+		"recaptures": player_probe_recaptures,
+		"recaptures_in_air": _probe_recaptures_in_air,
+		"last_interval_s": _probe_last_interval_seconds,
+	}
 
 func _force_probe_refresh() -> void:
 	# Environment changed while stationary: relocation normally supplies the
@@ -1103,4 +1170,34 @@ func _apply_hdr_presentation() -> void:
 		environment.environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 
 func effective_hdr_enabled() -> bool:
-	return bool(GameSettings.active.get("hdr_output", false)) and not RuntimeEnvironment.is_headless()
+	# Grade through the display's actual active HDR state, not the saved
+	# preference: the preference can be set while the window is on an SDR
+	# output, and the HDR-active state can change with display capability,
+	# system settings, or which screen holds the window.
+	return hdr_presentation_enabled(
+		bool(GameSettings.active.get("hdr_output", false)),
+		_hdr_output_active(),
+		RuntimeEnvironment.is_headless()
+	)
+
+static func hdr_presentation_enabled(requested: bool, active: bool, headless: bool) -> bool:
+	return requested and active and not headless
+
+func _hdr_output_active() -> bool:
+	if RuntimeEnvironment.is_headless():
+		return false
+	return DisplayServer.window_is_hdr_output_enabled()
+
+func _refresh_hdr_presentation_state() -> void:
+	# DisplayServer emits no HDR-change signal, so poll the cheap native query
+	# and re-grade only when the active state actually flips.
+	if environment == null or environment.environment == null or RuntimeEnvironment.is_headless():
+		return
+	var desired := hdr_presentation_enabled(
+		bool(GameSettings.active.get("hdr_output", false)),
+		_hdr_output_active(),
+		false
+	)
+	var current := environment.environment.tonemap_mode == Environment.TONE_MAPPER_AGX
+	if desired != current:
+		_apply_hdr_presentation()
