@@ -157,6 +157,9 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.94
 @export var crash_ground_max_rotation_rate_degrees: float = 150.0
 
+@export_category("Content")
+@export var feature_use_min_seconds: float = 0.12
+
 @export_category("Rails")
 @export var rail_capture_radius: float = 1.1
 @export var rail_min_speed: float = 3.0
