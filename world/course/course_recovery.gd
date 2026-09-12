@@ -7,6 +7,7 @@ extends Node
 signal recovery_started(reason: String)
 signal recovery_respawned(reason: String, spawn_transform: Transform3D)
 signal recovery_completed(reason: String, spawn_transform: Transform3D)
+signal recovery_cancelled(reason: String)
 
 enum RecoveryReason { OUT_OF_BOUNDS, INVALID_POSITION }
 
@@ -32,6 +33,20 @@ var recovery_in_progress: bool:
 	get:
 		return recovering
 
+func _ready() -> void:
+	SessionManager.respawn_requested.connect(_on_session_respawn_requested)
+
+func _exit_tree() -> void:
+	if SessionManager.respawn_requested.is_connected(_on_session_respawn_requested):
+		SessionManager.respawn_requested.disconnect(_on_session_respawn_requested)
+
+func _on_session_respawn_requested(_value: Transform3D, reason: StringName) -> void:
+	# Recovery is one atomic transition. A foreign respawn (pause menu, hotkey
+	# fallback, results flow) takes ownership and must cancel the pending
+	# recovery respawn so exactly one teleport commits.
+	if recovering and reason != SessionManager.RESPAWN_COURSE_RECOVERY:
+		cancel()
+
 func set_target(value: CharacterBody3D) -> void:
 	target = value
 	outside_time = 0.0
@@ -40,6 +55,16 @@ func set_target(value: CharacterBody3D) -> void:
 	respawn_issued = false
 	if target != null and target.has_method("set_recovery_frozen"):
 		target.call("set_recovery_frozen", false)
+
+func cancel() -> void:
+	if not recovering:
+		return
+	recovering = false
+	recovery_elapsed = 0.0
+	respawn_issued = true
+	if target != null and target.has_method("set_recovery_frozen"):
+		target.call("set_recovery_frozen", false)
+	recovery_cancelled.emit(last_recovery_reason)
 
 func _physics_process(delta: float) -> void:
 	if target == null:

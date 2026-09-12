@@ -350,3 +350,34 @@ func _test_run_results_panel() -> void:
 	if get_tree().paused or ui.results_panel.visible:
 		failures.append("Keep Riding did not close the results panel")
 	ui.queue_free()
+	await get_tree().process_frame
+
+	var skier := SkierController.new()
+	skier.set_physics_process(false)
+	add_child(skier)
+	var marker := Transform3D(Basis.IDENTITY, Vector3(5.0, 7.0, -6.0))
+	SessionManager.set_marker(marker)
+	var marker_ui := GameUI.new()
+	add_child(marker_ui)
+	marker_ui.bind_player(skier)
+	# A prior retry makes the reset observable even for a zero-score fixture.
+	skier.scoring.apply_retry_cost()
+	skier.scoring.finish_run()
+	var results_marker_button := marker_ui.find_child("ResultsMarkerButton", true, false) as Button
+	if results_marker_button == null or results_marker_button.disabled:
+		failures.append("Run results did not enable Return to Marker when a marker exists")
+	else:
+		results_marker_button.pressed.emit()
+	var fresh_run := skier.scoring.snapshot()
+	if bool(fresh_run.finished) or int(fresh_run.total_score) != 0 or int(fresh_run.retry_count) != 0:
+		failures.append("Return to Marker from results did not start a clean run")
+	if str(fresh_run.last_combo_break_reason) != "run_reset":
+		failures.append("Return to Marker from results was recorded as a retry instead of a run reset")
+	if skier.global_position.distance_to(marker.origin) > 0.05:
+		failures.append("Return to Marker from results did not use the saved marker transform")
+	if get_tree().paused or marker_ui.results_panel.visible:
+		failures.append("Return to Marker from results did not resume the fresh run")
+	SessionManager.clear_marker()
+	marker_ui.queue_free()
+	remove_child(skier)
+	skier.queue_free()

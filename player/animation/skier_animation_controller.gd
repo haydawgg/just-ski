@@ -354,6 +354,7 @@ func apply_frame(frame: SkierAnimationFrame, delta: float, snap_pose: bool = fal
 	_enforce_joint_limits()
 	_blend_targets(delta, snap_pose)
 	_apply_ski_constrained_leg_ik(frame, delta)
+	_stabilize_grounded_crash_skis(frame, delta, snap_pose)
 	if rig_adapter != null:
 		rig_adapter.sync_pose(delta, _grab_reach_requests)
 		_sync_grab_visual_metrics()
@@ -390,6 +391,15 @@ func trigger(event: int, strength: float = 1.0, side: float = 0.0) -> void:
 
 func is_landing_idle() -> bool:
 	return not _landing_active and not _stomp_active and _landing_compression < 0.02 and _landing_alignment < 0.02 and _landing_anticipation < 0.02
+
+func landing_cue_snapshot() -> Dictionary:
+	# Narrow HUD payload: the gameplay telemetry stream consumes this every
+	# physics tick, so it must not build the full debug snapshot.
+	return {
+		"readiness_valid": _landing_readiness_valid,
+		"ready": _landing_ready,
+		"pre_bail_weight": _pre_bail_weight,
+	}
 
 func debug_snapshot() -> Dictionary:
 	var adapter_grab_debug := rig_adapter.grab_debug_snapshot() if rig_adapter != null else {}
@@ -1974,12 +1984,12 @@ func _reset_targets() -> void:
 	_rotation_targets[right_hand] = Vector3.ZERO
 	_rotation_targets[left_pole] = Vector3.ZERO
 	_rotation_targets[right_pole] = Vector3.ZERO
-	_position_targets[pelvis] = Vector3(0.0, 0.96, 0.0)
-	_position_targets[chest] = Vector3(0.0, 0.42, 0.0)
-	_position_targets[left_hip] = Vector3(-0.20, -0.04, 0.0)
-	_position_targets[right_hip] = Vector3(0.20, -0.04, 0.0)
-	_position_targets[left_shoulder] = Vector3(-0.4, 0.24, 0.0)
-	_position_targets[right_shoulder] = Vector3(0.4, 0.24, 0.0)
+	_position_targets[pelvis] = pose_driver.rest_position(&"pelvis")
+	_position_targets[chest] = pose_driver.rest_position(&"chest")
+	_position_targets[left_hip] = pose_driver.rest_position(&"left_hip")
+	_position_targets[right_hip] = pose_driver.rest_position(&"right_hip")
+	_position_targets[left_shoulder] = pose_driver.rest_position(&"left_shoulder")
+	_position_targets[right_shoulder] = pose_driver.rest_position(&"right_shoulder")
 
 func _apply_ground_pose(frame: SkierAnimationFrame) -> void:
 	var speed_flex := profile.speed_knee_flex * _crouch_amount
@@ -2024,7 +2034,7 @@ func _apply_ground_pose(frame: SkierAnimationFrame) -> void:
 	_apply_terrain_foot_orientation()
 	_position_targets[pelvis] = Vector3(
 		_pelvis_carve * profile.carve_pelvis_shift,
-		0.96 - profile.neutral_pelvis_drop - flex * profile.pelvis_flex_depth - _jump_anticipation * profile.jump_anticipation_pelvis_drop - load * profile.carve_pelvis_drop + crossover_release * profile.crossover_extension * 0.36 + _terrain_pelvis_offset,
+		pose_driver.rest_position(&"pelvis").y - profile.neutral_pelvis_drop - flex * profile.pelvis_flex_depth - _jump_anticipation * profile.jump_anticipation_pelvis_drop - load * profile.carve_pelvis_drop + crossover_release * profile.crossover_extension * 0.36 + _terrain_pelvis_offset,
 		profile.neutral_pelvis_offset
 	)
 	_pelvis_target_world = balance_root.to_global(_position_targets[pelvis] as Vector3)
@@ -2659,34 +2669,20 @@ func _crash_handoff_joints() -> Array[Node3D]:
 	return [pelvis, spine, chest, head, left_hip, right_hip, left_knee, right_knee, left_shoulder, right_shoulder, left_elbow, right_elbow, left_hand, right_hand, left_pole, right_pole, left_ski, right_ski]
 
 func _enforce_crash_equipment_constraints(frame: SkierAnimationFrame) -> void:
-	# Prevent skis from becoming vertical posts and from intersecting near the body.
+	# Keep the authored equipment pose bounded before ski intent is routed through
+	# the legs. Final world-space snow-plane stabilization runs after blending.
 	var left_ski_rot := _rotation_targets.get(left_ski, Vector3.ZERO) as Vector3
 	var right_ski_rot := _rotation_targets.get(right_ski, Vector3.ZERO) as Vector3
-	# Clamp pitch/roll to keep skis roughly horizontal in world, compensating for body tumble.
 	var pitch_limit := 0.38
 	var roll_limit := 0.38
-	var body_up_dot := frame.body_up.dot(Vector3.UP) if frame.body_up_valid else 1.0
-	if frame.grounded:
+	var crash_grounded := frame.left_grounded or frame.right_grounded
+	if crash_grounded:
 		pitch_limit = 0.24
 		roll_limit = 0.28
-	# When body is inverted, allow larger local pitch to keep skis horizontal in world.
-	if body_up_dot < 0.3:
-		pitch_limit = 1.35
-		roll_limit = 0.85
-		# Compensate: set ski pitch to counter body pitch so ski stays roughly horizontal.
-		var body_pitch := acos(clampf(body_up_dot, -1.0, 1.0))
-		# Body pitched 90 deg (dot 0) -> need -90 deg local to keep ski horizontal.
-		var compensation := -body_pitch * 0.92
-		left_ski_rot.x = clampf(compensation + left_ski_rot.x * 0.15, -pitch_limit, pitch_limit)
-		right_ski_rot.x = clampf(compensation + right_ski_rot.x * 0.15, -pitch_limit, pitch_limit)
-	else:
-		left_ski_rot.x = clampf(left_ski_rot.x, -pitch_limit, pitch_limit)
-		left_ski_rot.z = clampf(left_ski_rot.z, -roll_limit, roll_limit)
-		right_ski_rot.x = clampf(right_ski_rot.x, -pitch_limit, pitch_limit)
-		right_ski_rot.z = clampf(right_ski_rot.z, -roll_limit, roll_limit)
-	if body_up_dot >= 0.3:
-		left_ski_rot.z = clampf(left_ski_rot.z, -roll_limit, roll_limit)
-		right_ski_rot.z = clampf(right_ski_rot.z, -roll_limit, roll_limit)
+	left_ski_rot.x = clampf(left_ski_rot.x, -pitch_limit, pitch_limit)
+	left_ski_rot.z = clampf(left_ski_rot.z, -roll_limit, roll_limit)
+	right_ski_rot.x = clampf(right_ski_rot.x, -pitch_limit, pitch_limit)
+	right_ski_rot.z = clampf(right_ski_rot.z, -roll_limit, roll_limit)
 	# Keep yaw separation restrained so skis stay parallel.
 	var yaw_sep := left_ski_rot.y - right_ski_rot.y
 	if absf(yaw_sep) > 0.45:
@@ -2694,7 +2690,7 @@ func _enforce_crash_equipment_constraints(frame: SkierAnimationFrame) -> void:
 		left_ski_rot.y = avg_yaw + 0.22 * signf(yaw_sep)
 		right_ski_rot.y = avg_yaw - 0.22 * signf(yaw_sep)
 	# When grounded, also keep skis splayed slightly outward for silhouette, not crossed.
-	if frame.grounded:
+	if crash_grounded:
 		left_ski_rot.y = clampf(left_ski_rot.y, -0.28, -0.04)
 		right_ski_rot.y = clampf(right_ski_rot.y, 0.04, 0.28)
 		# Nudge splay outward
@@ -2723,6 +2719,70 @@ func _enforce_crash_equipment_constraints(frame: SkierAnimationFrame) -> void:
 		pelvis_rot.x = clampf(pelvis_rot.x, -0.55, 0.35)
 		pelvis_rot.z = clampf(pelvis_rot.z, -0.75, 0.75)
 		_rotation_targets[pelvis] = pelvis_rot
+
+func _stabilize_grounded_crash_skis(frame: SkierAnimationFrame, delta: float, snap_pose: bool) -> void:
+	if frame.locomotion_state != STATE_BAIL or frame.crash_stage not in [CrashContext.Stage.FALL, CrashContext.Stage.REST]:
+		return
+	var support := _crash_support_normal(frame)
+	if not bool(support.get("valid", false)):
+		return
+	var normal := support.get("normal", Vector3.UP) as Vector3
+	_stabilize_crash_ski(left_ski, left_boot, _left_binding_rest, normal, frame, delta, snap_pose)
+	_stabilize_crash_ski(right_ski, right_boot, _right_binding_rest, normal, frame, delta, snap_pose)
+
+func _crash_support_normal(frame: SkierAnimationFrame) -> Dictionary:
+	var combined := Vector3.ZERO
+	var contacts := 0
+	if frame.left_grounded and frame.left_normal.is_finite() and frame.left_normal.length_squared() > 0.0001:
+		combined += frame.left_normal.normalized()
+		contacts += 1
+	if frame.right_grounded and frame.right_normal.is_finite() and frame.right_normal.length_squared() > 0.0001:
+		combined += frame.right_normal.normalized()
+		contacts += 1
+	if contacts == 0:
+		return {"valid": false, "normal": Vector3.UP}
+	if combined.length_squared() <= 0.0001:
+		var fallback := frame.crash_impact_normal
+		if not fallback.is_finite() or fallback.length_squared() <= 0.0001:
+			return {"valid": false, "normal": Vector3.UP}
+		combined = fallback
+	return {"valid": true, "normal": combined.normalized()}
+
+func _stabilize_crash_ski(
+	ski: Node3D,
+	boot: Node3D,
+	binding_rest: Transform3D,
+	normal: Vector3,
+	frame: SkierAnimationFrame,
+	delta: float,
+	snap_pose: bool
+) -> void:
+	if ski == null or boot == null or not ski.global_basis.is_finite() or not boot.global_basis.is_finite():
+		return
+	var forward := -ski.global_basis.z
+	if forward.length_squared() <= 0.0001:
+		return
+	forward = forward.normalized()
+	var limit_dot := sin(deg_to_rad(clampf(profile.crash_ski_plane_limit_degrees, 0.0, 89.0)))
+	if absf(forward.dot(normal)) <= limit_dot:
+		return
+	var planar_forward := forward.slide(normal)
+	if planar_forward.length_squared() <= 0.0001:
+		planar_forward = frame.crash_current_velocity.slide(normal)
+	if planar_forward.length_squared() <= 0.0001 and frame.ski_forward_valid:
+		planar_forward = frame.ski_forward.slide(normal)
+	if planar_forward.length_squared() <= 0.0001:
+		planar_forward = normal.cross(global_basis.x)
+	if planar_forward.length_squared() <= 0.0001:
+		return
+	var target_ski_basis := Basis.looking_at(planar_forward.normalized(), normal).orthonormalized()
+	var target_boot_world := (target_ski_basis * binding_rest.basis).orthonormalized()
+	var parent := boot.get_parent() as Node3D
+	if parent == null or not parent.global_basis.is_finite():
+		return
+	var target_boot_local := (parent.global_basis.orthonormalized().inverse() * target_boot_world).orthonormalized()
+	var response_weight := 1.0 if snap_pose else 1.0 - exp(-maxf(profile.crash_ski_plane_response, 0.0) * maxf(delta, 0.0))
+	boot.basis = boot.basis.orthonormalized().slerp(target_boot_local, response_weight).orthonormalized()
 
 func _apply_crash_settling(frame: SkierAnimationFrame) -> void:
 	# Add restrained velocity-driven dragging after impact so the crash does not freeze.

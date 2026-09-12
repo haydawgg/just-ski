@@ -81,7 +81,9 @@ Get-ChildItem -LiteralPath $candidateRoot -Filter '*.json' -File | ForEach-Objec
 	if ($key.EndsWith('/baseline') -and $audioUsec -gt $MaximumAudioAverageUsec) { $failures.Add("$key audio average $($audioUsec.ToString('N2')) us exceeds $MaximumAudioAverageUsec us") }
 }
 
-if ($compared -eq 0) { throw "No matching schema 1.0 profiles were compared." }
+# Identity-mismatched profiles are reported as failures, not as "nothing
+# compared": an all-mismatch run must still surface its mismatch messages.
+if ($compared -eq 0 -and $failures.Count -eq 0) { throw "No matching schema 1.0 profiles were compared." }
 if ($failures.Count -gt 0) {
 	$failures | ForEach-Object { Write-Output "REGRESSION: $_" }
 	if ($FailOnRegression) { exit 1 }

@@ -4,6 +4,8 @@ extends Node
 signal challenge_completed(challenge: ParkChallengeSpec)
 signal attempt_changed(snapshot: Dictionary)
 
+const MAX_ATTEMPT_EVENTS := 256
+
 var _challenges: Array[ParkChallengeSpec] = []
 var _completed: Dictionary = {}
 var _active_spot_id: StringName
@@ -15,15 +17,17 @@ func configure(challenges: Array[ParkChallengeSpec]) -> void:
 	_active_spot_id = &""
 	_attempt = _empty_attempt()
 
-func begin_attempt(spot_id: StringName) -> void:
+func begin_attempt(spot_id: StringName, attempt_start_score := 0) -> void:
 	_active_spot_id = spot_id
 	_attempt = _empty_attempt()
 	_attempt["spot_id"] = spot_id
+	_attempt["attempt_start_score"] = attempt_start_score
 	attempt_changed.emit(snapshot())
 
 func record_event(event_kind: StringName, payload: Dictionary = {}) -> void:
 	if _active_spot_id == &"":
 		return
+	_log_attempt_event(event_kind, payload)
 	match event_kind:
 		&"air_rotation":
 			_attempt["rotation_degrees"] = maxf(float(_attempt.rotation_degrees), absf(float(payload.get("degrees", 0.0))))
@@ -43,7 +47,9 @@ func record_event(event_kind: StringName, payload: Dictionary = {}) -> void:
 		&"bail":
 			_attempt["bailed"] = true
 		&"score":
-			_attempt["total_score"] = maxi(int(_attempt.total_score), int(payload.get("total_score", 0)))
+			var total := int(payload.get("total_score", 0))
+			_attempt["total_score"] = maxi(int(_attempt.total_score), total)
+			_attempt["score_earned"] = maxi(int(_attempt.score_earned), total - int(_attempt.attempt_start_score))
 		&"route_complete":
 			_attempt["completed_route"] = StringName(payload.get("route", &""))
 		&"run_complete":
@@ -52,9 +58,12 @@ func record_event(event_kind: StringName, payload: Dictionary = {}) -> void:
 	attempt_changed.emit(snapshot())
 
 func snapshot() -> Dictionary:
+	# The event log is internal ordering machinery and stays out of UI snapshots.
+	var published_attempt := _attempt.duplicate(true)
+	published_attempt.erase("event_log")
 	return {
 		"active_spot_id": _active_spot_id,
-		"attempt": _attempt.duplicate(true),
+		"attempt": published_attempt,
 		"completed": _completed.duplicate(),
 		"available": challenges_for_spot(_active_spot_id),
 	}
@@ -85,7 +94,16 @@ func _condition_met(condition: Dictionary) -> bool:
 			var degrees := float(_attempt.rotation_degrees)
 			return degrees >= float(condition.get("minimum_degrees", 0.0)) and degrees <= float(condition.get("maximum_degrees", INF))
 		&"grab_and_land":
-			return bool(_attempt.grabbed) and bool(_attempt.landed)
+			var anchor: Dictionary = condition.get("after", {})
+			if anchor.is_empty():
+				return bool(_attempt.grabbed) and bool(_attempt.landed)
+			var anchor_index := _anchor_index(anchor)
+			if anchor_index < 0:
+				return false
+			var grab_index := _event_index_after(&"grab", anchor_index)
+			if grab_index < 0:
+				return false
+			return _event_index_after(&"landing", grab_index) >= 0
 		&"grind":
 			var required := StringName(condition.get("feature_id", &""))
 			return not (_attempt.rails as Array).is_empty() if required == &"" else required in (_attempt.rails as Array)
@@ -96,7 +114,7 @@ func _condition_met(condition: Dictionary) -> bool:
 		&"no_bail":
 			return not bool(_attempt.bailed)
 		&"minimum_score":
-			return int(_attempt.total_score) >= int(condition.get("points", 0))
+			return int(_attempt.score_earned) >= int(condition.get("points", 0))
 		&"finish_route":
 			return StringName(_attempt.completed_route) == StringName(condition.get("route", &""))
 		&"run_complete":
@@ -136,6 +154,41 @@ func _empty_attempt() -> Dictionary:
 		"features": [],
 		"bailed": false,
 		"total_score": 0,
+		"attempt_start_score": 0,
+		"score_earned": 0,
 		"completed_route": &"",
 		"run_completed": false,
+		"event_log": [],
 	}
+
+func _log_attempt_event(event_kind: StringName, payload: Dictionary) -> void:
+	var log := _attempt.event_log as Array
+	log.append({
+		"kind": event_kind,
+		"feature_id": StringName(payload.get("feature_id", &"")),
+	})
+	if log.size() > MAX_ATTEMPT_EVENTS:
+		log.pop_front()
+
+func _anchor_index(anchor: Dictionary) -> int:
+	var kind := StringName(anchor.get("kind", &""))
+	var feature_id := StringName(anchor.get("feature_id", &""))
+	# Condition vocabulary maps onto recorded event kinds.
+	if kind == &"grind":
+		kind = &"rail_capture"
+	var log := _attempt.event_log as Array
+	for index: int in log.size():
+		var entry: Dictionary = log[index]
+		if StringName(entry.get("kind", &"")) != kind:
+			continue
+		if feature_id != &"" and StringName(entry.get("feature_id", &"")) != feature_id:
+			continue
+		return index
+	return -1
+
+func _event_index_after(kind: StringName, after_index: int) -> int:
+	var log := _attempt.event_log as Array
+	for index: int in range(after_index + 1, log.size()):
+		if StringName((log[index] as Dictionary).get("kind", &"")) == kind:
+			return index
+	return -1

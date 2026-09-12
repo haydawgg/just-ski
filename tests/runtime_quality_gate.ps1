@@ -1,4 +1,4 @@
-param(
+﻿param(
 	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
 	[string]$GodotPath = "",
 	[string]$UserDataRoot = "",
@@ -241,7 +241,8 @@ $sceneShards = [ordered]@{
 		"res://tests/animation_transition_regression_acceptance.tscn",
 		"res://tests/animation_presentation_quality_acceptance.tscn",
 		"res://tests/equipment_collision_acceptance.tscn",
-		"res://tests/crash_recovery_acceptance.tscn"
+		"res://tests/crash_recovery_acceptance.tscn",
+		"res://tests/crash_viewport_diagnostic.tscn"
 	)
 	"tricks-gameplay" = @(
 		"res://tests/gameplay_acceptance.tscn",
@@ -256,7 +257,13 @@ $sceneShards = [ordered]@{
 		"res://tests/flick_flip_gameplay_acceptance.tscn",
 		"res://tests/trick_ui_acceptance.tscn",
 		"res://tests/park_challenge_acceptance.tscn",
-		"res://tests/session_flow_acceptance.tscn"
+		"res://tests/park_challenge_playthrough_acceptance.tscn",
+		"res://tests/rail_outcome_acceptance.tscn",
+		"res://tests/session_flow_acceptance.tscn",
+		"res://tests/session_recovery_menu_acceptance.tscn",
+		"res://tests/marker_eligibility_acceptance.tscn",
+		"res://tests/finish_direction_acceptance.tscn",
+		"res://tests/session_lifecycle_matrix_acceptance.tscn"
 	)
 	"systems-media" = @(
 		"res://tests/runtime_smoke.tscn",
@@ -266,9 +273,11 @@ $sceneShards = [ordered]@{
 		"res://tests/clip_recorder_worker_acceptance.tscn",
 		"res://tests/clip_recorder_lifecycle_acceptance.tscn",
 		"res://tests/settings_acceptance.tscn",
+		"res://tests/debug_telemetry_budget_acceptance.tscn",
 		"res://tests/input_manager_acceptance.tscn",
 		"res://tests/skier_input_frame_acceptance.tscn",
 		"res://tests/solver_motion_interface_acceptance.tscn",
+		"res://tests/rail_reversal_acceptance.tscn",
 		"res://tests/solver_animation_interface_acceptance.tscn",
 		"res://tests/solver_camera_interface_acceptance.tscn",
 		"res://tests/solver_grab_contract_acceptance.tscn",
@@ -305,6 +314,11 @@ Write-Output "RUNTIME_SHARD name=$shardLabel scenes=$($scenes.Count)"
 
 $failures = [System.Collections.Generic.List[string]]::new()
 $sceneErrorPattern = '(?im)^\s*(?:SHADER ERROR|SCRIPT ERROR|ERROR:)|\b[A-Z_]+_FAIL:|Parameter "t" is null|leaked texture|RIDs of type "Texture" were leaked|Texture.*leaked|ObjectDB instances were leaked|texture-RID'
+# Scenes that intentionally exercise failure paths may produce specific engine
+# error lines; whole lines containing an allowed marker are ignored.
+$allowedSceneErrors = @{
+	"res://tests/session_flow_acceptance.tscn" = @("ConfigFile parse error at user://session_score_acceptance.cfg")
+}
 foreach ($scene in $scenes) {
 	Write-Output "===== $scene ====="
 	$safeName = ($scene -replace '^res://', '') -replace '[^A-Za-z0-9_-]', '_'
@@ -317,7 +331,15 @@ foreach ($scene in $scenes) {
 	$output = [string]$result.Output
 	Write-Output $output.TrimEnd()
 	$sceneDuration = $sceneTimer.Elapsed.TotalSeconds.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture)
-	$sceneHasError = $output -match $sceneErrorPattern
+	$filteredOutput = $output
+	if ($allowedSceneErrors.ContainsKey($scene)) {
+		$filteredLines = $filteredOutput -split "`r?`n" | Where-Object {
+			$line = $_
+			-not ($allowedSceneErrors[$scene] | Where-Object { $line.Contains($_) })
+		}
+		$filteredOutput = $filteredLines -join "`n"
+	}
+	$sceneHasError = $filteredOutput -match $sceneErrorPattern
 	$ignoredTeardownCrash = Test-IgnoredGodotWindowsTeardownCrash -Scene $scene -ExitCode $exitCode -Output $output -SceneHasError $sceneHasError
 	if ($exitCode -ne 0 -and -not $ignoredTeardownCrash) {
 		$failures.Add("$scene exited with code $exitCode; logs: $stdoutPath, $stderrPath")

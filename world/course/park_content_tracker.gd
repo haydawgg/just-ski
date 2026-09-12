@@ -22,6 +22,7 @@ var _features: Dictionary = {}
 var _approached: Dictionary = {}
 var _completed_in_attempt: Dictionary = {}
 var _route_features: Array[StringName] = []
+var _attempt_start_score := 0
 var _last_state := ""
 var _last_rail_feature_id: StringName
 var _last_rotation_degrees := 0.0
@@ -45,6 +46,7 @@ func configure(profile: ParkCourseProfile, player: SkierController = null) -> vo
 		challenge_tracker.configure(profile.challenge_specs())
 	if _player != null:
 		_player.state_changed.connect(_on_state_changed)
+		_player.rail_finished.connect(_on_rail_finished)
 		_player.telemetry_updated.connect(_on_player_telemetry)
 		_player.landed.connect(_on_landed)
 		_player.crashed.connect(_on_crashed)
@@ -109,8 +111,11 @@ func _update_active_spot(force: bool) -> void:
 	_route_features.clear()
 	_last_rotation_degrees = 0.0
 	_last_grab_active = false
+	_attempt_start_score = 0
+	if _player != null and _player.scoring != null:
+		_attempt_start_score = int(_player.scoring.total_score)
 	attempt_counts[active_spot.id] = int(attempt_counts.get(active_spot.id, 0)) + 1
-	challenge_tracker.begin_attempt(active_spot.id)
+	challenge_tracker.begin_attempt(active_spot.id, _attempt_start_score)
 	record_event(&"spot_entry", {"attempt": int(attempt_counts[active_spot.id])})
 	spot_changed.emit(active_spot)
 
@@ -122,7 +127,7 @@ func _update_feature_flow() -> void:
 		var spec: Dictionary = _features.get(feature_id, {})
 		if spec.is_empty():
 			continue
-		var feature_position := _feature_course_position(spec)
+		var feature_position := feature_course_position(spec)
 		var distance := Vector2(player_course_position.x - feature_position.x, player_course_position.z - feature_position.z).length()
 		if distance <= FEATURE_APPROACH_DISTANCE and not _approached.has(feature_id):
 			_approached[feature_id] = true
@@ -161,13 +166,19 @@ func _on_state_changed(state_name: String) -> void:
 	if state_name == "Grind":
 		_last_rail_feature_id = _active_rail_feature_id()
 		record_event(&"rail_capture", {"feature_id": _last_rail_feature_id, "captured": true})
-	elif _last_state == "Grind":
-		var failed := state_name == "Bail"
-		record_event(&"rail_exit", {"feature_id": _last_rail_feature_id, "captured": true, "failed": failed})
-		record_event(&"rail_result", {"feature_id": _last_rail_feature_id, "success": not failed})
 	if state_name == "Bail":
 		record_event(&"bail", {"source": "rail" if _last_state == "Grind" else _last_state.to_lower()})
 	_last_state = state_name
+
+func _on_rail_finished(feature_id: StringName, outcome: StringName) -> void:
+	# The controller owns the rail outcome explicitly: a teleport/recovery
+	# cancels the attempt and must not emit a successful rail result.
+	if outcome == &"cancelled":
+		record_event(&"rail_cancelled", {"feature_id": feature_id, "captured": true})
+		return
+	var failed := outcome == &"failed"
+	record_event(&"rail_exit", {"feature_id": feature_id, "captured": true, "failed": failed})
+	record_event(&"rail_result", {"feature_id": feature_id, "success": not failed})
 
 func _on_landed(result: Dictionary) -> void:
 	record_event(&"air_rotation", {"degrees": _last_rotation_degrees})
@@ -201,7 +212,7 @@ func _active_rail_feature_id() -> StringName:
 		return &""
 	return StringName(_player.active_rail.get_meta("feature_id", StringName(_player.active_rail.name.to_snake_case())))
 
-func _feature_course_position(spec: Dictionary) -> Vector3:
+static func feature_course_position(spec: Dictionary) -> Vector3:
 	if StringName(spec.get("kind", &"")) == &"rail":
 		var points := spec.get("points", []) as Array
 		if not points.is_empty():
@@ -219,6 +230,7 @@ func _disconnect_player() -> void:
 	if _player == null:
 		return
 	if _player.state_changed.is_connected(_on_state_changed): _player.state_changed.disconnect(_on_state_changed)
+	if _player.rail_finished.is_connected(_on_rail_finished): _player.rail_finished.disconnect(_on_rail_finished)
 	if _player.telemetry_updated.is_connected(_on_player_telemetry): _player.telemetry_updated.disconnect(_on_player_telemetry)
 	if _player.landed.is_connected(_on_landed): _player.landed.disconnect(_on_landed)
 	if _player.crashed.is_connected(_on_crashed): _player.crashed.disconnect(_on_crashed)

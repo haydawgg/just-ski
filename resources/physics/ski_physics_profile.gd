@@ -145,17 +145,17 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export var crash_rest_speed: float = 1.25
 @export var crash_rest_angular_speed: float = 0.45
 @export var crash_max_duration: float = 2.4
-@export var crash_air_angular_damping: float = 1.1
-@export var crash_ground_angular_damping: float = 4.0
+@export var crash_air_angular_damping: float = 1.5
+@export var crash_ground_angular_damping: float = 7.0
 @export var crash_roll_body_radius: float = 0.75
-@export_range(0.0, 1.0) var crash_roll_coupling: float = 0.38
-@export var crash_roll_max_angular_speed: float = 3.2
+@export_range(0.0, 1.0) var crash_roll_coupling: float = 0.30
+@export var crash_roll_max_angular_speed: float = 1.6
 @export var crash_roll_fade_speed: float = 1.1
 @export var crash_roll_min_travel: float = 0.12
 @export var crash_align_speed_reference: float = 7.0
-@export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.75
-@export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.90
-@export var crash_ground_max_rotation_rate_degrees: float = 300.0
+@export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.82
+@export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.94
+@export var crash_ground_max_rotation_rate_degrees: float = 150.0
 
 @export_category("Rails")
 @export var rail_capture_radius: float = 1.1
@@ -168,6 +168,7 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export var rail_boardslide_instability: float = 0.35
 @export var rail_capture_blend_time: float = 0.11
 @export var rail_capture_max_snap: float = 1.15
+@export var rail_stall_release_time: float = 0.75
 @export var rail_alignment_rate: float = 12.0
 @export var rail_pop_strength: float = 0.72
 @export var rail_slip_speed_retain: float = 0.55

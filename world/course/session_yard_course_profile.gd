@@ -5,7 +5,10 @@ func spawn_world_z() -> float:
 	return 42.0
 
 func finish_trigger_world_z() -> float:
-	return -26.0
+	# The Terrain Only challenge completes 5 m downhill of YardTerrainLine
+	# (z = -28), so the finish must sit below that threshold instead of
+	# preempting the run before the feature can complete.
+	return -40.0
 
 func feature_specs() -> Array[Dictionary]:
 	var specs: Array[Dictionary] = [

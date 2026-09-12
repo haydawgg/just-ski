@@ -167,6 +167,7 @@ physics/gameplay root
   -> evaluated-pose transition
   -> ski-target smoothing + pelvis compensation
   -> ski-constrained leg IK
+  -> grounded crash ski-plane stabilization
   -> arm/grab IK
   -> skeleton/equipment output
 ```
@@ -175,7 +176,7 @@ physics/gameplay root
 
 Bail animation is a staged procedural fall layered over gameplay's authoritative `BAIL` motion. It is not a physics ragdoll.
 
-The animation controller reads the captured crash context and produces `RELEASE`, `IMPACT`, `FALL`, `REST`, and `RECOVERY` using stage-local progress. FALL sprawl is driven from skier-local planar travel (pelvis orientation, torso fold, shoulder/arm spread, leg drag, and ski silhouette) through the existing crash reaction layer rather than a second pose owner. FALL/REST keep minimum stage-driven secondary motion even at low slide speeds so the crash never presents as a frozen pose. Ordinary recovery remains in `BAIL` while the body recenters and leg IK reacquires contact, then emits recovery completion and enters ground presentation. Respawn remains a separate hard-reset path.
+The animation controller reads the captured crash context and produces `RELEASE`, `IMPACT`, `FALL`, `REST`, and `RECOVERY` using stage-local progress. FALL sprawl is driven from skier-local planar travel (pelvis orientation, torso fold, shoulder/arm spread, leg drag, and ski silhouette) through the existing crash reaction layer rather than a second pose owner. High-energy FALL oscillation is deliberately calmer than the incoming gameplay rotation. Once either ski contact is grounded, a final profile-driven world-space guard measures the bound ski axes against the live contact-normal plane and smoothly rotates the boot/ski assemblies back inside the configured angle; it preserves planar heading, boot position, rigid bindings, and the authoritative gameplay root. FALL/REST keep minimum stage-driven secondary motion even at low slide speeds so the crash never presents as a frozen pose. Ordinary recovery remains in `BAIL` while the body recenters and leg IK reacquires contact, then emits recovery completion and enters ground presentation. Respawn remains a separate hard-reset path.
 
 ## Secondary motion
 

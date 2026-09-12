@@ -10,6 +10,7 @@ func _ready() -> void:
 	_test_authored_pose_handoffs_blend()
 	_test_combined_trick_preserves_boot_binding()
 	_test_full_trick_rail_bail_recovery_sequence()
+	_test_grounded_crash_skis_follow_snow_plane()
 	_test_contact_targets_drive_valid_two_bone_ik()
 	_test_rail_slip_preserves_bounded_angular_state()
 	AudioManager.shutdown_audio()
@@ -271,6 +272,63 @@ func _test_full_trick_rail_bail_recovery_sequence() -> void:
 		failures.append("combined sequence did not finish in ground presentation")
 	remove_child(rig)
 	rig.queue_free()
+
+func _test_grounded_crash_skis_follow_snow_plane() -> void:
+	var cases: Array[Dictionary] = [
+		{"normal": Vector3.UP, "root": Vector3(1.05, 0.2, 1.1), "side": 1.0},
+		{"normal": Vector3.UP, "root": Vector3(-1.1, -0.2, -1.05), "side": -1.0},
+		{"normal": Vector3(0.25, 0.94, 0.22).normalized(), "root": Vector3(1.0, -0.35, 1.08), "side": 1.0},
+		{"normal": Vector3(-0.22, 0.96, 0.16).normalized(), "root": Vector3(-1.08, 0.3, -1.0), "side": -1.0},
+	]
+	for case: Dictionary in cases:
+		var rig := SkierAnimationController.new()
+		add_child(rig)
+		var normal := case.normal as Vector3
+		rig.global_basis = Basis.from_euler(case.root as Vector3).orthonormalized()
+		var frame := SkierAnimationFrame.new()
+		frame.locomotion_state = 3
+		frame.grounded = false
+		frame.left_grounded = true
+		frame.right_grounded = true
+		frame.left_normal = normal
+		frame.right_normal = normal
+		frame.left_contact_confidence = 1.0
+		frame.right_contact_confidence = 1.0
+		frame.ground_normal = normal
+		frame.body_up = rig.global_basis.y
+		frame.ski_forward = -rig.global_basis.z
+		frame.ski_up = rig.global_basis.y
+		frame.crash_stage = CrashContext.Stage.FALL
+		frame.crash_impact_normal = normal
+		frame.crash_incoming_velocity = Vector3(3.0, -7.5, -10.0)
+		frame.crash_current_velocity = frame.crash_incoming_velocity.slide(normal)
+		frame.crash_impact_speed = 8.5
+		frame.crash_angular_speed = 7.5
+		frame.crash_lateral_bias = float(case.side)
+		rig.trigger(SkierAnimationController.AnimationEvent.BAIL, 1.0, float(case.side))
+		var initial_pelvis := rig.debug_snapshot().pelvis_rotation as Vector3
+		var max_verticality := 0.0
+		for index: int in 30:
+			frame.crash_elapsed += STEP
+			frame.crash_stage_elapsed = float(index + 1) * STEP
+			frame.crash_stage_progress = clampf(frame.crash_stage_elapsed / 0.7, 0.0, 1.0)
+			rig.apply_frame(frame, STEP)
+			if frame.crash_stage_elapsed >= 0.12:
+				var left_forward := -rig.left_ski.global_basis.z.normalized()
+				var right_forward := -rig.right_ski.global_basis.z.normalized()
+				max_verticality = maxf(max_verticality, maxf(absf(left_forward.dot(normal)), absf(right_forward.dot(normal))))
+		if max_verticality > 0.70:
+			failures.append("Grounded FALL skis exceeded the snow-plane silhouette bound (normal=%s side=%.0f max=%.3f)" % [normal, float(case.side), max_verticality])
+		var final_pelvis := rig.debug_snapshot().pelvis_rotation as Vector3
+		if _euler_delta(final_pelvis, initial_pelvis) < 0.02:
+			failures.append("Snow-plane stabilization froze the high-energy FALL body pose")
+		var attachment := rig.equipment_attachment_snapshot()
+		if maxf(float(attachment.left_boot_binding_angular_error), float(attachment.right_boot_binding_angular_error)) > deg_to_rad(3.0):
+			failures.append("Snow-plane stabilization broke the rigid boot/ski binding")
+		if float(attachment.ski_separation_m) < 0.08:
+			failures.append("Snow-plane stabilization allowed the skis to intersect")
+		remove_child(rig)
+		rig.queue_free()
 
 func _advance(rig: SkierAnimationController, frame: SkierAnimationFrame, frames: int) -> void:
 	for _index: int in frames:

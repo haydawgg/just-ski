@@ -13,6 +13,7 @@ func _ready() -> void:
 	_test_ground_angle_contract()
 	_test_landing_prediction_cache()
 	_test_bail_rest_damping()
+	_test_fall_rotation_softening_preserves_linear_motion()
 	_test_crash_entry_clears_locomotion()
 	_test_grounded_crash_tumbles_gradually()
 	_test_bail_collider_stays_surface_aligned()
@@ -40,6 +41,7 @@ func _ready() -> void:
 	await _test_grind_feature_collision_enters_bail()
 	await _test_bounded_rest_and_recovery()
 	await _test_recovery_freeze_ignores_session_input()
+	await _test_marker_retry_scoring_policy()
 	await _test_course_recovery_lifecycle_and_scoring()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
@@ -431,6 +433,29 @@ func _test_bail_rest_damping() -> void:
 	if result.velocity.length() >= velocity.length() or result.angular_velocity.length() >= angular_velocity.length():
 		failures.append("Bail REST motion did not monotonically damp linear and angular velocity")
 
+func _test_fall_rotation_softening_preserves_linear_motion() -> void:
+	var solver := BailMotionSolver.new()
+	var profile := SkiPhysicsProfile.new()
+	var initial_velocity := Vector3(1.2, 0.0, -8.0)
+	var initial_angular := Vector3(3.2, 2.8, 4.2)
+	for hz: int in [30, 60, 120]:
+		var delta := 1.0 / float(hz)
+		var velocity := initial_velocity
+		var angular := initial_angular
+		var basis := Basis.from_euler(Vector3(PI * 0.35, 0.0, PI * 0.22))
+		for _index: int in int(hz * 0.5):
+			var motion := solver.step_motion(velocity, angular, Vector3.UP, true, CrashContext.Stage.FALL, delta, profile, basis)
+			velocity = motion.velocity
+			angular = motion.angular_velocity
+			basis = solver.integrate_grounded_crash_basis(basis, angular, Vector3.UP, motion.planar_travel, motion.align_rate, delta, profile)
+		var expected_velocity := initial_velocity * exp(-profile.bail_ground_damping * 0.55 * 0.5)
+		if velocity.distance_to(expected_velocity) > 0.0002:
+			failures.append("Softer FALL rotation changed linear slide damping at %d Hz (got %s expected %s)" % [hz, velocity, expected_velocity])
+		if angular.length() > 1.8:
+			failures.append("High-energy grounded FALL retained %.3f rad/s after 0.5s at %d Hz" % [angular.length(), hz])
+		if angular.length() < 0.05:
+			failures.append("Softer grounded FALL erased all visible rotational motion at %d Hz" % hz)
+
 func _make_crash_context(incoming: Vector3) -> CrashContext:
 	var context := CrashContext.new()
 	context.begin(
@@ -580,8 +605,8 @@ func _test_surface_roll_reverses_with_travel() -> void:
 func _test_surface_roll_grows_with_speed_and_respects_cap() -> void:
 	var solver := BailMotionSolver.new()
 	var profile := SkiPhysicsProfile.new()
-	var slow := solver.surface_roll_speed(2.0, profile)
-	var fast := solver.surface_roll_speed(4.0, profile)
+	var slow := solver.surface_roll_speed(0.5, profile)
+	var fast := solver.surface_roll_speed(1.0, profile)
 	var capped := solver.surface_roll_speed(100.0, profile)
 	if slow <= 0.0 or fast <= slow:
 		failures.append("Generated roll speed did not grow with planar speed (slow=%.3f fast=%.3f)" % [slow, fast])
@@ -1095,13 +1120,45 @@ func _test_recovery_freeze_ignores_session_input() -> void:
 	remove_child(skier)
 	skier.queue_free()
 
+func _test_marker_retry_scoring_policy() -> void:
+	await get_tree().process_frame
+	var skier := SkierController.new()
+	skier.set_physics_process(false)
+	add_child(skier)
+	var marker := Transform3D(Basis.IDENTITY, Vector3(3.0, 6.0, -4.0))
+	SessionManager.set_marker(marker)
+	skier.scoring.accept_trick("Baseline 360", 1000, 0.9, LandingSolver.Outcome.CLEAN)
+	skier.scoring.accept_trick("Follow-up 180", 100, 0.9, LandingSolver.Outcome.CLEAN)
+	var before := skier.scoring.snapshot()
+	var expected_cost := int(round(float(before.total_score) * 0.15))
+	SessionManager.request_respawn()
+	var after := skier.scoring.snapshot()
+	if int(after.total_score) != maxi(0, int(before.total_score) - expected_cost):
+		failures.append("Explicit marker retry did not apply the configured retry score cost")
+	if int(after.retry_count) != int(before.retry_count) + 1 or str(after.last_combo_break_reason) != "marker_retry":
+		failures.append("Explicit marker retry did not record exactly one marker retry")
+	if str(after.best_trick_name) != str(before.best_trick_name) or int(after.landed_trick_count) != int(before.landed_trick_count):
+		failures.append("Explicit marker retry discarded persistent run scoring history")
+	if int(after.combo_count) != 0 or float(after.link_remaining) > 0.001:
+		failures.append("Explicit marker retry retained transient combo/link state")
+	if skier.global_position.distance_to(marker.origin) > 0.05:
+		failures.append("Explicit marker retry did not return the skier to the saved marker")
+	SessionManager.clear_marker()
+	remove_child(skier)
+	skier.queue_free()
+
 func _test_course_recovery_lifecycle_and_scoring() -> void:
 	await get_tree().process_frame
 	var skier := SkierController.new()
 	skier.set_physics_process(false)
 	add_child(skier)
+	var previous_spawn := SessionManager.default_spawn
 	SessionManager.set_default_spawn(Transform3D(Basis.IDENTITY, Vector3(0.0, 6.0, 0.0)))
-	SessionManager.clear_marker()
+	var marker := Transform3D(Basis.IDENTITY, Vector3(4.0, 6.0, -3.0))
+	SessionManager.set_marker(marker)
+	skier.scoring.begin_feature("jump")
+	skier.scoring.accept_trick("Recovery Baseline", 1000, 0.9, LandingSolver.Outcome.CLEAN)
+	var score_before := skier.scoring.snapshot()
 	var recovery := CourseRecovery.new()
 	recovery.recovery_delay = 0.0
 	recovery.fade_out_duration = 0.0
@@ -1112,8 +1169,17 @@ func _test_course_recovery_lifecycle_and_scoring() -> void:
 	var completed := [0]
 	recovery.recovery_started.connect(func(_reason: String) -> void: started[0] += 1)
 	recovery.recovery_completed.connect(func(_reason: String, _transform: Transform3D) -> void: completed[0] += 1)
+	# Let the newly-added recovery node join the physics scheduler before
+	# triggering the out-of-bounds transition.
+	await get_tree().process_frame
 	skier.global_position = Vector3(100.0, 4.0, 0.0)
-	for _frame: int in 8:
+	var frame_budget := 30
+	while completed[0] < 1 and frame_budget > 0:
+		await get_tree().physics_frame
+		frame_budget -= 1
+	# Observe beyond completion so duplicate recovery events cannot hide behind
+	# an early event-driven exit.
+	for _frame: int in 2:
 		await get_tree().physics_frame
 	if started[0] != 1 or completed[0] != 1 or recovery.recovery_count != 1:
 		failures.append(
@@ -1122,8 +1188,20 @@ func _test_course_recovery_lifecycle_and_scoring() -> void:
 		)
 	if recovery.recovery_in_progress or skier.recovery_frozen:
 		failures.append("Course recovery remained frozen after completion")
-	if skier.global_position.distance_to(SessionManager.default_spawn.origin) > 0.05:
-		failures.append("Course recovery did not return the skier to the authoritative spawn")
+	if skier.global_position.distance_to(marker.origin) > 0.05:
+		failures.append("Course recovery did not return the skier to the saved marker")
+	var score_after := skier.scoring.snapshot()
+	if (
+		int(score_after.total_score) != int(score_before.total_score)
+		or str(score_after.best_trick_name) != str(score_before.best_trick_name)
+		or int(score_after.landed_trick_count) != int(score_before.landed_trick_count)
+		or int(score_after.retry_count) != int(score_before.retry_count)
+	):
+		failures.append("Course recovery changed persistent run scoring or retry state")
+	if int(score_after.combo_count) != 0 or float(score_after.link_remaining) > 0.001 or str(score_after.last_combo_break_reason) != "respawn":
+		failures.append("Course recovery did not clear transient combo/link state without a retry penalty")
+	SessionManager.clear_marker()
+	SessionManager.set_default_spawn(previous_spawn)
 	remove_child(recovery)
 	recovery.queue_free()
 	remove_child(skier)
