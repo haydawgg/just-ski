@@ -162,7 +162,11 @@ traces and guide-hidden ramp captures. This run is not a human approval. Its
 manifest currently reports three objective errors: the snow-depth pixel check is
 red against the maintained 0.095 threshold (0.061 average spread), the Sunset
 carve motion manifest was not produced after a local audio-device invalidation,
-and the Sunset straight motion log contains a renderer shutdown warning. The
+and the Sunset straight motion log contains a renderer shutdown warning. A
+follow-up root-cause investigation (verified retimed-corridor numbers,
+Golden-preset comparison, and single-knob Day experiments) is recorded in
+`docs/RELEASE_READINESS_REPORT.md`; it left the Day preset and the threshold
+unchanged pending a human-reviewed art decision. The
 earlier eight `scenario ROI is invalid` errors came from PR #69 adding the
 `medium_deck`, `medium_landing`, `large_knuckle` and `large_landing` shots
 without catalog entries; those entries now exist in `tests/visual_scenarios.json`

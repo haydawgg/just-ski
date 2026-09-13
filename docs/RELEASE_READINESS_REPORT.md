@@ -223,6 +223,16 @@ Remaining bundle errors after the catalog backfill:
 1. `snow_depth_visual_metrics.tscn` failed: average snow p10-p90 spread
    **0.061** vs the maintained **0.095** threshold (per-frame: 0.051, 0.052,
    0.055, 0.058, 0.090). Threshold intentionally not weakened.
+   Follow-up investigation (no code changes kept; see below) additionally
+   verified on the retimed corridor captures: 0.040-0.048 per frame, 0.044
+   average, with under 3% blue-shadow coverage. The same corridor under the
+   Golden preset measures 0.167-0.211 spread but 0.63-0.88 blue coverage
+   (fails the 0.35 blue cap), so the gap is preset-driven, not sampling:
+   single-knob Day changes (sun/ambient energy, sky contribution, shadow
+   opacity, fog block) do not move the metric, while the full Golden sky
+   block passes (0.205 spread, 0.339 blue) with hues that are wrong for Day.
+   No Day-appropriate subset was found; the working tree keeps the pristine
+   Day preset untouched.
 2. Sunset carve motion manifest missing after a local audio-device
    invalidation in the capture process.
 3. Sunset straight motion log contains a renderer shutdown warning.
@@ -249,4 +259,12 @@ shipping-class hardware; local RTX 4050 result is inconclusive.
   the fixture pins 60 Hz).
 - Sunset carve motion evidence in the environment bundle.
 - Snow-depth pixel metric red at 0.061 vs 0.095 (unchanged threshold).
+  Fixing it needs a human-reviewed art decision: either author Day sky
+  separation comparable to Golden's (without its orange hues or blue-cap
+  breach) or recalibrate the threshold with written justification. Do not
+  ship unreviewed lighting changes or a lowered threshold to force green.
+  Caution from this investigation: `#` comment lines added to `.tres`
+  resource files appeared to prevent following keys from loading (values
+  silently fell back to script defaults until the comments were removed);
+  verify `.tres` edits with a runtime probe before capturing.
 - GPU/human performance sign-off; the bundle's 54 advisory review items.
