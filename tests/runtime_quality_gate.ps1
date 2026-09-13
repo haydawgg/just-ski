@@ -1,4 +1,4 @@
-﻿param(
+param(
 	[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
 	[string]$GodotPath = "",
 	[string]$UserDataRoot = "",
@@ -300,6 +300,9 @@ $sceneShards = [ordered]@{
 	)
 	"release-stress" = @(
 		"res://tests/continuous_course_release_acceptance.tscn",
+		"res://tests/continuous_course_release_matrix_30.tscn",
+		"res://tests/continuous_course_release_matrix_60.tscn",
+		"res://tests/continuous_course_release_matrix_120.tscn",
 		"res://tests/release_jump_envelope_acceptance.tscn",
 		"res://tests/release_carve_stress_acceptance.tscn",
 		"res://tests/release_cross_state_acceptance.tscn"

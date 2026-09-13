@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tests/continuous_course_release_matrix_acceptance.gd" id="1"]
+[ext_resource type="PackedScene" path="res://world/resort.tscn" id="2"]
+
+[node name="ContinuousCourseReleaseMatrix60" type="Node"]
+script = ExtResource("1")
+acceptance_physics_hz = 60
+
+[node name="Resort" parent="." instance=ExtResource("2")]
