@@ -13,7 +13,7 @@ enum RecoveryReason { OUT_OF_BOUNDS, INVALID_POSITION }
 
 @export var minimum_y := -24.0
 @export var minimum_z := -225.0
-@export var maximum_z := 175.0
+@export var maximum_z := ParkLayout.DEFAULT_SPAWN_WORLD_Z + 10.0
 @export var maximum_lateral_distance := 72.0
 @export var recovery_delay := 0.45
 @export var fade_out_duration := 0.12

@@ -299,6 +299,7 @@ $sceneShards = [ordered]@{
 		"res://tests/visual_evidence_acceptance.tscn"
 	)
 	"release-stress" = @(
+		"res://tests/continuous_course_release_acceptance.tscn",
 		"res://tests/release_jump_envelope_acceptance.tscn",
 		"res://tests/release_carve_stress_acceptance.tscn",
 		"res://tests/release_cross_state_acceptance.tscn"

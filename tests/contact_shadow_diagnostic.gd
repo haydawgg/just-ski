@@ -26,6 +26,7 @@ func _ready() -> void:
 		push_error("CONTACT_SHADOW_FAIL: skier not found")
 		_finish(1)
 		return
+	skier.set_physics_process(false)
 	# SubViewport for image capture (shares main world)
 	viewport = SubViewport.new()
 	viewport.size = Vector2i(640, 360)
@@ -45,7 +46,7 @@ func _ready() -> void:
 	cam.current = true
 	await get_tree().process_frame
 	await get_tree().process_frame
-	_run_height_sweep()
+	await _run_height_sweep()
 
 func _run_height_sweep() -> void:
 	if skier == null:
@@ -53,8 +54,10 @@ func _run_height_sweep() -> void:
 		return
 	var n := ParkLayout.snow_normal()
 	var base_pos := ParkLayout.snow_at(0.0, 30.0) + n * 0.9
-	# Test heights: ground (0.2), low air (1.5), mid (4.0), high (8.0)
-	var heights := [0.25, 1.6, 4.2, 8.5]
+	# Test heights: ground, low air, mid air, and a high-but-still-visible cue.
+	# AIR raycasts measure from the body origin to real snow, so the final
+	# sample also includes the normal standing offset in base_pos.
+	var heights := [0.25, 1.6, 4.2, 7.5]
 	for h in heights:
 		skier.global_position = base_pos + n * h
 		skier.velocity = Vector3.ZERO
@@ -71,9 +74,11 @@ func _run_height_sweep() -> void:
 		var shadow := skier.get_node_or_null("ContactShadow") as MeshInstance3D
 		var visible := shadow != null and shadow.visible
 		var alpha := 0.0
+		var softness := 0.0
 		if shadow != null and shadow.material_override is ShaderMaterial:
 			var mat := shadow.material_override as ShaderMaterial
 			alpha = float(mat.get_shader_parameter("shadow_opacity"))
+			softness = float(mat.get_shader_parameter("shadow_softness"))
 		var shadow_pos := shadow.global_position if shadow != null else Vector3.ZERO
 		var dist_to_ground := (skier.global_position - shadow_pos).length() if shadow != null else 0.0
 		# VFX-04: screen checks must use the same camera that produces the
@@ -85,12 +90,33 @@ func _run_height_sweep() -> void:
 			screen_separation = p_skier.distance_to(p_shadow)
 		# VFX-04: store each sample's own skier/shadow transforms so later
 		# checks compare the claimed frame, not the final one.
-		results.append({"height": h, "visible": visible, "alpha": alpha, "screen_sep": screen_separation, "shadow_y": shadow_pos.y, "skier_pos": skier.global_position, "shadow_pos": shadow_pos})
-		print("CONTACT_SHADOW_SAMPLE height %.2f visible %s alpha %.3f screen_sep %.1f" % [h, str(visible), alpha, screen_separation])
+		var footprint := Vector2(shadow.scale.x, shadow.scale.z) if shadow != null else Vector2.ZERO
+		var shadow_up := shadow.global_basis.y.normalized() if shadow != null else Vector3.ZERO
+		var shadow_forward := -shadow.global_basis.z.normalized() if shadow != null else Vector3.ZERO
+		results.append({
+			"height": h,
+			"visible": visible,
+			"alpha": alpha,
+			"softness": softness,
+			"footprint": footprint,
+			"screen_sep": screen_separation,
+			"skier_pos": skier.global_position,
+			"shadow_pos": shadow_pos,
+			"shadow_up": shadow_up,
+			"shadow_forward": shadow_forward,
+		})
+		print("CONTACT_SHADOW_SAMPLE height=%.2f visible=%s alpha=%.3f footprint=(%.2f,%.2f) softness=%.3f screen_sep=%.1f" % [h, str(visible), alpha, footprint.x, footprint.y, softness, screen_separation])
+		if not RuntimeEnvironment.is_headless():
+			await RenderingServer.frame_post_draw
+			var tex := viewport.get_texture() if viewport != null else null
+			var img := tex.get_image() if tex != null else null
+			if img == null or img.is_empty() or img.save_png("user://contact_shadow_height_%03dcm.png" % int(round(h * 100.0))) != OK:
+				push_error("CONTACT_SHADOW_FAIL: could not save height sample %.2f" % h)
 	_evaluate()
 
 func _evaluate() -> void:
 	print("CONTACT_SHADOW_DIAG_START")
+	var n := ParkLayout.snow_normal()
 	if results.size() < 4:
 		push_error("CONTACT_SHADOW_FAIL: insufficient samples")
 		_finish(1)
@@ -107,8 +133,8 @@ func _evaluate() -> void:
 	if high.visible and high.alpha > 0.12:
 		reasons.append("high shadow not faded alpha %.3f >0.12" % high.alpha)
 	# Alpha should decrease with height
-	if not (ground.alpha > low.alpha and low.alpha > mid.alpha):
-		reasons.append("alpha not decreasing with height %.3f %.3f %.3f" % [ground.alpha, low.alpha, mid.alpha])
+	if not (ground.alpha > low.alpha and low.alpha > mid.alpha and mid.alpha > high.alpha):
+		reasons.append("alpha not decreasing with height %.3f %.3f %.3f %.3f" % [ground.alpha, low.alpha, mid.alpha, high.alpha])
 	# VFX-03: low air must read meaningfully dimmer than grounded snow, not a
 	# fixed dark disk (ordering alone passes even when nearly identical).
 	if ground.alpha - low.alpha < 0.04:
@@ -126,6 +152,29 @@ func _evaluate() -> void:
 		# Allow 2.0m horizontal offset due to slope projection (n has -0.3z component per meter height)
 		if horiz > 2.5:
 			reasons.append("shadow not beneath horiz %.2f at h %.1f" % [horiz, r.height])
+			break
+		var footprint := r.get("footprint", Vector2.ZERO) as Vector2
+		if footprint.x < 0.8 or footprint.x > 2.5 or footprint.y < 1.4 or footprint.y > 4.0:
+			reasons.append("footprint out of bounds (%.2f, %.2f) at h %.1f" % [footprint.x, footprint.y, r.height])
+			break
+		if footprint.y <= footprint.x * 1.25:
+			reasons.append("footprint is not modestly elliptical at h %.1f" % r.height)
+			break
+		var stored_up := r.get("shadow_up", Vector3.ZERO) as Vector3
+		var stored_forward := r.get("shadow_forward", Vector3.ZERO) as Vector3
+		if stored_up.dot(n) < 0.995 or stored_forward.dot(ParkLayout.downhill()) < 0.995:
+			reasons.append("shadow transform lost ground/downhill alignment at h %.1f" % r.height)
+			break
+	for index: int in range(1, results.size()):
+		var previous := results[index - 1]
+		var current := results[index]
+		var previous_size := previous.get("footprint", Vector2.ZERO) as Vector2
+		var current_size := current.get("footprint", Vector2.ZERO) as Vector2
+		if current_size.x <= previous_size.x or current_size.y <= previous_size.y:
+			reasons.append("footprint did not grow monotonically between %.1f and %.1f m" % [previous.height, current.height])
+			break
+		if float(current.softness) <= float(previous.softness):
+			reasons.append("softness did not grow monotonically between %.1f and %.1f m" % [previous.height, current.height])
 			break
 	if reasons.is_empty():
 		print("CONTACT_SHADOW_PASS: ground alpha %.3f high alpha %.3f sep %.1f->%.1f" % [ground.alpha, high.alpha, ground.screen_sep, high.screen_sep])

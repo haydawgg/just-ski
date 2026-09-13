@@ -13,7 +13,9 @@ extends Resource
 @export_range(0.005, 0.08, 0.005) var marker_surface_offset := 0.032
 
 func spawn_world_z() -> float:
-	return 138.0
+	# About 78 slope metres before the SmallTable structure. This gives a
+	# normal spawn time to settle, acquire the hero line, and accelerate.
+	return ParkLayout.DEFAULT_SPAWN_WORLD_Z
 
 func finish_trigger_world_z() -> float:
 	# Phase 8: the finish sits ~64 slope metres downhill of the LargeTable
@@ -42,10 +44,11 @@ func feature_specs() -> Array[Dictionary]:
 	# StepDownTable was removed; see _content_placement_for for the finale
 	# intermediate-route migration.
 	var specs: Array[Dictionary] = [
-		# Summit teaching cluster (unchanged: spawn acceleration + safe line).
-		{"kind": "gate", "name": "SummitStartGate", "x": 0.0, "z": 134.0, "width": 13.0, "color": Color("#55d6be")},
-		{"kind": "roller", "name": "SummitRollerA", "x": 0.0, "z": 128.0, "length": 5.0, "height": 0.42, "width": 10.0},
-		{"kind": "roller", "name": "SummitRollerB", "x": 0.0, "z": 120.0, "length": 5.5, "height": 0.5, "width": 10.0},
+		# Summit teaching cluster. The rollers remain available on the safe/right
+		# route while the left hero-line drop-in stays clear for acceleration.
+		{"kind": "gate", "name": "SummitStartGate", "x": 0.0, "z": 186.0, "width": 13.0, "color": Color("#55d6be")},
+		{"kind": "roller", "name": "SummitRollerA", "x": 11.0, "z": 176.0, "length": 5.0, "height": 0.42, "width": 10.0},
+		{"kind": "roller", "name": "SummitRollerB", "x": 11.0, "z": 164.0, "length": 5.5, "height": 0.5, "width": 10.0},
 		{"kind": "tabletop", "name": "SmallTable", "discipline": &"air", "difficulty": "beginner", "x": -12.0, "z": 110.0, "speed": 15.0, "lip": 7.0, "width": 9.0, "pop": 0.72},
 		{"kind": "rail", "name": "SummitFlatBox", "discipline": &"jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.BOX, "radius": 1.2, "friction": 1.15, "approach": 52.0, "drift_bias": -0.18, "points": [Vector3(12.0, 124.0, 0.22), Vector3(12.0, 112.0, 0.22)]},
 		{"kind": "rail", "name": "BeginnerTube", "discipline": &"jib", "difficulty": "beginner", "rail_type": GrindRail3D.RailType.PIPE, "radius": 1.0, "friction": 0.7, "approach": 48.0, "drift_bias": 0.14, "points": [Vector3(12.0, 106.0, 0.16), Vector3(12.0, 96.0, 0.16)]},
@@ -114,7 +117,7 @@ func feature_specs() -> Array[Dictionary]:
 func spot_specs() -> Array[ParkSpotSpec]:
 	var spots: Array[ParkSpotSpec] = [
 		ParkSpotSpec.create(
-			&"summit_fundamentals", "Summit Fundamentals", Vector3(0.0, 0.0, 116.0), Vector3(0.0, 0.0, 138.0),
+			&"summit_fundamentals", "Summit Fundamentals", Vector3(0.0, 0.0, 116.0), Vector3(0.0, 0.0, ParkLayout.DEFAULT_SPAWN_WORLD_Z),
 			[&"learn", &"flow", &"first_jib"], _feature_ids(["SummitStartGate", "SummitRollerA", "SummitRollerB", "SmallTable", "SummitFlatBox", "BeginnerTube"])
 		),
 		ParkSpotSpec.create(

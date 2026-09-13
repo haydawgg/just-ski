@@ -21,6 +21,7 @@ Use this checklist when changing or replacing scenes in the environment asset ca
 - [x] `visual_analysis_bundle.ps1` is the canonical local GPU workflow for maintained environment, animation, and sunset evidence.
 - [x] `visual_analysis_bundle.ps1 -IncludeMotion` can sweep Day/Golden/Sunset at the requested render scales with fixed-rate motion telemetry and contact sheets.
 - [x] `visual_analysis_bundle.ps1 -IncludeRecovery` captures the out-of-bounds fade, respawn, camera reset, and completed lifecycle as reviewable phase artifacts.
+- [x] `continuous_course_release_acceptance.tscn` drives the production spawn-to-finish course with normal input, all three real hero takeoffs and landings, no reset between events, and at least five seconds of skiing after LargeTable. It is registered in the release-stress runtime shard.
 
 ## Human visual pass
 
@@ -53,6 +54,34 @@ percentiles, camera telemetry, event markers, and probe telemetry to
 2.15/2.83/3.42 s, zero grounded hard-invalid frames and zero camera fallbacks
 in both. GPU/human performance and visual review remain outstanding.
 
+The complementary physical integration trace is
+`tests/continuous_course_release_acceptance.tscn`
+(`continuous_course_release_acceptance/v1`). Unlike the deterministic benchmark,
+it begins at the production spawn and drives ordinary input/state transitions to
+the real finish without teleporting, writing transforms or velocities, resetting
+the camera, or calling `reset_for_benchmark`. Its 60 Hz acceptance run completed
+in 33.22 s (1,993 physics frames) with no bail or recovery respawn, zero hard
+composition-invalid frames, and these measured events:
+
+| Measurement | SmallTable | MediumTable | LargeTable |
+| --- | ---: | ---: | ---: |
+| Lip speed | 16.36 m/s | 17.71 m/s | 17.28 m/s |
+| Airtime | 1.85 s | 1.98 s | 1.95 s |
+| Lateral line error | 1.34 m | 0.70 m | 1.66 m |
+| Continuous grounded recovery | 4.05 s | 5.32 s | 2.43 s before finish |
+| Stable recovery confirmation | 0.50 s | 0.50 s | 0.50 s |
+
+The skier continued for 8.57 s after LargeTable before the authoritative finish.
+Camera target distance remained 3.64–7.40 m; 102 bounded fallback samples were
+recorded and no hard-invalid sample occurred. The structured trace is written to
+`user://continuous_course_release_profile.json`.
+
+The production drop-in now measures 77.69 slope metres from spawn to the
+SmallTable structure, within the accepted 60–100 m region. The continuous trace
+charged at 8.83 s / 14.66 m/s and took off at 9.50 s / 16.36 m/s. The extra
+distance was added uphill; the three hero jumps and their established spacing
+were not moved, and skier physics was not retuned.
+
 | Gate area | Executable evidence |
 | --- | --- |
 | Camera correctness | `camera_convex_crest_follow_acceptance`, `camera_kidnapped_reacquire_acceptance`, `camera_collision_destination_acceptance`, `camera_airborne_viewport_diagnostic` (30/60/120 Hz), `camera_runtime_stability_acceptance` |
@@ -60,7 +89,7 @@ in both. GPU/human performance and visual review remain outstanding.
 | Contact/stance | `contact_stance_acceptance`, `terrain_suspension_course`, `crest_unweighting_acceptance` |
 | Animation | `jump_animation_acceptance`, `landing_animation_acceptance`, `trick_animation_acceptance`, `grab_animation_acceptance`, `animation_silhouette_acceptance` |
 | VFX/shadow | `snow_vfx_acceptance`, `contact_shadow_diagnostic`, `environment_visual_acceptance` |
-| Course | `course_rhythm_acceptance`, `park_challenge_playthrough_acceptance`, `release_jump_envelope_acceptance` |
+| Course | `continuous_course_release_acceptance`, `course_rhythm_acceptance`, `park_challenge_playthrough_acceptance`, `release_jump_envelope_acceptance` |
 | Terrain | `park_terrain_continuity_acceptance`, `wedge_viewport_diagnostic`, `physics_collision_acceptance` |
 | Snow/lighting | `snow_lighting_architecture_acceptance`, `environment_visual_acceptance`, `sunset_environment_acceptance` |
 | Environment | `environment_tree_batch_acceptance`, `resort_density_acceptance`, `summit_environment_acceptance` |
@@ -105,3 +134,57 @@ Both GPU gates wait for the capture process, inspect its exit code and logs,
 require fresh output files, and fail when a renderer shutdown leak is reported.
 
 For the complete Codex-facing review bundle, run `.\tests\visual_analysis_bundle.ps1` after the headless gate. Do not update baselines from this dirty worktree; baseline seeding must use an explicitly reviewed clean reference capture.
+
+## Local GPU characterization and deferred review
+
+On the available NVIDIA GeForce RTX 4050 Laptop GPU, Godot 4.7.2 Forward+ at
+1920×1080, High preset and render scale 1.0, the maintained identical daytime
+trace produced the following local probe A/B. This is characterization, not a
+shipping-hardware budget or sign-off.
+
+| Isolation | Avg / p95 / p99 / max frame time | Probe recaptures | Recapture frame samples |
+| --- | --- | ---: | --- |
+| Baseline | 5.74 / 6.61 / 27.35 / 65.89 ms | 2, none in AIR | 64.35, 65.79 ms |
+| Environment effects isolation | 5.32 / 6.41 / 23.44 / 72.61 ms | 2, none in AIR | 4.41, 4.51 ms |
+| Probe disabled | 5.66 / 6.06 / 31.43 / 73.20 ms | 0 | n/a |
+
+Because disabling the probe did not improve the overall tail and recapture-frame
+cost changed materially with isolation mode, the local result is inconclusive;
+the existing recapture policy remains unchanged. `Resort.player_probe_summary()`
+now records recapture intervals, process frames and their frame-time samples for
+a repeatable target-hardware comparison. **TARGET_HARDWARE_A_B_DEFERRED.**
+
+Machine-generated visual evidence is under
+`.godot_user/visual_runs/visual_20260912_232703_893_0e28b7b`. It records the
+commit, dirty state, renderer, GPU, dimensions, preset, environment and hashes,
+and contains Day/Golden/Sunset structured PNG evidence plus the available motion
+traces and guide-hidden ramp captures. This run is not a human approval. Its
+manifest currently reports three objective errors: the snow-depth pixel check is
+red against the maintained 0.095 threshold (0.061 average spread), the Sunset
+carve motion manifest was not produced after a local audio-device invalidation,
+and the Sunset straight motion log contains a renderer shutdown warning. The
+earlier eight `scenario ROI is invalid` errors came from PR #69 adding the
+`medium_deck`, `medium_landing`, `large_knuckle` and `large_landing` shots
+without catalog entries; those entries now exist in `tests/visual_scenarios.json`
+and the bundle was rebuilt with the Python post-processor only, which produced
+all eight subject crops. Preserve the remaining objective results; do not lower
+the metric or call the partial bundle green. The complete pass summary is in
+`docs/RELEASE_READINESS_REPORT.md`.
+
+The uninterrupted gameplay trace has its own passing structured, lossless
+1280×720 set at `.godot_user/visual_runs/continuous_course_release`: 16 frames
+cover both linked carve directions, every approach/charge, takeoff, apex and
+first-contact landing, five seconds after LargeTable, and the actual finish,
+along with the JSON telemetry. Guide-hidden ramp sets are at
+`.godot_user/visual_runs/ramp_surface_daytime_noguides` and
+`.godot_user/visual_runs/ramp_surface_sunset_noguides`. Contact-shadow height
+samples are under `.godot_user/contact_shadow_gpu`, and the passing Sunset
+near-black capture is under `.godot_user/captures` (see
+`.godot_logs/sunset_visual_gate.stdout.log` for its exact timestamped filename).
+The separately refreshed canonical and skier-hidden environment sets are under
+`.godot_user/captures/snow_depth_after*`; both produced all artifacts, but the
+maintained snow-depth check remains red at 0.044 average spread versus 0.095.
+
+**HUMAN_REVIEW_DEFERRED:** athletic pose quality, perceived camera comfort, snow
+realism, jump readability, resort believability, ski readability, shadow
+aesthetics, overall presentation, target-display review and human play-testing.
