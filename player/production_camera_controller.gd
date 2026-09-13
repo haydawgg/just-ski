@@ -1,5 +1,5 @@
 class_name ProductionSkiCameraController
-extends SkiCameraController
+extends "res://player/camera_controller.gd"
 
 ## Production integration layer for carve composition. The base camera keeps
 ## heading/travel divergence for skid and hockey-stop semantics, but a clean
