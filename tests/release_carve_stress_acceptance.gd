@@ -2,8 +2,8 @@ extends Node
 
 ## Phase 13 high-speed linked-carve stress: sustained alternating carves on the
 ## production resort with camera and stance telemetry. Proves the integrated
-## carve path keeps the camera band, hard-frame validity, and readable loading
-## without state lock or oscillation.
+## carve path keeps the camera band, hard-frame validity, readable loading, and
+## a modest signed trajectory lead without state lock or oscillation.
 
 const TURN_FRAMES := 80
 const TURN_COUNT := 8
@@ -14,6 +14,9 @@ const MAX_DISTANCE_STEP_M := 0.06
 const MIN_COMPRESSION_RANGE := 0.05
 const MIN_CAMERA_DISTANCE := 3.28
 const MAX_CAMERA_DISTANCE := 7.47
+const MIN_CAMERA_LEAD_M := 0.10
+const MIN_CAMERA_SIGNAL_DEGREES := 3.0
+const MIN_CAMERA_SIGNAL_SIGN_CHANGES := 3
 
 @onready var resort: Node = $Resort
 
@@ -32,6 +35,9 @@ var previous_distance := 0.0
 var minimum_compression := INF
 var maximum_compression := -INF
 var maximum_look_ahead := 0.0
+var maximum_camera_turn_signal := 0.0
+var camera_signal_sign_changes := 0
+var previous_camera_signal_sign := 0.0
 
 func _ready() -> void:
 	skier = resort.get_node("Skier") as SkierController
@@ -81,6 +87,13 @@ func _run_frames(count: int) -> void:
 		maximum_compression = maxf(maximum_compression, compression)
 		var look_ahead: Vector3 = snapshot.get("carve_look_ahead_offset", Vector3.ZERO)
 		maximum_look_ahead = maxf(maximum_look_ahead, look_ahead.length())
+		var camera_signal := float(snapshot.get("camera_turn_signal_degrees", 0.0))
+		maximum_camera_turn_signal = maxf(maximum_camera_turn_signal, absf(camera_signal))
+		var camera_signal_sign := signf(camera_signal) if absf(camera_signal) >= MIN_CAMERA_SIGNAL_DEGREES else 0.0
+		if camera_signal_sign != 0.0 and previous_camera_signal_sign != 0.0 and camera_signal_sign != previous_camera_signal_sign:
+			camera_signal_sign_changes += 1
+		if camera_signal_sign != 0.0:
+			previous_camera_signal_sign = camera_signal_sign
 		var turn_sign := signf(skier.edge_amount) if absf(skier.edge_amount) > 0.08 else 0.0
 		if turn_sign != 0.0 and previous_turn_sign != 0.0 and turn_sign != previous_turn_sign:
 			turn_sign_changes += 1
@@ -105,8 +118,14 @@ func _validate() -> void:
 		failures.append("Carve stress did not load the stance (range %.3f)" % compression_range)
 	if minimum_compression < -1.0 or maximum_compression > 2.0:
 		failures.append("Carve stress compression left its sane range: (%.2f, %.2f)" % [minimum_compression, maximum_compression])
-	print("RELEASE_CARVE_SAMPLE turns=%d sign_changes=%d grounded=%.2f invalid=%d distance=(%.2f,%.2f) max_step=%.3f compression=(%.2f,%.2f) look_ahead=%.2f" % [
-		TURN_COUNT, turn_sign_changes, grounded_ratio, invalid_frames, minimum_distance, maximum_distance, maximum_distance_step, minimum_compression, maximum_compression, maximum_look_ahead
+	if maximum_look_ahead < MIN_CAMERA_LEAD_M:
+		failures.append("Integrated carve camera lead stayed at %.3f m (need at least %.2f m)" % [maximum_look_ahead, MIN_CAMERA_LEAD_M])
+	if maximum_camera_turn_signal < MIN_CAMERA_SIGNAL_DEGREES:
+		failures.append("Trajectory turn signal stayed at %.2f degrees (need at least %.1f)" % [maximum_camera_turn_signal, MIN_CAMERA_SIGNAL_DEGREES])
+	if camera_signal_sign_changes < MIN_CAMERA_SIGNAL_SIGN_CHANGES:
+		failures.append("Trajectory camera signal changed side only %d times (need at least %d)" % [camera_signal_sign_changes, MIN_CAMERA_SIGNAL_SIGN_CHANGES])
+	print("RELEASE_CARVE_SAMPLE turns=%d sign_changes=%d grounded=%.2f invalid=%d distance=(%.2f,%.2f) max_step=%.3f compression=(%.2f,%.2f) look_ahead=%.2f turn_signal=%.1f signal_changes=%d" % [
+		TURN_COUNT, turn_sign_changes, grounded_ratio, invalid_frames, minimum_distance, maximum_distance, maximum_distance_step, minimum_compression, maximum_compression, maximum_look_ahead, maximum_camera_turn_signal, camera_signal_sign_changes
 	])
 
 func _finish() -> void:
@@ -114,7 +133,7 @@ func _finish() -> void:
 	Input.action_release("steer_right")
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("RELEASE_CARVE_STRESS_PASS: sustained linked carves kept camera framing, validity, and readable stance loading")
+		print("RELEASE_CARVE_STRESS_PASS: sustained linked carves kept camera framing, validity, readable stance loading, and signed trajectory lead")
 		get_tree().quit(0)
 		return
 	for failure: String in failures:
