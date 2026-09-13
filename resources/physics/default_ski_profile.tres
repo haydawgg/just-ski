@@ -4,6 +4,15 @@
 
 [resource]
 script = ExtResource("1")
+contact_shadow_near_opacity = 0.52
+contact_shadow_far_opacity = 0.035
+contact_shadow_fade_height = 9.0
+contact_shadow_near_width = 1.25
+contact_shadow_near_length = 2.2
+contact_shadow_far_width = 2.05
+contact_shadow_far_length = 3.35
+contact_shadow_near_softness = 0.12
+contact_shadow_far_softness = 0.82
 left_front_probe_offset = Vector3(-0.34, 0, -0.84)
 left_rear_probe_offset = Vector3(-0.34, 0, 0.84)
 right_front_probe_offset = Vector3(0.34, 0, -0.84)

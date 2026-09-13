@@ -66,7 +66,6 @@ const COMPOSITION_LANDMARK_NAMES := [
 @export var collision_reframe_lift := 1.35
 @export var collision_shoulder_offset := 1.25
 @export var collision_correction_speed := 8.0
-@export var maximum_position_speed := 30.0
 @export var maximum_distance_change_rate := 2.4
 @export var camera_collision_radius := 0.22
 @export var crash_target_height := 0.62

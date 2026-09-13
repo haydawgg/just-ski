@@ -11,6 +11,7 @@ const FACE_WIDTH := 64.0
 const FACE_SLOPE_LENGTH := 510.0
 const SURFACE_Y_AT_ORIGIN := 52.0
 const SPAWN_HOVER := 1.15
+const DEFAULT_SPAWN_WORLD_Z := 190.0
 const MARKER_HOVER := 0.5
 # Shallow skirt depth used to close the render manifold of profiled snow
 # features (matches the summit terrain's render skirt).
@@ -70,7 +71,7 @@ static func along_slope(origin: Vector3, distance: float, yaw_deg: float = 0.0) 
 static func face_center() -> Vector3:
 	return snow_at(0.0, 0.0) - snow_normal() * (FACE_THICKNESS * 0.5)
 
-static func spawn_position(world_z: float = 138.0) -> Vector3:
+static func spawn_position(world_z: float = DEFAULT_SPAWN_WORLD_Z) -> Vector3:
 	return surface_hover(0.0, world_z, SPAWN_HOVER)
 
 static func hub_position(finish_world_z: float = -227.0) -> Vector3:

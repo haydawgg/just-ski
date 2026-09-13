@@ -59,6 +59,10 @@ var _probe_refresh_parity := false
 var player_probe_recaptures := 0
 var _probe_recaptures_in_air := 0
 var _probe_last_interval_seconds := 0.0
+var _probe_recapture_intervals_seconds: Array[float] = []
+var _probe_recapture_process_frames: Array[int] = []
+var _probe_recapture_frame_delta_ms: Array[float] = []
+var _probe_current_frame_delta_ms := 0.0
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--session-yard"):
@@ -80,6 +84,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_refresh_hdr_presentation_state()
+	_probe_current_frame_delta_ms = maxf(delta, 0.0) * 1000.0
 	_update_player_probe(delta)
 
 func _validate_environment_asset_catalog() -> void:
@@ -224,7 +229,9 @@ func _build_resort() -> void:
 	ParkLayout.add_slope_box(self, "LeftBank", -36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), -10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
 	ParkLayout.add_slope_box(self, "RightBank", 36.0, 0.0, Vector3(18.0, ParkLayout.FACE_THICKNESS, face_len), 10.0, SNOW_SHADOW, SnowSurface.Kind.PACKED, true)
 	course_features = ParkCourseBuilderModule.build(self, course_profile, physics_profile, environment_asset_catalog)
-	var lodge_pos := ParkLayout.snow_at(-18.0, 145.0) + Vector3(0.0, 2.6, 0.0)
+	# Keep the extended hero drop-in clear; the summit lodge remains a strong
+	# scale landmark on the left bank rather than becoming a line obstacle.
+	var lodge_pos := ParkLayout.snow_at(-42.0, 160.0) + Vector3(0.0, 2.6, 0.0)
 	_add_lodge(lodge_pos)
 	_add_tree_clusters()
 	_add_course_dressing()
@@ -242,7 +249,7 @@ func _build_player() -> void:
 	player = SkierController.new()
 	player.name = "Skier"
 	player.profile = physics_profile
-	player.position = ParkLayout.spawn_position(course_profile.spawn_world_z() if course_profile != null else 138.0)
+	player.position = ParkLayout.spawn_position(course_profile.spawn_world_z() if course_profile != null else ParkLayout.DEFAULT_SPAWN_WORLD_Z)
 	player.basis = ParkLayout.downhill_basis()
 	add_child(player)
 	for node: Node in player.find_children("*", "GeometryInstance3D", true, false):
@@ -253,6 +260,9 @@ func _build_player() -> void:
 	add_child(course_recovery)
 	course_recovery.set_target(player)
 	course_recovery.course_profile = course_profile
+	if course_profile != null:
+		course_recovery.maximum_z = course_profile.spawn_world_z() + 10.0
+		course_recovery.minimum_z = course_profile.finish_trigger_world_z() - 20.0
 
 	camera_rig = SkiCameraController.new()
 	camera_rig.name = "CameraRig"
@@ -632,7 +642,7 @@ func _add_course_dressing() -> void:
 	_add_snow_bank(ParkLayout.snow_at(-48.5, -84.0), 0.9, 6.0, 2)
 	_add_snow_bank(ParkLayout.snow_at(48.5, -132.0), 0.95, -14.0, 0)
 	# Piste markers bound the corridor with regular near-field parallax.
-	var marker_z := 134.0
+	var marker_z := course_profile.spawn_world_z() - 4.0 if course_profile != null else ParkLayout.DEFAULT_SPAWN_WORLD_Z - 4.0
 	while marker_z >= -238.0:
 		_add_piste_marker(ParkLayout.snow_at(-32.0, marker_z), 180.0)
 		_add_piste_marker(ParkLayout.snow_at(32.0, marker_z), 0.0)
@@ -1010,6 +1020,9 @@ func _move_probe_and_capture(target: Vector3) -> void:
 	if player_probe == null:
 		return
 	_probe_last_interval_seconds = _probe_time_since_capture if player_probe_recaptures > 0 else 0.0
+	_probe_recapture_intervals_seconds.append(_probe_last_interval_seconds)
+	_probe_recapture_process_frames.append(Engine.get_process_frames())
+	_probe_recapture_frame_delta_ms.append(_probe_current_frame_delta_ms)
 	if player != null and player.state == SkierController.State.AIR:
 		_probe_recaptures_in_air += 1
 	player_probe.global_position = target
@@ -1028,6 +1041,9 @@ func player_probe_summary() -> Dictionary:
 		"recaptures": player_probe_recaptures,
 		"recaptures_in_air": _probe_recaptures_in_air,
 		"last_interval_s": _probe_last_interval_seconds,
+		"recapture_intervals_s": _probe_recapture_intervals_seconds.duplicate(),
+		"recapture_process_frames": _probe_recapture_process_frames.duplicate(),
+		"recapture_frame_delta_ms": _probe_recapture_frame_delta_ms.duplicate(),
 	}
 
 func _force_probe_refresh() -> void:
@@ -1037,6 +1053,12 @@ func _force_probe_refresh() -> void:
 	# across repeated Day/Sunset switches.
 	if player_probe == null:
 		return
+	_probe_last_interval_seconds = _probe_time_since_capture if player_probe_recaptures > 0 else 0.0
+	_probe_recapture_intervals_seconds.append(_probe_last_interval_seconds)
+	_probe_recapture_process_frames.append(Engine.get_process_frames())
+	_probe_recapture_frame_delta_ms.append(_probe_current_frame_delta_ms)
+	if player != null and player.state == SkierController.State.AIR:
+		_probe_recaptures_in_air += 1
 	_probe_refresh_parity = not _probe_refresh_parity
 	var sign := 1.0 if _probe_refresh_parity else -1.0
 	player_probe.global_position = _probe_capture_position + Vector3(0.0, sign * PLAYER_PROBE_REFRESH_OFFSET, 0.0)

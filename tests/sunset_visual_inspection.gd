@@ -149,6 +149,9 @@ func _apply_isolation() -> void:
 			_disable_shadows(resort)
 		"environment_effects":
 			_disable_environment_effects(resort)
+		"probe_disabled":
+			resort.set("_player_probe_allowed", false)
+			_set_node_visibility(resort.get_node_or_null("PlayerProbe"), false)
 		"profiled_features":
 			_hide_profiled_feature_meshes(resort)
 		"profiled_feature_shadows":
@@ -373,6 +376,9 @@ func _finish(exit_code: int) -> void:
 		render_metrics,
 		AudioManager.profiling_snapshot()
 	)
+	var resort := get_node_or_null("Resort")
+	if resort != null and resort.has_method("player_probe_summary"):
+		render_profile["probe"] = resort.call("player_probe_summary")
 	render_profile["legacy"] = {
 		"average_rendered_fps": average_fps,
 		"average_frame_ms": average_frame_ms,
@@ -415,7 +421,7 @@ func _finish(exit_code: int) -> void:
 		_finish_evidence(exit_code)
 	print("SUNSET_VISUAL_PERF: average rendered FPS %.1f frame_ms %.2f samples=%d" % [average_fps, average_frame_ms, frame_time_samples])
 	print("SUNSET_RENDER_PROFILE: %s" % JSON.stringify(render_profile))
-	var resort := get_node_or_null("Resort")
+	resort = get_node_or_null("Resort")
 	if resort != null and resort.has_method("release_render_resources"):
 		resort.call("release_render_resources")
 	AudioManager.shutdown_audio()

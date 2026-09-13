@@ -35,6 +35,8 @@ const SETUP_MIN_USABLE_WIDTH := 18.0
 const MIN_SETUP_SLOPE_M := 55.0
 const MAX_SETUP_SLOPE_M := 100.0
 const MIN_RUNOUT_SLOPE_M := 60.0
+const MIN_DROP_IN_SLOPE_M := 60.0
+const MAX_DROP_IN_SLOPE_M := 100.0
 const CORRIDOR_SLICE_STEP_M := 1.0
 
 @onready var resort: Node = $Resort
@@ -172,6 +174,8 @@ func _validate_spacing_and_runout() -> void:
 		failures.append("Face extent %.1f does not cover the finish %.1f with margin" % [face_half, finish_z])
 	var drop_in := (profile.spawn_world_z() - float(small.run_in_z)) / cos_pitch
 	print("COURSE_RHYTHM_SAMPLE drop_in=%.1f m face_half=%.1f m" % [drop_in, face_half])
+	if drop_in < MIN_DROP_IN_SLOPE_M or drop_in > MAX_DROP_IN_SLOPE_M:
+		failures.append("Drop-in is %.1f slope m (need %.0f-%.0f)" % [drop_in, MIN_DROP_IN_SLOPE_M, MAX_DROP_IN_SLOPE_M])
 
 func _validate_built_corridor() -> void:
 	if resort == null:

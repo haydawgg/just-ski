@@ -52,6 +52,17 @@ extends Resource
 @export var spawn_settle_response: float = 8.0
 @export_range(0.0, 89.0) var maximum_ground_angle_degrees: float = 62.0
 
+@export_category("Contact Shadow")
+@export_range(0.0, 1.0, 0.01) var contact_shadow_near_opacity: float = 0.52
+@export_range(0.0, 1.0, 0.01) var contact_shadow_far_opacity: float = 0.035
+@export_range(0.1, 12.0, 0.1) var contact_shadow_fade_height: float = 9.0
+@export_range(0.2, 4.0, 0.05) var contact_shadow_near_width: float = 1.25
+@export_range(0.2, 6.0, 0.05) var contact_shadow_near_length: float = 2.2
+@export_range(0.2, 5.0, 0.05) var contact_shadow_far_width: float = 2.05
+@export_range(0.2, 7.0, 0.05) var contact_shadow_far_length: float = 3.35
+@export_range(0.0, 1.0, 0.01) var contact_shadow_near_softness: float = 0.12
+@export_range(0.0, 1.0, 0.01) var contact_shadow_far_softness: float = 0.82
+
 func contact_probe_offsets() -> Array[Vector3]:
 	return [
 		left_front_probe_offset,

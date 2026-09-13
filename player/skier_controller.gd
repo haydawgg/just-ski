@@ -1986,13 +1986,16 @@ func _build_contact_shadow() -> void:
 	contact_shadow.visibility_range_end = 120.0
 	contact_shadow.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(2.2, 2.2)
+	# Unit plane: the profile owns the independent across-ski and along-ski
+	# dimensions, making the cue explicitly elliptical rather than a round disk.
+	plane.size = Vector2.ONE
 	plane.orientation = PlaneMesh.FACE_Y
 	contact_shadow.mesh = plane
 	contact_shadow_material = ShaderMaterial.new()
 	contact_shadow_material.shader = preload("res://shaders/contact_shadow.gdshader")
 	contact_shadow_material.set_shader_parameter("shadow_color", Color(0.08, 0.12, 0.18, 1.0))
-	contact_shadow_material.set_shader_parameter("shadow_opacity", 0.52)
+	contact_shadow_material.set_shader_parameter("shadow_opacity", profile.contact_shadow_near_opacity)
+	contact_shadow_material.set_shader_parameter("shadow_softness", profile.contact_shadow_near_softness)
 	contact_shadow.material_override = contact_shadow_material
 	contact_shadow.top_level = true
 	add_child(contact_shadow)
@@ -2049,16 +2052,17 @@ func _update_contact_shadow(_delta: float) -> void:
 		return
 	var to_skier := global_position - ground_pos
 	var height := to_skier.dot(ground_normal)
-	height = clampf(height, 0.0, 12.0)
-	# Restrained fade: visible when near ground, fades gracefully before becoming a distant blob.
-	var height_alpha := clampf(1.0 - smoothstep(1.2, 9.5, height), 0.0, 1.0)
+	height = clampf(height, 0.0, maxf(profile.contact_shadow_fade_height, 0.1))
+	var height_ratio := clampf(height / maxf(profile.contact_shadow_fade_height, 0.1), 0.0, 1.0)
+	var height_curve := smoothstep(0.0, 1.0, height_ratio)
 	# VFX-03: AIR confidence is the real probe-derived contact confidence
 	# (high only while snow stays within probe reach, decaying toward zero
 	# with altitude) instead of a near-constant that kept low air as dark as
 	# grounded snow.
 	var confidence_alpha := clampf(contact.confidence, 0.0, 1.0)
-	var alpha := height_alpha * lerpf(0.45, 0.72, confidence_alpha) * 0.52
-	if alpha < 0.02 or height > 9.0:
+	var profiled_opacity := lerpf(profile.contact_shadow_near_opacity, profile.contact_shadow_far_opacity, height_curve)
+	var alpha := profiled_opacity * lerpf(0.78, 1.0, confidence_alpha)
+	if alpha < 0.02 or height >= profile.contact_shadow_fade_height:
 		contact_shadow.visible = false
 		return
 	contact_shadow.visible = true
@@ -2071,10 +2075,15 @@ func _update_contact_shadow(_delta: float) -> void:
 	# Align plane to ground: Y = ground_normal
 	var basis := Basis.looking_at(downhill, ground_normal)
 	contact_shadow.global_transform = Transform3D(basis, ground_pos + ground_normal * 0.018)
-	# Size grows slightly with height to mimic softer penumbra, but restrained (use scale, not mesh mutation).
-	var size_factor := lerpf(1.0, 1.45, clampf(height / 7.0, 0.0, 1.0))
-	contact_shadow.scale = Vector3(size_factor, 1.0, size_factor)
+	# The footprint grows independently across and along the skis while its
+	# normalized shader edge softens. It remains a compact height cue, not a
+	# substitute for the renderer's physical cast shadow.
+	var width := lerpf(profile.contact_shadow_near_width, profile.contact_shadow_far_width, height_curve)
+	var length := lerpf(profile.contact_shadow_near_length, profile.contact_shadow_far_length, height_curve)
+	var softness := lerpf(profile.contact_shadow_near_softness, profile.contact_shadow_far_softness, height_curve)
+	contact_shadow.scale = Vector3(width, 1.0, length)
 	contact_shadow_material.set_shader_parameter("shadow_opacity", alpha)
+	contact_shadow_material.set_shader_parameter("shadow_softness", softness)
 
 func _build_debug_draw() -> void:
 	debug_mesh = ImmediateMesh.new()

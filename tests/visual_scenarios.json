@@ -739,6 +739,138 @@
       ]
     },
     {
+      "id": "environment.ramp_texture.medium_deck",
+      "suite": "environment",
+      "label": "Ramp texture medium tabletop deck",
+      "state": "RAMP_TEXTURE",
+      "phase": "medium_deck",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_medium_deck",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the medium tabletop deck read as the same authored ramp material as the small table?",
+        "Is the deck surface distinct from the piste without looking like a hard panel?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_medium_deck"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.medium_landing",
+      "suite": "environment",
+      "label": "Ramp texture medium tabletop landing",
+      "state": "RAMP_TEXTURE",
+      "phase": "medium_landing",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_medium_landing",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the medium landing texture remain readable through the taper back into the piste?",
+        "Is the landing transition continuous with no visible seam?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_medium_landing"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.large_knuckle",
+      "suite": "environment",
+      "label": "Ramp texture large tabletop knuckle",
+      "state": "RAMP_TEXTURE",
+      "phase": "large_knuckle",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_large_knuckle",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Is the large tabletop knuckle readable before the skier reaches the landing?",
+        "Does the knuckle edge follow the authored geometry without floating texture?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_large_knuckle"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
+      "id": "environment.ramp_texture.large_landing",
+      "suite": "environment",
+      "label": "Ramp texture large tabletop landing",
+      "state": "RAMP_TEXTURE",
+      "phase": "large_landing",
+      "view": "gameplay",
+      "roi": {
+        "type": "normalized_rect",
+        "x": 0,
+        "y": 0,
+        "width": 1,
+        "height": 1
+      },
+      "masks": [],
+      "capture_key": "ramp_texture_large_landing",
+      "required_artifacts": [
+        "raw",
+        "telemetry"
+      ],
+      "human_review": [
+        "Does the large landing texture stay readable at the widest table footprint?",
+        "Is the landing transition continuous with no visible seam?"
+      ],
+      "capture_timing": {
+        "trigger": "deterministic_gameplay_camera_shot",
+        "key": "ramp_texture_large_landing"
+      },
+      "semantic_checks": [
+        "capture_written",
+        "finite_telemetry"
+      ]
+    },
+    {
       "id": "environment.ramp_texture.roller",
       "suite": "environment",
       "label": "Ramp texture roller",

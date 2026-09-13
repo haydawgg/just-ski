@@ -51,6 +51,17 @@ var recovery_triggered := false
 var recovery_capture_finished := false
 var recovery_events: Array[Dictionary] = []
 var hide_skier := false
+var canonical_warmup_brake_started := false
+var canonical_right_started := false
+var canonical_carve_requested := false
+var canonical_left_started := false
+var canonical_transition_requested := false
+var canonical_jump_started := false
+var canonical_left_released := false
+var canonical_speed_requested := false
+var canonical_brake_started := false
+var canonical_skid_requested := false
+var canonical_jump_release_frame := -1
 
 func _ready() -> void:
 	_parse_visual_arguments()
@@ -183,30 +194,61 @@ func _physics_process(_delta: float) -> void:
 	if capture_recovery:
 		_step_recovery_capture()
 		return
-	if frame_count == 150:
-		Input.action_press("steer_right", 0.82)
-	if frame_count == 260:
-		Input.action_release("steer_right")
-		Input.action_press("steer_left", 1.0)
-	if frame_count == 340:
-		Input.action_release("steer_left")
-	if frame_count == 230:
+	_step_canonical_capture()
+
+func _step_canonical_capture() -> void:
+	# The production spawn owns a longer drop-in now, so the maintained visual
+	# stations follow world thresholds instead of drifting uphill with absolute
+	# frame numbers. This remains ordinary gameplay input and preserves the
+	# established z=133..106 evidence corridor and real pop/landing.
+	var skier := get_node_or_null("Resort/Skier") as SkierController
+	if skier == null:
+		capture_failed = true
+		push_error("ENVIRONMENT_VISUAL_CAPTURE_FAIL: skier was unavailable")
+		_finish(1)
+		return
+	var world_z := skier.global_position.z
+	if not canonical_warmup_brake_started:
+		canonical_warmup_brake_started = true
+		Input.action_press("brake", 1.0)
+	if not canonical_right_started and world_z <= 137.0:
+		canonical_right_started = true
+		Input.action_release("brake")
+		Input.action_press("steer_right", 0.35)
+	if not canonical_carve_requested and world_z <= 132.8:
+		canonical_carve_requested = true
 		call_deferred("_capture_gameplay_frame", "gameplay_carve.png")
-	if frame_count == 315:
+	if not canonical_left_started and world_z <= 130.0:
+		canonical_left_started = true
+		Input.action_release("steer_right")
+		Input.action_press("steer_left", 0.50)
+	if not canonical_transition_requested and world_z <= 128.5:
+		canonical_transition_requested = true
 		call_deferred("_capture_gameplay_frame", "gameplay_transition.png")
-	if frame_count == 430:
+	if not canonical_jump_started and world_z <= 128.0:
+		canonical_jump_started = true
+		Input.action_press("jump")
+	if not canonical_left_released and world_z <= 126.0:
+		canonical_left_released = true
+		Input.action_release("steer_left")
+	if not canonical_speed_requested and world_z <= 121.0:
+		canonical_speed_requested = true
 		call_deferred("_capture_gameplay_frame", "gameplay_speed.png")
+	if not canonical_brake_started and world_z <= 121.0:
+		canonical_brake_started = true
 		Input.action_press("steer_right", 1.0)
 		Input.action_press("brake", 0.88)
-	if frame_count == 470:
+	if not canonical_skid_requested and world_z <= 118.6:
+		canonical_skid_requested = true
 		call_deferred("_capture_gameplay_frame", "gameplay_skid.png")
-	if frame_count == 485:
+	if canonical_jump_release_frame < 0 and world_z <= 117.0:
+		canonical_jump_release_frame = frame_count
 		Input.action_release("steer_right")
 		Input.action_release("brake")
-		Input.action_press("jump")
-	if frame_count == 535:
 		Input.action_release("jump")
-	if frame_count >= 780 or (landing_captured and frame_count > 610):
+	var capture_timed_out := canonical_jump_release_frame >= 0 and frame_count > canonical_jump_release_frame + 300
+	var landing_settled := canonical_jump_release_frame >= 0 and landing_captured and frame_count > canonical_jump_release_frame + 75
+	if capture_timed_out or landing_settled:
 		Input.action_release("steer_right")
 		Input.action_release("steer_left")
 		Input.action_release("brake")
