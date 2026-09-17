@@ -72,9 +72,9 @@ func accept_trick(text: String, base_points: int, quality: float, outcome: int) 
 	landed_trick_count += 1
 	if outcome == LandingSolver.Outcome.CLEAN:
 		clean_trick_count += 1
-	if adjusted_points > best_trick_points:
-		best_trick_points = adjusted_points
-		best_trick_name = scored_text
+	if base_points > best_trick_points:
+		best_trick_points = base_points
+		best_trick_name = text
 	if not pending_feature_kind.is_empty():
 		last_feature_kind = pending_feature_kind
 		link_remaining = line_link_window

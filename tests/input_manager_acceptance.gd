@@ -26,10 +26,25 @@ func _ready() -> void:
 
 	var joy_event := InputEventJoypadButton.new()
 	joy_event.device = 2
+	joy_event.pressed = true
 	manager._input(joy_event)
 	_check(manager.active_joypad_id == 2, "Input activity selected the physical joypad ID")
 	_check(manager.last_device == "controller", "Unknown controller family used the generic presentation")
 	_check(manager.glyph(&"respawn") == "Y / Triangle", "Generic controller glyph retained both face-button labels")
+
+	var release_event := InputEventJoypadButton.new()
+	release_event.device = 5
+	release_event.pressed = false
+	manager._input(release_event)
+	_check(manager.active_joypad_id == 2, "Button release did not steal active controller identity")
+
+	var drift_event := InputEventJoypadMotion.new()
+	drift_event.device = 5
+	drift_event.axis = JOY_AXIS_LEFT_X
+	drift_event.axis_value = 0.05
+	manager._input(drift_event)
+	_check(manager.active_joypad_id == 2, "Sub-threshold stick drift did not move active controller identity")
+	_check(manager._multi_pad_active(), "Two tracked controllers enabled scoped multi-pad reads")
 
 	var key_event := InputEventKey.new()
 	manager._input(key_event)
@@ -43,6 +58,30 @@ func _ready() -> void:
 	_check(manager.active_joypad_id == -1, "Final disconnect cleared the active controller")
 	_check(manager.last_device == "keyboard", "Final disconnect returned presentation to keyboard")
 	_check(availability == [true, false], "Aggregate availability emitted a single final disconnect: " + str(availability))
+
+	# Deliberate deflection selects the producing pad; a controller-driven final
+	# disconnect arms the pause flag while a keyboard-first one leaves it clear.
+	manager._on_joy_connection_changed(5, true)
+	manager._on_joy_connection_changed(2, true)
+	var drive_event := InputEventJoypadButton.new()
+	drive_event.device = 2
+	drive_event.pressed = true
+	manager._input(drive_event)
+	var push_event := InputEventJoypadMotion.new()
+	push_event.device = 5
+	push_event.axis = JOY_AXIS_LEFT_X
+	push_event.axis_value = 0.9
+	manager._input(push_event)
+	_check(manager.active_joypad_id == 5, "Deliberate deflection selected the producing joypad ID")
+	manager._on_joy_connection_changed(2, false)
+	manager._on_joy_connection_changed(5, false)
+	_check(manager.take_final_disconnect(), "Controller-driven final disconnect armed the pause flag")
+	_check(not manager.take_final_disconnect(), "Pause flag was consumed on read")
+	_check(not manager._multi_pad_active(), "Empty controller set returned to aggregate reads")
+	manager._on_joy_connection_changed(9, true)
+	manager._input(key_event)
+	manager._on_joy_connection_changed(9, false)
+	_check(not manager.take_final_disconnect(), "Keyboard-first final disconnect did not arm the pause flag")
 
 	_check(manager._controller_family_from_name("Xbox Wireless Controller") == "xbox", "Xbox family was detected")
 	_check(manager._controller_family_from_name("DualSense Wireless Controller") == "playstation", "PlayStation family was detected")

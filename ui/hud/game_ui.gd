@@ -497,7 +497,10 @@ func _build_options_menu() -> void:
 	for text: String in ["Windowed", "Fullscreen", "Exclusive Fullscreen"]:
 		mode.add_item(text)
 	display_tab.add_child(_row("Display mode", mode))
-	mode.item_selected.connect(func(index: int) -> void: GameSettings.set_pending("display_mode", index))
+	mode.item_selected.connect(func(index: int) -> void:
+		GameSettings.set_pending("display_mode", index)
+		_refresh_resolution_editability()
+	)
 	var resolution := OptionButton.new()
 	resolution.name = "Resolution"
 	for size: Vector2i in [Vector2i(1280, 720), Vector2i(1600, 900), Vector2i(1920, 1080), Vector2i(2560, 1440)]:
@@ -565,6 +568,7 @@ func _build_options_menu() -> void:
 	scaling_mode.item_selected.connect(func(index: int) -> void:
 		GameSettings.set_pending("scaling_mode", index)
 		_refresh_aa_editability()
+		_refresh_resolution_editability()
 	)
 	var fsr_sharpness := HSlider.new()
 	fsr_sharpness.name = "FSRSharpness"
@@ -1009,6 +1013,7 @@ func _sync_options() -> void:
 	(options_panel.find_child("ScalingMode", true, false) as OptionButton).select(clampi(int(GameSettings.pending["scaling_mode"]), 0, 2))
 	(options_panel.find_child("FSRSharpness", true, false) as HSlider).set_value_no_signal(float(GameSettings.pending["fsr_sharpness"]))
 	_refresh_aa_editability()
+	_refresh_resolution_editability()
 	(options_panel.find_child("ShadowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["shadow_quality"]), 0, 3))
 	(options_panel.find_child("SnowQuality", true, false) as OptionButton).select(clampi(int(GameSettings.pending["snow_quality"]), 0, 1))
 	(options_panel.find_child("SSAO", true, false) as CheckButton).set_pressed_no_signal(bool(GameSettings.pending["ssao_enabled"]))
@@ -1035,11 +1040,25 @@ func _refresh_aa_editability() -> void:
 	if anti_aliasing != null:
 		anti_aliasing.disabled = int(GameSettings.pending.get("scaling_mode", 0)) == 2
 
+func _refresh_resolution_editability() -> void:
+	# The resolution value is only applied in Windowed mode
+	# (GameSettings._apply_display), so the selector is disabled elsewhere
+	# rather than confirming a change that cannot take effect.
+	var resolution_control := options_panel.find_child("Resolution", true, false) as OptionButton
+	if resolution_control != null:
+		var windowed := int(GameSettings.pending.get("display_mode", 0)) == 0
+		resolution_control.disabled = not windowed
+		resolution_control.tooltip_text = "" if windowed else "Resolution applies in Windowed mode"
+
 func _apply_options() -> void:
 	var previous := GameSettings.active.duplicate(true)
+	# A resolution change is only a real display change in Windowed mode;
+	# in Fullscreen modes the value is stored but not applied, so it must not
+	# trigger the risky-display Keep/Revert confirmation on its own.
+	var resolution_matters := int(GameSettings.pending.get("display_mode", 0)) == 0
 	var display_changed: bool = (
 		int(GameSettings.pending["display_mode"]) != int(GameSettings.active["display_mode"])
-		or GameSettings.pending["resolution"] != GameSettings.active["resolution"]
+		or (resolution_matters and GameSettings.pending["resolution"] != GameSettings.active["resolution"])
 		or bool(GameSettings.pending["hdr_output"]) != bool(GameSettings.active["hdr_output"])
 	)
 	if display_changed:
@@ -1299,7 +1318,17 @@ func _on_marker_changed(_position: Vector3) -> void:
 	_show_notice("SESSION MARKER SAVED")
 
 func _on_controller_connection(connected: bool) -> void:
-	_show_notice("CONTROLLER CONNECTED" if connected else "CONTROLLER DISCONNECTED — KEYBOARD ACTIVE")
+	if connected:
+		_show_notice("CONTROLLER CONNECTED")
+		return
+	# An unexpected final-controller loss pauses instead of silently continuing
+	# on keyboard; an intentional keyboard handoff sets no flag and only renames
+	# the prompts. Never pile the pause menu over run results or an open pause.
+	if InputManager.take_final_disconnect() and not get_tree().paused and not results_panel.visible:
+		_show_notice("CONTROLLER DISCONNECTED — PAUSED")
+		_pause()
+	else:
+		_show_notice("CONTROLLER DISCONNECTED — KEYBOARD ACTIVE")
 
 func _on_settings_save_failed(error: Error) -> void:
 	_show_notice("SETTINGS COULD NOT BE SAVED (%d)" % int(error))

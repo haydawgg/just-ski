@@ -8,6 +8,7 @@ func _ready() -> void:
 	_test_game_ui_teaching_surfaces()
 	_test_scoring_finish_contract()
 	await _test_pause_menu_actions()
+	await _test_controller_disconnect_pause()
 	await _test_run_results_panel()
 	if failures.is_empty():
 		print("TRICK_UI_PASS: visualizer, controller guide, pause menu, scoring summary, and results flow passed")
@@ -145,7 +146,13 @@ func _test_game_ui_teaching_surfaces() -> void:
 	if not settings_title_found:
 		failures.append("In-game settings panel is missing its Settings title")
 	var original_resolution := GameSettings.active["resolution"] as Vector2i
+	var display_restore := GameSettings.active.duplicate(true)
 	ui._open_options()
+	GameSettings.set_pending("display_mode", 0)
+	ui._sync_options()
+	var resolution_control := ui.find_child("Resolution", true, false) as OptionButton
+	if resolution_control == null or resolution_control.disabled:
+		failures.append("Resolution selector was not enabled in Windowed mode")
 	var staged_resolution := Vector2i(1280, 720) if original_resolution != Vector2i(1280, 720) else Vector2i(1600, 900)
 	GameSettings.set_pending("resolution", staged_resolution)
 	ui._apply_options()
@@ -162,12 +169,29 @@ func _test_game_ui_teaching_surfaces() -> void:
 	if not ui.pause_panel.visible:
 		failures.append("Display confirmation Revert did not return to the pause menu")
 	ui._open_options()
+	GameSettings.set_pending("display_mode", 0)
+	ui._sync_options()
 	GameSettings.set_pending("resolution", staged_resolution)
 	ui._apply_options()
 	ui._display_confirmation_seconds = 0.01
 	ui._process(0.02)
 	if GameSettings.active["resolution"] != original_resolution or ui.display_confirmation_panel.visible:
 		failures.append("Display confirmation timeout did not automatically restore the previous resolution")
+	# Establish fullscreen as the active mode first, so the follow-up Apply is
+	# resolution-only and mode-neutral regardless of ambient settings.
+	GameSettings.set_pending("display_mode", 1)
+	GameSettings.apply_pending()
+	ui._open_options()
+	ui._sync_options()
+	if resolution_control == null or not resolution_control.disabled:
+		failures.append("Resolution selector stayed enabled in Fullscreen mode where it has no effect")
+	GameSettings.set_pending("resolution", staged_resolution)
+	ui._apply_options()
+	if ui.display_confirmation_panel.visible:
+		failures.append("Resolution-only Apply in Fullscreen mode opened a confirmation for a no-op change")
+	GameSettings.pending = display_restore.duplicate(true)
+	GameSettings.apply_pending()
+	ui._open_options()
 	ui._set_menu_visible(ui.results_panel)
 	get_tree().paused = true
 	var cancel_event := InputEventAction.new()
@@ -244,6 +268,16 @@ func _test_scoring_finish_contract() -> void:
 		failures.append("Run scoring did not finish exactly once")
 	if int(snapshot.best_trick_points) != 1000 or str(snapshot.best_trick_name) != "Left 360":
 		failures.append("Run scoring did not retain the best trick")
+	var link_scoring := RunScoring.new()
+	add_child(link_scoring)
+	link_scoring.begin_feature("jump")
+	link_scoring.accept_trick("Standalone 900", 900, 0.8, LandingSolver.Outcome.CLEAN)
+	link_scoring.begin_feature("rail")
+	link_scoring.accept_trick("Linked 800", 800, 0.8, LandingSolver.Outcome.CLEAN)
+	var link_snapshot := link_scoring.snapshot()
+	if int(link_snapshot.best_trick_points) != 900 or str(link_snapshot.best_trick_name) != "Standalone 900":
+		failures.append("Best trick included the line-link bonus instead of the underlying trick value")
+	link_scoring.queue_free()
 	if int(snapshot.landed_trick_count) != 1 or int(snapshot.clean_trick_count) != 1 or int(snapshot.bail_count) != 1:
 		failures.append("Run scoring summary counters were incorrect")
 	var outcome_scoring := RunScoring.new()
@@ -323,6 +357,37 @@ func _test_pause_menu_actions() -> void:
 		failures.append("Resume button did not close the pause menu")
 
 	ui.queue_free()
+
+func _test_controller_disconnect_pause() -> void:
+	var ui := GameUI.new()
+	add_child(ui)
+	await get_tree().process_frame
+	# An unexpected controller-driven final loss pauses; an intentional
+	# keyboard handoff only renames the prompts.
+	InputManager.pending_final_disconnect = true
+	ui._on_controller_connection(false)
+	if not get_tree().paused or not ui.pause_panel.visible:
+		failures.append("Controller-driven final disconnect did not pause")
+	if "PAUSED" not in ui.notice_label.text:
+		failures.append("Controller disconnect pause did not explain the pause")
+	ui._resume()
+	InputManager.pending_final_disconnect = false
+	ui._on_controller_connection(false)
+	if get_tree().paused or ui.pause_panel.visible:
+		failures.append("Keyboard-first disconnect paused instead of renaming prompts")
+	if "KEYBOARD ACTIVE" not in ui.notice_label.text:
+		failures.append("Keyboard-first disconnect did not report keyboard handoff")
+	# The pause menu must never pile over run results.
+	InputManager.pending_final_disconnect = true
+	ui.results_panel.visible = true
+	ui._on_controller_connection(false)
+	if get_tree().paused or ui.pause_panel.visible:
+		failures.append("Disconnect during run results opened a second pause menu")
+	ui.results_panel.visible = false
+	InputManager.take_final_disconnect()
+	ui.queue_free()
+	get_tree().paused = false
+	await get_tree().process_frame
 
 func _test_run_results_panel() -> void:
 	SessionManager.clear_marker()

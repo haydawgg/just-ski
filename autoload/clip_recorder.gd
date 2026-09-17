@@ -185,8 +185,13 @@ func _stop_recording() -> void:
 	_recording = false
 	recording_changed.emit(false)
 	_stop_jpeg_worker()
-	if _frames.size() < MIN_CLIP_FRAMES:
+	if _capture_frame_count < MIN_CLIP_FRAMES:
 		clip_info.emit("DEBUG CLIP TOO SHORT — RIDE A MOMENT BEFORE SAVING")
+		_frames.clear()
+		_encoded_frames_by_slot.clear()
+		return
+	if _frames.is_empty() and _encoded_frames_by_slot.is_empty():
+		clip_info.emit("DEBUG CLIP TOO SHORT — NO USABLE FRAME WAS ENCODED")
 		_frames.clear()
 		_encoded_frames_by_slot.clear()
 		return
