@@ -14,12 +14,13 @@ func _ready() -> void:
 	await _test_teardown_during_recording()
 	await _test_teardown_during_encoding()
 	await _test_encode_thread_start_failure()
+	await _test_backpressure_slots_still_encode()
 	if not failures.is_empty():
 		for failure in failures:
 			push_error("CLIP_RECORDER_LIFECYCLE_FAIL: " + failure)
 		get_tree().quit(1)
 		return
-	print("CLIP_RECORDER_LIFECYCLE_PASS: debug release scope, arm state, summit-restart capture gating, respawn state matrix, partial-save restart, worker teardown, encode teardown, and start failure cleanup verified")
+	print("CLIP_RECORDER_LIFECYCLE_PASS: debug release scope, arm state, summit-restart capture gating, respawn state matrix, partial-save restart, worker teardown, encode teardown, start failure cleanup, and backpressure slot-duration encoding verified")
 	get_tree().quit(0)
 
 func _new_recorder() -> Node:
@@ -255,6 +256,25 @@ func _test_active_recording_summit_restart_saves_partial() -> void:
 		failures.append("summit restart during recording did not queue the partial clip for saving")
 	recorder.call("_shutdown_capture_workers")
 	_assert_clean(recorder, "partial clip restart")
+	await _destroy_recorder(recorder)
+
+func _test_backpressure_slots_still_encode() -> void:
+	# A capture that ran longer than the minimum duration must encode even when
+	# JPEG-worker back-pressure left only a sparse subset of slots encoded.
+	var recorder := _new_recorder()
+	var image := Image.create(64, 48, false, Image.FORMAT_RGB8)
+	image.fill(Color("#4b91c9"))
+	var encoded: PackedByteArray = recorder.call("_encode_jpeg_frame", image)
+	var frames: Array[PackedByteArray] = [encoded, encoded]
+	recorder.set("_recording", true)
+	recorder.set("_frames", frames)
+	recorder.set("_encoded_frames_by_slot", {0: encoded, 15: encoded})
+	recorder.set("_capture_frame_count", 30)
+	recorder.call("_stop_recording")
+	if not bool(recorder.get("_encoding")):
+		failures.append("long capture with sparse encoded slots was rejected as too short")
+	recorder.call("_shutdown_capture_workers")
+	_assert_clean(recorder, "backpressure slot expansion")
 	await _destroy_recorder(recorder)
 
 func _short_frames(recorder: Node) -> Array[PackedByteArray]:
