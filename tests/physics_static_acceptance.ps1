@@ -355,7 +355,8 @@ if ($resultsReturnMarker.Success) {
 Require-Match $resort 'ClipRecorder\.handle_session_respawn\(reason\)' "Resort clip wiring must pass the respawn reason."
 Reject-Match $resort 'func _on_respawn_requested_recorder[\s\S]*?SessionManager\.default_spawn' "Clip start/stop cannot match the default spawn transform."
 
-Require-Match $inputSampler 'frame\.brake\s*=\s*Input\.get_action_strength' "The sampled frame must preserve analog brake strength."
+Require-Match $inputSampler 'frame\.brake\s*=\s*InputManager\.gameplay_strength' "The sampled frame must scope analog brake strength to the active device."
+Require-Match $inputManager 'func gameplay_strength\([\s\S]*?Input\.get_action_strength' "Scoped gameplay reads must preserve analog action strength."
 Require-Match $groundMotion 'profile\.brake_steer_multiplier' "Ground handling policy must use profile-owned analog brake steering."
 Require-Match $controller 'profile\.brake_speed_scrub_multiplier\s*\*\s*brake_amount' "Brake speed scrub must scale with analog input."
 Require-Match $groundMotion 'constrain_heading_to_travel' "Ground handling must constrain excessive heading/travel separation."

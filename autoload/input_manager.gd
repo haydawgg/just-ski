@@ -8,7 +8,10 @@ var last_device := "keyboard"
 var active_joypad_id := -1
 var active_controller_family := "controller"
 var connected_joypads: Dictionary = {}
+var pending_final_disconnect := false
 var _rumbled_devices: Dictionary = {}
+var _scoped_edge_prev: Dictionary = {}
+var _scoped_edge_current: Dictionary = {}
 
 func _ready() -> void:
 	if not Input.joy_connection_changed.is_connected(_on_joy_connection_changed):
@@ -20,7 +23,21 @@ func _ready() -> void:
 
 func _input(event: InputEvent) -> void:
 	var next_device := last_device
-	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+	if event is InputEventJoypadButton:
+		# Releases carry no intent; letting them steal ownership would flip
+		# glyphs/rumble when a player simply lets go of a button.
+		if not (event as InputEventJoypadButton).pressed:
+			return
+		_register_controller(event.device)
+		_set_active_controller(event.device)
+		next_device = active_controller_family
+	elif event is InputEventJoypadMotion:
+		# Sub-threshold motion (stick drift, return-to-center) must not move
+		# glyph/rumble ownership; only a deliberate deflection selects a pad.
+		var motion := event as InputEventJoypadMotion
+		var inner := float(GameSettings.active.get("stick_deadzone", 0.18))
+		if absf(motion.axis_value) <= inner + 0.02:
+			return
 		_register_controller(event.device)
 		_set_active_controller(event.device)
 		next_device = active_controller_family
@@ -34,7 +51,88 @@ func axis(negative_action: StringName, positive_action: StringName) -> float:
 	return _shape_axis(raw_axis(negative_action, positive_action))
 
 func raw_axis(negative_action: StringName, positive_action: StringName) -> float:
-	return Input.get_action_raw_strength(positive_action) - Input.get_action_raw_strength(negative_action)
+	if not _multi_pad_active():
+		return Input.get_action_raw_strength(positive_action) - Input.get_action_raw_strength(negative_action)
+	return _scoped_axis_strength(positive_action) - _scoped_axis_strength(negative_action)
+
+# Gameplay-scoped action reads. With 0-1 pads the aggregate action state is
+# unambiguous, so legacy behavior (aggregate input plus synthetic action_press
+# fixtures, which require at most one physical pad connected) is preserved.
+# With 2+ pads, gameplay reads keyboard plus the active pad only; inactive
+# pads can neither add nor cancel input.
+func gameplay_strength(action: StringName) -> float:
+	if not _multi_pad_active():
+		return Input.get_action_strength(action)
+	return _scoped_axis_strength(action)
+
+func gameplay_pressed(action: StringName) -> bool:
+	if not _multi_pad_active():
+		return Input.is_action_pressed(action)
+	return gameplay_strength(action) > InputMap.action_get_deadzone(action)
+
+func gameplay_just_pressed(action: StringName) -> bool:
+	if not _multi_pad_active():
+		return Input.is_action_just_pressed(action)
+	var now := gameplay_pressed(action)
+	var was := bool(_scoped_edge_prev.get(action, now))
+	return now and not was
+
+func gameplay_just_released(action: StringName) -> bool:
+	if not _multi_pad_active():
+		return Input.is_action_just_released(action)
+	var now := gameplay_pressed(action)
+	var was := bool(_scoped_edge_prev.get(action, now))
+	return not now and was
+
+func begin_scope_frame() -> void:
+	if not _multi_pad_active():
+		return
+	for action: StringName in [&"jump", &"respawn", &"set_marker"]:
+		_scoped_edge_prev[action] = _scoped_edge_current.get(action, false)
+		_scoped_edge_current[action] = gameplay_pressed(action)
+
+func _multi_pad_active() -> bool:
+	# The OS device list is the authority for scoping; the tracked identity
+	# dict mirrors it (headless acceptance fixtures drive the dict directly,
+	# where the aggregate single-pad fallback applies).
+	return Input.get_connected_joypads().size() > 1 or connected_joypads.size() > 1
+
+func _scoped_axis_strength(action: StringName) -> float:
+	return maxf(_key_action_strength(action), _joy_action_strength(action))
+
+func _key_action_strength(action: StringName) -> float:
+	var strength := 0.0
+	for event: InputEvent in InputMap.action_get_events(action):
+		if event is InputEventKey:
+			var key_event := event as InputEventKey
+			var pressed := false
+			if key_event.physical_keycode != KEY_NONE:
+				pressed = Input.is_physical_key_pressed(key_event.physical_keycode)
+			elif key_event.keycode != KEY_NONE:
+				pressed = Input.is_key_pressed(key_event.keycode)
+			if pressed:
+				strength = 1.0
+		elif event is InputEventMouseButton:
+			if Input.is_mouse_button_pressed((event as InputEventMouseButton).button_index):
+				strength = 1.0
+	return strength
+
+func _joy_action_strength(action: StringName) -> float:
+	if active_joypad_id < 0 or not connected_joypads.has(active_joypad_id):
+		return 0.0
+	var strength := 0.0
+	for event: InputEvent in InputMap.action_get_events(action):
+		if event is InputEventJoypadMotion:
+			var motion := event as InputEventJoypadMotion
+			var value := Input.get_joy_axis(active_joypad_id, motion.axis)
+			if motion.axis_value < 0.0:
+				strength = maxf(strength, clampf(-value, 0.0, 1.0))
+			else:
+				strength = maxf(strength, clampf(value, 0.0, 1.0))
+		elif event is InputEventJoypadButton:
+			if Input.is_joy_button_pressed(active_joypad_id, (event as InputEventJoypadButton).button_index):
+				strength = 1.0
+	return strength
 
 func _shape_axis(raw: float) -> float:
 	var inner := float(GameSettings.active.get("stick_deadzone", 0.18))
@@ -147,6 +245,11 @@ func _clear_active_controller() -> void:
 	if changed:
 		active_controller_changed.emit(active_joypad_id, active_controller_family)
 
+func take_final_disconnect() -> bool:
+	var value := pending_final_disconnect
+	pending_final_disconnect = false
+	return value
+
 func _on_joy_connection_changed(device: int, connected: bool) -> void:
 	var had_controller := not connected_joypads.is_empty()
 	if connected:
@@ -159,6 +262,11 @@ func _on_joy_connection_changed(device: int, connected: bool) -> void:
 		connected_joypads.erase(device)
 		if active_joypad_id == device:
 			if connected_joypads.is_empty():
+				# Final-controller loss during controller-driven play is
+				# unexpected; GameUI consumes this flag to pause rather than
+				# silently continue on keyboard. An earlier intentional
+				# keyboard handoff (last_device already "keyboard") sets no flag.
+				pending_final_disconnect = last_device != "keyboard"
 				_clear_active_controller()
 				if last_device != "keyboard":
 					last_device = "keyboard"
