@@ -11,6 +11,7 @@ const ParkTreeBatchModule := preload("res://world/environment/park_tree_batch.gd
 const EnvironmentAssetDefinition := preload("res://resources/environment/environment_asset_definition.gd")
 const EnvironmentAssetCatalog := preload("res://resources/environment/environment_asset_catalog.gd")
 const RuntimeEnvironment := preload("res://util/runtime_environment.gd")
+const ProductionCameraController := preload("res://player/production_camera_controller.gd")
 const DISTANT_MOUNTAIN_SHADER: Shader = preload("res://shaders/distant_mountain.gdshader")
 const DAY_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/default_resort_environment_profile.tres")
 const GOLDEN_HOUR_ENVIRONMENT_PROFILE: ResortEnvironmentProfile = preload("res://resources/environment/golden_hour_resort_environment_profile.tres")
@@ -264,7 +265,7 @@ func _build_player() -> void:
 		course_recovery.maximum_z = course_profile.spawn_world_z() + 10.0
 		course_recovery.minimum_z = course_profile.finish_trigger_world_z() - 20.0
 
-	camera_rig = SkiCameraController.new()
+	camera_rig = ProductionCameraController.new()
 	camera_rig.name = "CameraRig"
 	add_child(camera_rig)
 	camera_rig.set_target(player)
@@ -405,6 +406,7 @@ func _add_tree(position: Vector3, scale_multiplier: float = 1.0, yaw_degrees: fl
 	trunk_mesh.top_radius = 0.18
 	trunk_mesh.bottom_radius = 0.28
 	trunk_mesh.height = 3.4
+	trunk_mesh.radial_segments = 6
 	trunk.mesh = trunk_mesh
 	trunk.position.y = 1.7
 	trunk.visibility_range_end = 245.0
