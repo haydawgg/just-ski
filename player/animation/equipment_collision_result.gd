@@ -22,4 +22,3 @@ func snapshot() -> Dictionary:
 		"max_penetration_m": max_penetration,
 		"unresolved": unresolved_contacts.duplicate(true),
 	}
-

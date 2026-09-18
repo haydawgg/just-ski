@@ -52,4 +52,3 @@ func center() -> Vector3:
 func is_valid() -> bool:
 	return not id.is_empty() and a.is_finite() and b.is_finite() \
 		and is_finite(radius) and radius >= 0.0 and pivot.is_finite()
-
