@@ -12,6 +12,7 @@ const GrindCollisionSolverModule := preload("res://player/motion/grind_collision
 const LandingTransitionModule := preload("res://player/motion/landing_transition.gd")
 const CollisionCrashEvaluatorModule := preload("res://player/motion/collision_crash_evaluator.gd")
 const BailMotionSolverModule := preload("res://player/motion/bail_motion_solver.gd")
+const CrashRagdollModule := preload("res://player/physics/crash_ragdoll_3d.gd")
 const EquipmentFeatureCollisionSolverModule := preload("res://player/motion/equipment_feature_collision_solver.gd")
 const SkierInputFrameModule := preload("res://player/input/skier_input_frame.gd")
 const SkierInputSamplerModule := preload("res://player/input/skier_input_sampler.gd")
@@ -144,6 +145,10 @@ var _landing_transition := LandingTransitionModule.new()
 var _collision_crash_evaluator := CollisionCrashEvaluatorModule.new()
 var _bail_motion_solver := BailMotionSolverModule.new()
 var _equipment_feature_collision_solver := EquipmentFeatureCollisionSolverModule.new()
+var crash_ragdoll: CrashRagdoll3D
+var _ragdoll_activation_pending := false
+var _ragdoll_root_to_pelvis := Vector3.ZERO
+var _crash_recovery_grace := 0.0
 
 func _ready() -> void:
 	collision_layer = 2
@@ -187,6 +192,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	_physics_step_serial += 1
+	_crash_recovery_grace = maxf(0.0, _crash_recovery_grace - delta)
 	_landing_prediction_cache_serial = -1
 	_landing_prediction_cache.clear()
 	_input_sampler.sample_into(input_frame)
@@ -244,6 +250,7 @@ func _physics_process(delta: float) -> void:
 			_suppress_into_slope_bounce()
 	scoring.step(delta, velocity.length())
 	_update_animation(delta)
+	_update_ragdoll_presentation()
 	snow_vfx.update_from_existing_contact(delta)
 	_update_contact_shadow(delta)
 	_update_debug()
@@ -692,7 +699,44 @@ func _update_bail(delta: float) -> void:
 	brake_amount = 0.0
 	skid_amount = 0.0
 	crash_context.advance(delta)
-	bail_time = maxf(0.0, profile.crash_max_duration - crash_context.elapsed)
+	var settle_deadline := crash_settle_deadline(crash_context)
+	bail_time = maxf(0.0, settle_deadline - crash_context.elapsed)
+	if crash_ragdoll != null and crash_ragdoll.active:
+		# Keep the camera/gameplay carrier on the established, collision-safe bail
+		# trajectory. The visible skeleton is fully physics-owned below, but feeding
+		# individual pelvis collision impulses into CharacterBody/camera motion makes
+		# framing jitter and can double-apply terrain response.
+		var carrier_motion := _bail_motion_solver.step_motion(
+			velocity,
+			Vector3.ZERO,
+			contact.average_normal,
+			contact.grounded,
+			crash_context.stage,
+			delta,
+			profile,
+			global_basis
+		)
+		velocity = carrier_motion.velocity
+		crash_ragdoll.tether_pelvis(
+			global_position + velocity * maxf(delta, 0.0) + _ragdoll_root_to_pelvis
+		)
+		var world_angular := crash_ragdoll.pelvis_angular_velocity()
+		var muscle_weight := 1.0 - smoothstep(
+			0.0,
+			maxf(profile.ragdoll_active_muscle_duration, 0.001),
+			crash_context.elapsed
+		)
+		var reported_angular_limit := lerpf(
+			profile.ragdoll_passive_max_angular_velocity,
+			profile.ragdoll_active_max_angular_velocity,
+			muscle_weight
+		)
+		world_angular = world_angular.limit_length(maxf(reported_angular_limit, 0.0))
+		angular_velocity = global_basis.inverse() * world_angular
+		crash_context.current_velocity = velocity
+		crash_context.angular_speed = world_angular.length()
+		_update_crash_stage_and_rest(delta)
+		return
 	var bail_motion := _bail_motion_solver.step_motion(
 		velocity,
 		angular_velocity,
@@ -1096,7 +1140,7 @@ func _slip_off_rail() -> void:
 	_enter_air(TrickCommand.Kind.NONE, 0.0, Vector3.ZERO, inherited_angular)
 
 func enter_crash(context: CrashContext) -> bool:
-	if state == State.BAIL or context == null or not context.active:
+	if state == State.BAIL or _crash_recovery_grace > 0.0 or context == null or not context.active:
 		return false
 	if state == State.GRIND and active_rail != null:
 		rail_finished.emit(_rail_feature_id(), &"failed")
@@ -1109,7 +1153,8 @@ func enter_crash(context: CrashContext) -> bool:
 	rail_capture_blend_remaining = 0.0
 	crash_context = context
 	state = State.BAIL
-	bail_time = profile.crash_max_duration
+	_ragdoll_activation_pending = profile.ragdoll_enabled
+	bail_time = crash_settle_deadline(crash_context)
 	bail_recovering = true
 	# Bail owns the body: downhill locomotion channels must not persist into
 	# crash presentation, telemetry, or the eventual recovery. Velocity and
@@ -1135,6 +1180,9 @@ func enter_crash(context: CrashContext) -> bool:
 	return true
 
 func _bail() -> void:
+	# Explicit/debug bail requests are authoritative and intentionally bypass the
+	# short automatic post-get-up collision grace period.
+	_crash_recovery_grace = 0.0
 	var context := CrashContext.new()
 	context.begin(
 		CrashContext.Reason.LANDING_IMPACT,
@@ -1182,18 +1230,33 @@ func _landing_crash_context(result: Dictionary) -> CrashContext:
 	return context
 
 func _update_crash_stage_and_rest(delta: float) -> void:
+	var ragdoll_active := crash_ragdoll != null and crash_ragdoll.active
+	# The collision-safe carrier and the physical pelvis are tethered but sampled
+	# by different physics APIs. Accept either support signal so a one-frame Jolt
+	# ray/contact ordering difference cannot turn a settled grounded fall into an
+	# airborne timeout/respawn.
+	var crash_grounded := (crash_ragdoll.has_ground_support() or contact.grounded) if ragdoll_active else contact.grounded
 	if crash_context.stage == CrashContext.Stage.RECOVERY:
 		if crash_context.stage_elapsed >= animation_controller.profile.crash_recovery_duration:
-			if contact.grounded:
+			if crash_grounded or contact.grounded or (ragdoll_active and crash_ragdoll.recovering):
 				_recover_from_bail(delta)
 			else:
 				_request_bail_respawn()
 		return
+	var linear_rest_speed := crash_ragdoll.maximum_linear_speed() if ragdoll_active else velocity.length()
+	var angular_rest_speed := crash_ragdoll.maximum_angular_speed() if ragdoll_active else angular_velocity.length()
+	# Surface-coupled roll deliberately keeps a sliding body alive visually, but
+	# it must not turn that presentation motion into an unbounded control lockout.
+	# Once this crash's severity-scaled deadline expires, the ordinary REST
+	# confirmation and snow-alignment gates take over.
+	if crash_grounded and crash_context.elapsed >= crash_settle_deadline(crash_context):
+		linear_rest_speed = 0.0
+		angular_rest_speed = 0.0
 	var rest := _bail_motion_solver.resolve_rest(
-		contact.grounded,
+		crash_grounded,
 		crash_context.elapsed,
-		velocity.length(),
-		angular_velocity.length(),
+		linear_rest_speed,
+		angular_rest_speed,
 		crash_context.rest_detected,
 		crash_context.rest_elapsed,
 		delta,
@@ -1204,7 +1267,7 @@ func _update_crash_stage_and_rest(delta: float) -> void:
 	if rest.should_respawn:
 		_request_bail_respawn()
 		return
-	if rest.rest_detected and not crash_context.rest_detected and contact.grounded:
+	if rest.rest_detected and not crash_context.rest_detected and crash_grounded and not ragdoll_active:
 		var support_normal := contact.average_normal.normalized() if contact.average_normal.length_squared() > 0.0001 else Vector3.UP
 		var root_up := global_basis.y.normalized() if global_basis.y.length_squared() > 0.0001 else Vector3.UP
 		if root_up.dot(support_normal) < CRASH_REST_MIN_SNOW_ALIGNMENT_DOT:
@@ -1219,8 +1282,76 @@ func _update_crash_stage_and_rest(delta: float) -> void:
 	crash_context.rest_elapsed = rest.rest_elapsed
 	if rest.should_recover:
 		crash_context.set_stage(CrashContext.Stage.RECOVERY)
+		if ragdoll_active:
+			crash_ragdoll.begin_recovery()
+
+func _update_ragdoll_presentation() -> void:
+	if crash_ragdoll == null or animation_controller == null:
+		return
+	if _ragdoll_activation_pending:
+		_ragdoll_activation_pending = false
+		if state == State.BAIL and crash_context.active:
+			var world_angular := global_basis * angular_velocity
+			var activated := crash_ragdoll.activate(
+				animation_controller.ragdoll_world_transforms(),
+				velocity,
+				world_angular,
+				crash_severity(crash_context),
+				crash_context.lateral_bias,
+				profile,
+				crash_binding_severity(crash_context)
+			)
+			if not activated:
+				return
+			_ragdoll_root_to_pelvis = crash_ragdoll.pelvis_transform().origin - global_position
+	if not crash_ragdoll.active:
+		return
+	var physics_weight := 1.0
+	if crash_context.stage == CrashContext.Stage.RECOVERY:
+		physics_weight = 1.0 - crash_context.normalized_stage_progress(
+			animation_controller.profile.crash_recovery_duration
+		)
+	animation_controller.apply_ragdoll_pose(crash_ragdoll.physics_pose(), physics_weight)
+
+func crash_severity(context: CrashContext = crash_context) -> float:
+	if context == null or not context.active:
+		return 0.0
+	var impact_ratio := context.impact_speed / maxf(profile.bail_impact_speed, 0.01)
+	var angular_failure_speed := maxf(profile.maximum_angular_speed * profile.bail_angular_ratio, 0.01)
+	var angular_ratio := context.angular_speed / angular_failure_speed
+	var incoming_speed := context.incoming_velocity.length()
+	var speed_loss_ratio := context.speed_loss / maxf(incoming_speed, 0.01)
+	var rail_ratio := absf(context.rail_balance) / 1.35
+	return clampf(maxf(impact_ratio, maxf(angular_ratio, maxf(context.balance_error, maxf(speed_loss_ratio, rail_ratio)))), 0.0, 1.0)
+
+func crash_binding_severity(context: CrashContext = crash_context) -> float:
+	if context == null or not context.active:
+		return 0.0
+	var impact_ratio := context.impact_speed / maxf(profile.bail_impact_speed, 0.01)
+	var angular_failure_speed := maxf(profile.maximum_angular_speed * profile.bail_angular_ratio, 0.01)
+	var angular_ratio := context.angular_speed / angular_failure_speed
+	var incoming_speed := context.incoming_velocity.length()
+	var speed_loss_ratio := context.speed_loss / maxf(incoming_speed, 0.01)
+	return clampf(maxf(impact_ratio, maxf(angular_ratio, speed_loss_ratio)), 0.0, 1.0)
+
+func crash_settle_deadline(context: CrashContext = crash_context) -> float:
+	if context == null or not context.active:
+		return 0.0
+	var soft_duration := clampf(profile.crash_soft_max_duration, profile.crash_min_duration, profile.crash_max_duration)
+	return lerpf(soft_duration, profile.crash_max_duration, crash_severity(context))
+
+func _crash_telemetry_snapshot() -> Dictionary:
+	var crash := crash_context.snapshot()
+	crash["severity"] = crash_severity(crash_context)
+	crash["settle_deadline"] = crash_settle_deadline(crash_context)
+	crash["ragdoll"] = crash_ragdoll.snapshot() if crash_ragdoll != null else {}
+	return crash
 
 func _clear_crash_state() -> void:
+	_ragdoll_activation_pending = false
+	_ragdoll_root_to_pelvis = Vector3.ZERO
+	if crash_ragdoll != null:
+		crash_ragdoll.stop()
 	crash_context.reset()
 	bail_time = 0.0
 	bail_recovering = false
@@ -1431,6 +1562,7 @@ func _request_bail_respawn() -> void:
 		SessionManager.request_respawn()
 
 func _recover_from_bail(delta: float = 1.0 / 60.0) -> void:
+	var recovering_from_ragdoll := crash_ragdoll != null and crash_ragdoll.active
 	bail_recovering = false
 	# Single coordinated return to skiing: fresh locomotion channels first so
 	# no pre-crash edge/steer/carve leaks into the first grounded frames, then
@@ -1447,16 +1579,25 @@ func _recover_from_bail(delta: float = 1.0 / 60.0) -> void:
 	if projected_forward.length_squared() < 0.0001:
 		projected_forward = Vector3.FORWARD
 	var target_basis := Basis.looking_at(projected_forward.normalized(), contact.average_normal.normalized()).orthonormalized()
+	if contact.grounded and contact.average_hit_position.is_finite():
+		global_position = contact.average_hit_position + contact.average_normal.normalized() * profile.ground_attach_height
 	var step_angle := deg_to_rad(maxf(profile.landing_orientation_max_rate_degrees, 0.0)) * maxf(delta, 0.0)
 	var current_quat := global_basis.orthonormalized().get_rotation_quaternion()
 	var target_quat := target_basis.get_rotation_quaternion()
 	var error := current_quat.angle_to(target_quat)
-	if error > 0.000001 and step_angle > 0.0 and step_angle < error:
+	if recovering_from_ragdoll:
+		# Physics has already settled and the get-up blend has reached zero. The
+		# gameplay root was intentionally not rotating with the pelvis during the
+		# ragdoll, so adopt the snow frame atomically before contact probes resume.
+		global_basis = target_basis
+	elif error > 0.000001 and step_angle > 0.0 and step_angle < error:
 		global_basis = Basis(current_quat.slerp(target_quat, step_angle / error)).orthonormalized()
 	else:
 		global_basis = target_basis
 	motion_mode = CharacterBody3D.MOTION_MODE_GROUNDED
+	coyote_remaining = profile.coyote_time
 	state = State.GROUND
+	_crash_recovery_grace = 0.65
 	animation_controller.trigger(SkierAnimationController.AnimationEvent.RECOVERY_COMPLETE, 0.55)
 	_clear_crash_state()
 	state_changed.emit("Ground")
@@ -1481,6 +1622,7 @@ func respawn_at(value: Transform3D, reason: StringName = SessionManager.RESPAWN_
 	air_takeoff_upward_speed = 0.0
 	air_reference_up = Vector3.UP
 	wall_pin_time = 0.0
+	_crash_recovery_grace = 0.0
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	trick.reset()
 	flick.reset()
@@ -1942,7 +2084,7 @@ func telemetry() -> Dictionary:
 			"rotation_error": float(landing_context.get("rotation_error", 0.0)),
 			"active": bool(landing_context.get("active", false)),
 		},
-		"crash": crash_context.snapshot(),
+		"crash": _crash_telemetry_snapshot(),
 		"crash_equipment": animation_controller.equipment_attachment_snapshot() if animation_controller != null else {},
 		"recovery_frozen": recovery_frozen,
 		"respawn_count": respawn_count,
@@ -1972,6 +2114,9 @@ func _build_body() -> void:
 	animation_controller.name = "SkierAnimationController"
 	visual_root = animation_controller
 	add_child(animation_controller)
+	crash_ragdoll = CrashRagdollModule.new() as CrashRagdoll3D
+	crash_ragdoll.name = "CrashRagdoll3D"
+	add_child(crash_ragdoll)
 
 func _build_snow_vfx() -> void:
 	snow_vfx = SkiSnowVFX.new()

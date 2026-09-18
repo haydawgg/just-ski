@@ -253,6 +253,41 @@ func pole_shaft_segments() -> Dictionary:
 		}
 	return segments
 
+func ragdoll_world_transforms() -> Dictionary:
+	var transforms := super.ragdoll_world_transforms()
+	if skeleton == null:
+		return transforms
+	for semantic_value: Variant in bone_indices.keys():
+		var semantic := semantic_value as StringName
+		transforms[semantic] = _bone_world(semantic)
+	for side: StringName in [&"left", &"right"]:
+		var ski := equipment_nodes.get(StringName(String(side) + "_ski")) as Node3D
+		var pole := equipment_nodes.get(StringName(String(side) + "_pole")) as Node3D
+		var tip := equipment_tips.get(side) as Node3D
+		if ski != null:
+			transforms[StringName(String(side) + "_ski")] = ski.global_transform
+		if pole != null:
+			transforms[StringName(String(side) + "_pole")] = pole.global_transform
+		if tip != null:
+			transforms[StringName(String(side) + "_pole_tip")] = tip.global_transform
+	return transforms
+
+func apply_ragdoll_pose(world_transforms: Dictionary, weight: float = 1.0) -> void:
+	super.apply_ragdoll_pose(world_transforms, weight)
+	var blend := clampf(weight, 0.0, 1.0)
+	# Equipment lives under BoneAttachment3D nodes in the production rig. Apply
+	# the physics transform after skeleton sync so released skis and poles are no
+	# longer visually dragged around by their former bindings during the crash.
+	for semantic: StringName in [&"left_ski", &"right_ski", &"left_pole", &"right_pole"]:
+		if not world_transforms.has(semantic):
+			continue
+		var equipment := equipment_nodes.get(semantic) as Node3D
+		if equipment != null:
+			equipment.global_transform = equipment.global_transform.interpolate_with(
+				world_transforms[semantic] as Transform3D,
+				blend
+			)
+
 func _equipment_collision_proxies(context: EquipmentCollisionContext) -> Array[EquipmentCollisionProxy]:
 	var proxies: Array[EquipmentCollisionProxy] = []
 	if skeleton == null:

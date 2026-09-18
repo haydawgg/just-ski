@@ -22,8 +22,10 @@ var _post_recovery_frames := 0
 var _saw_fall := false
 var _saw_rest := false
 var _saw_recovery := false
+var _time_to_control := -1.0
 
 const MAX_DIAGNOSTIC_SECONDS := 8.0
+const MAX_SEVERE_TIME_TO_CONTROL_SECONDS := 3.5
 const POST_RECOVERY_OBSERVATION_FRAMES := 12
 const SKI_PLANE_ACQUISITION_SECONDS := 0.12
 const MAX_GROUNDED_SKI_VERTICALITY := 0.70
@@ -76,6 +78,8 @@ func _physics_process(delta: float) -> void:
 	_saw_fall = _saw_fall or stage == CrashContext.Stage.FALL
 	_saw_rest = _saw_rest or stage == CrashContext.Stage.REST
 	_saw_recovery = _saw_recovery or stage == CrashContext.Stage.RECOVERY
+	if _time_to_control < 0.0 and _saw_recovery and skier.state == SkierController.State.GROUND:
+		_time_to_control = _crash_elapsed
 	if _saw_recovery and skier.state == SkierController.State.GROUND:
 		_post_recovery_frames += 1
 	else:
@@ -125,13 +129,18 @@ func _sample(delta: float) -> void:
 		return
 	var left_forward := -left_ski.global_basis.z
 	var right_forward := -right_ski.global_basis.z
+	var ragdoll := ((skier.telemetry().crash as Dictionary).get("ragdoll", {}) as Dictionary)
+	var left_released := bool(ragdoll.get("left_ski_released", false))
+	var right_released := bool(ragdoll.get("right_ski_released", false))
 	var grounded := skier.contact.grounded if skier.contact != null else false
 	_grounded_crash_elapsed = _grounded_crash_elapsed + delta if grounded else 0.0
 	var support_normal := skier.contact.average_normal if grounded and skier.contact.average_normal.length_squared() > 0.0001 else skier.crash_context.impact_normal
 	support_normal = support_normal.normalized() if support_normal.is_finite() and support_normal.length_squared() > 0.0001 else Vector3.UP
 	# A ski post has its long axis aligned with the live snow normal.
-	var left_vertical := absf(left_forward.normalized().dot(support_normal))
-	var right_vertical := absf(right_forward.normalized().dot(support_normal))
+	# A released ski is intentionally independent debris and no longer part of
+	# the skier's grounded silhouette contract.
+	var left_vertical := 0.0 if left_released else absf(left_forward.normalized().dot(support_normal))
+	var right_vertical := 0.0 if right_released else absf(right_forward.normalized().dot(support_normal))
 	var dist_between_skis := left_ski.global_position.distance_to(right_ski.global_position)
 	var pelvis_pos := pelvis.global_position if pelvis != null else skier.global_position
 	samples.append({
@@ -197,6 +206,7 @@ func _evaluate() -> void:
 	print("CRASH_SKI_DIST_MIN: %.3f max %.3f" % [min_dist, max_dist])
 	print("CRASH_GROUNDED_FRAMES: %d longest_streak %d" % [grounded_frames, longest_grounded_streak])
 	print("CRASH_SETTLED_ANGULAR_MAX: %.3f rad/s after 0.5s" % max_settled_angular)
+	print("CRASH_TIME_TO_CONTROL: %.3f s (limit %.2f)" % [_time_to_control, MAX_SEVERE_TIME_TO_CONTROL_SECONDS])
 	# Check for static settling: after 60 frames post-impact, pelvis should still show small movement if dragging works.
 	var early_pelvis: Vector3 = samples[mini(10, samples.size() - 1)].pelvis as Vector3
 	var mid_pelvis: Vector3 = samples[mini(80, samples.size() - 1)].pelvis as Vector3
@@ -209,6 +219,8 @@ func _evaluate() -> void:
 		reasons.append("vertical ski exceeded %.2f for %d grounded FALL/REST frames (longest streak %d, max %.3f)" % [MAX_GROUNDED_SKI_VERTICALITY, grounded_vertical_frames, longest_vertical_streak, max_vertical])
 	if not _saw_fall or not _saw_rest or not _saw_recovery or skier.state != SkierController.State.GROUND:
 		reasons.append("crash lifecycle was incomplete (fall=%s rest=%s recovery=%s state=%d)" % [_saw_fall, _saw_rest, _saw_recovery, skier.state])
+	elif _time_to_control < 0.0 or _time_to_control > MAX_SEVERE_TIME_TO_CONTROL_SECONDS:
+		reasons.append("severe crash returned control in %.3f s (limit %.2f s)" % [_time_to_control, MAX_SEVERE_TIME_TO_CONTROL_SECONDS])
 	if not finite_telemetry:
 		reasons.append("crash diagnostic produced non-finite telemetry")
 	if not saw_settled_angular_sample:

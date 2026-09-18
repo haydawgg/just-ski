@@ -414,6 +414,13 @@ func landing_cue_snapshot() -> Dictionary:
 		"pre_bail_weight": _pre_bail_weight,
 	}
 
+func ragdoll_world_transforms() -> Dictionary:
+	return rig_adapter.ragdoll_world_transforms() if rig_adapter != null else {}
+
+func apply_ragdoll_pose(world_transforms: Dictionary, weight: float = 1.0) -> void:
+	if rig_adapter != null:
+		rig_adapter.apply_ragdoll_pose(world_transforms, weight)
+
 func debug_snapshot() -> Dictionary:
 	var adapter_grab_debug := rig_adapter.grab_debug_snapshot() if rig_adapter != null else {}
 	var visual_left_hand := left_hand.global_position
