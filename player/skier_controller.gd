@@ -17,7 +17,7 @@ const SkierInputFrameModule := preload("res://player/input/skier_input_frame.gd"
 const SkierInputSamplerModule := preload("res://player/input/skier_input_sampler.gd")
 const TOUCHDOWN_SEAT_MARGIN := 0.05
 const BODY_COLLISION_SEAT_OFFSET := 0.67
-const CRASH_REST_MIN_SNOW_ALIGNMENT_DOT := 0.94
+const CRASH_REST_MIN_SNOW_ALIGNMENT_DOT := 0.88
 const FEATURE_TAKEOFF_SUPPORT_AGE := 0.2
 const FEATURE_CONTACT_COOLDOWN := 0.75
 

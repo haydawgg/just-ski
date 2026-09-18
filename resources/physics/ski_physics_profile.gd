@@ -142,31 +142,31 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export var landing_control_penalty_max: float = 0.32
 @export var landing_control_recovery_time_soft: float = 0.25
 @export var landing_control_recovery_time_hard: float = 0.45
-@export var bail_ground_damping: float = 2.8
-@export var bail_ground_align_rate: float = 6.0
+@export var bail_ground_damping: float = 3.6
+@export var bail_ground_align_rate: float = 7.0
 @export var bail_recovery_speed_retain: float = 0.55
 
 @export_category("Crash")
 @export var feature_collision_min_speed: float = 6.0
 @export var feature_collision_min_normal_speed: float = 4.5
 @export_range(0.0, 1.0) var feature_collision_max_speed_retention: float = 0.65
-@export var crash_min_duration: float = 0.35
-@export var crash_rest_confirm_time: float = 0.12
-@export var crash_rest_hold_time: float = 0.32
-@export var crash_rest_speed: float = 1.25
-@export var crash_rest_angular_speed: float = 0.45
+@export var crash_min_duration: float = 0.40
+@export var crash_rest_confirm_time: float = 0.08
+@export var crash_rest_hold_time: float = 0.18
+@export var crash_rest_speed: float = 1.8
+@export var crash_rest_angular_speed: float = 0.65
 @export var crash_max_duration: float = 2.4
 @export var crash_air_angular_damping: float = 1.5
-@export var crash_ground_angular_damping: float = 7.0
+@export var crash_ground_angular_damping: float = 8.5
 @export var crash_roll_body_radius: float = 0.75
 @export_range(0.0, 1.0) var crash_roll_coupling: float = 0.30
 @export var crash_roll_max_angular_speed: float = 1.6
 @export var crash_roll_fade_speed: float = 1.1
 @export var crash_roll_min_travel: float = 0.12
 @export var crash_align_speed_reference: float = 7.0
-@export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.82
+@export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.88
 @export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.94
-@export var crash_ground_max_rotation_rate_degrees: float = 150.0
+@export var crash_ground_max_rotation_rate_degrees: float = 180.0
 
 @export_category("Content")
 @export var feature_use_min_seconds: float = 0.12
