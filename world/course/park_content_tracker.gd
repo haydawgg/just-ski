@@ -33,6 +33,9 @@ var _camera_fallback_streak_spot: StringName
 var _camera_fallback_streak_state := ""
 var _pending_landing_feedback: Dictionary = {}
 var _pending_landing_spot_id: StringName
+var _pending_crash_feedback: Dictionary = {}
+var _pending_crash_spot_id: StringName
+var _pending_crash_last_position := Vector3.ZERO
 
 func _ready() -> void:
 	challenge_tracker.name = "ChallengeTracker"
@@ -58,6 +61,9 @@ func configure(
 	_camera_fallback_streak_state = ""
 	_pending_landing_feedback.clear()
 	_pending_landing_spot_id = &""
+	_pending_crash_feedback.clear()
+	_pending_crash_spot_id = &""
+	_pending_crash_last_position = Vector3.ZERO
 	_last_camera_fallback_count = int(
 		_camera.content_diagnostic_snapshot().get("camera_fallback_count", 0)
 	) if _camera != null else 0
@@ -86,9 +92,14 @@ func _exit_tree() -> void:
 	if SessionManager.marker_changed.is_connected(_on_marker_changed):
 		SessionManager.marker_changed.disconnect(_on_marker_changed)
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if _player == null or _profile == null:
 		return
+	if not _pending_crash_feedback.is_empty() and _player.state == SkierController.State.BAIL:
+		var crash_snapshot := _player.crash_context.snapshot()
+		crash_snapshot["severity"] = _player.crash_severity(_player.crash_context)
+		crash_snapshot["settle_deadline"] = _player.crash_settle_deadline(_player.crash_context)
+		observe_crash_frame(delta, crash_snapshot, _player.global_position, _player.velocity.length())
 	_update_active_spot(false)
 	if telemetry_enabled and _camera != null:
 		observe_camera_snapshot(_camera.content_diagnostic_snapshot(), _latest_player_telemetry)
@@ -173,6 +184,77 @@ func observe_camera_snapshot(camera_snapshot: Dictionary, player_snapshot: Dicti
 		) + 1
 		record_event(&"camera_fallback", context)
 
+## Crash diagnostics are snapshot-driven like camera diagnostics so the
+## aggregation contract can be tested without running a complete resort.
+func observe_crash_start(crash_snapshot: Dictionary, position: Vector3, speed_mps: float) -> void:
+	if not telemetry_enabled or active_spot == null:
+		return
+	var reason := str(crash_snapshot.get("reason", "NONE"))
+	var source := str(crash_snapshot.get("source", "NONE"))
+	_pending_crash_spot_id = active_spot.id
+	_pending_crash_last_position = position
+	_pending_crash_feedback = {
+		"origin_spot_id": _pending_crash_spot_id,
+		"reason": reason,
+		"source": source,
+		"source_state": int(crash_snapshot.get("source_state", -1)),
+		"severity": float(crash_snapshot.get("severity", 0.0)),
+		"settle_deadline_s": float(crash_snapshot.get("settle_deadline", 0.0)),
+		"impact_speed_mps": float(crash_snapshot.get("impact_speed", 0.0)),
+		"speed_loss_mps": float(crash_snapshot.get("speed_loss", 0.0)),
+		"angular_speed_rad_s": float(crash_snapshot.get("angular_speed", 0.0)),
+		"balance_error": float(crash_snapshot.get("balance_error", 0.0)),
+		"rail_balance": float(crash_snapshot.get("rail_balance", 0.0)),
+		"collision_asset_id": str(crash_snapshot.get("collision_asset_id", "")),
+		"collision_collider": str(crash_snapshot.get("collision_collider", "")),
+		"start_speed_mps": maxf(speed_mps, 0.0),
+		"max_speed_mps": maxf(speed_mps, 0.0),
+		"time_to_control_s": 0.0,
+		"slide_distance_m": 0.0,
+		"stage_durations_s": {},
+		"outcome": "active",
+	}
+	var diagnostics := _diagnostics_for_spot(_pending_crash_spot_id)
+	diagnostics["crash_count"] = int(diagnostics.get("crash_count", 0)) + 1
+	var by_reason := diagnostics.get("crashes_by_reason", {}) as Dictionary
+	by_reason[reason] = int(by_reason.get(reason, 0)) + 1
+	diagnostics["crashes_by_reason"] = by_reason
+	var by_source := diagnostics.get("crashes_by_source", {}) as Dictionary
+	by_source[source] = int(by_source.get(source, 0)) + 1
+	diagnostics["crashes_by_source"] = by_source
+	diagnostics["last_crash"] = _pending_crash_feedback.duplicate(true)
+	record_event(&"crash_start", _pending_crash_feedback)
+
+func observe_crash_frame(delta: float, crash_snapshot: Dictionary, position: Vector3, speed_mps: float) -> void:
+	if _pending_crash_feedback.is_empty():
+		return
+	var step := maxf(delta, 0.0)
+	_pending_crash_feedback["time_to_control_s"] = float(_pending_crash_feedback.get("time_to_control_s", 0.0)) + step
+	_pending_crash_feedback["slide_distance_m"] = float(_pending_crash_feedback.get("slide_distance_m", 0.0)) + position.distance_to(_pending_crash_last_position)
+	_pending_crash_feedback["max_speed_mps"] = maxf(float(_pending_crash_feedback.get("max_speed_mps", 0.0)), maxf(speed_mps, 0.0))
+	_pending_crash_last_position = position
+	var stage := str(crash_snapshot.get("stage", "NONE"))
+	var stage_durations := _pending_crash_feedback.get("stage_durations_s", {}) as Dictionary
+	stage_durations[stage] = float(stage_durations.get(stage, 0.0)) + step
+	_pending_crash_feedback["stage_durations_s"] = stage_durations
+	_pending_crash_feedback["last_stage"] = stage
+
+func complete_crash_diagnostic(outcome: String, position: Vector3, speed_mps: float) -> void:
+	if _pending_crash_feedback.is_empty():
+		return
+	_pending_crash_feedback["slide_distance_m"] = float(_pending_crash_feedback.get("slide_distance_m", 0.0)) + position.distance_to(_pending_crash_last_position)
+	_pending_crash_feedback["end_speed_mps"] = maxf(speed_mps, 0.0)
+	_pending_crash_feedback["outcome"] = outcome
+	var diagnostics := _diagnostics_for_spot(_pending_crash_spot_id)
+	var outcomes := diagnostics.get("crash_outcomes", {}) as Dictionary
+	outcomes[outcome] = int(outcomes.get(outcome, 0)) + 1
+	diagnostics["crash_outcomes"] = outcomes
+	diagnostics["last_crash"] = _pending_crash_feedback.duplicate(true)
+	record_event(&"crash_outcome", _pending_crash_feedback)
+	_pending_crash_feedback.clear()
+	_pending_crash_spot_id = &""
+	_pending_crash_last_position = Vector3.ZERO
+
 func _update_active_spot(force: bool) -> void:
 	if _spots.is_empty():
 		return
@@ -255,6 +337,8 @@ func _on_state_changed(state_name: String) -> void:
 		record_event(&"rail_capture", {"feature_id": _last_rail_feature_id, "captured": true})
 	if state_name == "Bail":
 		record_event(&"bail", {"source": "rail" if _last_state == "Grind" else _last_state.to_lower()})
+	elif state_name == "Ground" and not _pending_crash_feedback.is_empty() and _player != null:
+		complete_crash_diagnostic("recovered", _player.global_position, _player.velocity.length())
 	_last_state = state_name
 
 func _on_rail_finished(feature_id: StringName, outcome: StringName) -> void:
@@ -316,8 +400,12 @@ func _on_trick_landed(text: String, points: int, quality: float, outcome: int) -
 	record_event(&"trick_feedback", feedback)
 
 func _on_crashed() -> void:
-	# state_changed carries the authoritative source state and records the bail.
-	pass
+	if _player == null:
+		return
+	var crash_snapshot := _player.crash_context.snapshot()
+	crash_snapshot["severity"] = _player.crash_severity(_player.crash_context)
+	crash_snapshot["settle_deadline"] = _player.crash_settle_deadline(_player.crash_context)
+	observe_crash_start(crash_snapshot, _player.global_position, _player.velocity.length())
 
 func _on_score_changed(score_snapshot: Dictionary) -> void:
 	record_event(&"score", {"total_score": int(score_snapshot.get("total_score", 0))})
@@ -330,6 +418,10 @@ func _on_marker_changed(position: Vector3) -> void:
 	record_event(&"marker_save", {"position": position})
 
 func _on_respawn_applied(value: Transform3D) -> void:
+	if not _pending_crash_feedback.is_empty():
+		# The teleport is not crash travel. Finalize at the last observed crash
+		# position so slide distance remains a gameplay metric.
+		complete_crash_diagnostic("respawned", _pending_crash_last_position, 0.0)
 	var returned_to_marker := SessionManager.has_marker and value.origin.distance_to(SessionManager.marker.origin) < 1.0
 	record_event(&"marker_return" if returned_to_marker else &"restart", {"position": value.origin})
 	_update_active_spot(true)
@@ -352,8 +444,13 @@ func _route_rank(route: StringName) -> int:
 func _active_spot_diagnostics() -> Dictionary:
 	if active_spot == null:
 		return {}
-	if not spot_diagnostics.has(active_spot.id):
-		spot_diagnostics[active_spot.id] = {
+	return _diagnostics_for_spot(active_spot.id)
+
+func _diagnostics_for_spot(spot_id: StringName) -> Dictionary:
+	if spot_id == &"":
+		return {}
+	if not spot_diagnostics.has(spot_id):
+		spot_diagnostics[spot_id] = {
 			"camera_fallback_count": 0,
 			"camera_fallback_event_count": 0,
 			"camera_fallbacks_by_state": {},
@@ -361,11 +458,16 @@ func _active_spot_diagnostics() -> Dictionary:
 			"landing_count": 0,
 			"landing_outcomes": {},
 			"trick_landing_count": 0,
+			"crash_count": 0,
+			"crashes_by_reason": {},
+			"crashes_by_source": {},
+			"crash_outcomes": {},
 			"last_camera_fallback": {},
 			"last_landing": {},
 			"last_trick": {},
+			"last_crash": {},
 		}
-	return spot_diagnostics[active_spot.id] as Dictionary
+	return spot_diagnostics[spot_id] as Dictionary
 
 func _landing_feedback(result: Dictionary) -> Dictionary:
 	var outcome := int(result.get("outcome", LandingSolver.Outcome.CLEAN))

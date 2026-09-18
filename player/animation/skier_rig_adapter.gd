@@ -60,6 +60,46 @@ func grab_target_world(_side: StringName) -> Vector3:
 func pole_shaft_segments() -> Dictionary:
 	return {}
 
+func ragdoll_world_transforms() -> Dictionary:
+	var transforms := {}
+	if driver == null:
+		return transforms
+	for semantic: StringName in [
+		&"pelvis", &"spine", &"chest", &"head",
+		&"left_hip", &"left_knee", &"left_boot",
+		&"right_hip", &"right_knee", &"right_boot",
+		&"left_shoulder", &"left_elbow", &"left_hand",
+		&"right_shoulder", &"right_elbow", &"right_hand",
+		&"left_ski", &"right_ski", &"left_pole", &"right_pole",
+	]:
+		var node := driver.joint(semantic)
+		if node != null:
+			transforms[semantic] = node.global_transform
+	for side: StringName in [&"left", &"right"]:
+		var tip := driver.pole_tips.get(side) as Node3D
+		if tip != null:
+			transforms[StringName(String(side) + "_pole_tip")] = tip.global_transform
+	return transforms
+
+func apply_ragdoll_pose(world_transforms: Dictionary, weight: float = 1.0) -> void:
+	if driver == null or world_transforms.is_empty():
+		return
+	var blend := clampf(weight, 0.0, 1.0)
+	for semantic: StringName in [
+		&"pelvis", &"spine", &"chest", &"head",
+		&"left_hip", &"left_knee", &"left_boot",
+		&"right_hip", &"right_knee", &"right_boot",
+		&"left_shoulder", &"left_elbow", &"left_hand",
+		&"right_shoulder", &"right_elbow", &"right_hand",
+		&"left_ski", &"right_ski", &"left_pole", &"right_pole",
+	]:
+		if not world_transforms.has(semantic):
+			continue
+		var node := driver.joint(semantic)
+		if node != null:
+			node.global_transform = node.global_transform.interpolate_with(world_transforms[semantic] as Transform3D, blend)
+	sync_pose(0.0, [])
+
 ## Deep rig-adapter seam for presentation-only self-collision. Each adapter
 ## supplies final-pose semantic capsules and applies the solver's actuator
 ## result without exposing rig-specific bone or attachment details.

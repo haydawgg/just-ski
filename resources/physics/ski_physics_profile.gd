@@ -155,6 +155,7 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export var crash_rest_hold_time: float = 0.32
 @export var crash_rest_speed: float = 1.25
 @export var crash_rest_angular_speed: float = 0.45
+@export var crash_soft_max_duration: float = 1.0
 @export var crash_max_duration: float = 2.4
 @export var crash_air_angular_damping: float = 1.5
 @export var crash_ground_angular_damping: float = 7.0
@@ -167,6 +168,22 @@ func contact_probe_offsets() -> Array[Vector3]:
 @export_range(0.0, 1.0) var crash_align_fall_fast_factor: float = 0.82
 @export_range(0.0, 1.0) var crash_align_fall_slow_factor: float = 0.94
 @export var crash_ground_max_rotation_rate_degrees: float = 150.0
+@export var ragdoll_enabled: bool = true
+@export_range(0.0, 1.0) var ragdoll_restitution: float = 0.02
+@export_range(0.0, 1.0) var ragdoll_body_friction: float = 0.55
+@export var ragdoll_active_muscle_duration: float = 0.48
+@export var ragdoll_active_linear_damp: float = 2.2
+@export var ragdoll_passive_linear_damp: float = 0.32
+@export var ragdoll_active_angular_damp: float = 4.2
+@export var ragdoll_passive_angular_damp: float = 0.85
+@export var ragdoll_active_max_angular_velocity: float = 5.5
+@export var ragdoll_passive_max_angular_velocity: float = 1.6
+@export_range(0.0, 1.0) var ragdoll_release_one_severity: float = 0.58
+@export_range(0.0, 1.0) var ragdoll_release_both_severity: float = 0.86
+@export_range(0.0, 1.0) var ragdoll_pole_release_severity: float = 0.4
+@export var ragdoll_ski_longitudinal_drag: float = 0.35
+@export var ragdoll_attached_ski_lateral_drag: float = 8.5
+@export var ragdoll_released_ski_lateral_drag: float = 2.4
 
 @export_category("Content")
 @export var feature_use_min_seconds: float = 0.12

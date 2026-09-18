@@ -7,7 +7,10 @@ extends Node
 
 const ParkLayout := preload("res://world/park_features/park_layout.gd")
 const CLEARANCE_PHASE_FRAMES := 30
-const BAIL_RECOVERY_FRAMES := 600
+# This fixture triggers a low-severity grounded bail. It may interrupt the
+# line, but must return control inside the medium-crash budget.
+const BAIL_RECOVERY_SECONDS := 2.75
+const BAIL_RECOVERY_FRAME_GUARD := 600
 const RESPAWN_SETTLE_FRAMES := 90
 const MAX_FALLBACK_DELTA := 4
 const MIN_CAMERA_DISTANCE := 3.28
@@ -74,14 +77,18 @@ func _test_bail_recovery() -> void:
 	skier._bail()
 	var recovered := false
 	var frames := 0
-	for _frame: int in range(BAIL_RECOVERY_FRAMES):
+	var crash_elapsed := 0.0
+	for _frame: int in range(BAIL_RECOVERY_FRAME_GUARD):
 		await get_tree().physics_frame
 		frames += 1
 		if skier.state != SkierController.State.BAIL:
 			recovered = true
 			break
+		crash_elapsed = skier.crash_context.elapsed
+		if crash_elapsed >= BAIL_RECOVERY_SECONDS:
+			break
 	if not recovered:
-		failures.append("Bail did not recover within %.1f s" % (float(BAIL_RECOVERY_FRAMES) / 60.0))
+		failures.append("Low-severity bail did not recover within %.2f s" % BAIL_RECOVERY_SECONDS)
 	else:
 		skier.velocity = ParkLayout.downhill() * 7.0
 		for _frame: int in range(90):
@@ -90,7 +97,7 @@ func _test_bail_recovery() -> void:
 			failures.append("Skier did not resume normal skiing after bail recovery")
 		if not _camera_clear("bail-recovery"):
 			failures.append("Camera did not reacquire after bail recovery")
-	print("RELEASE_CROSS_STATE_SAMPLE phase=bail recovered=%s frames=%d speed=%.2f" % [str(recovered), frames, skier.velocity.length()])
+	print("RELEASE_CROSS_STATE_SAMPLE phase=bail recovered=%s frames=%d elapsed=%.3f speed=%.2f" % [str(recovered), frames, crash_elapsed, skier.velocity.length()])
 
 func _test_respawn_relocation() -> void:
 	var marker := Transform3D(ParkLayout.downhill_basis(), ParkLayout.surface_hover(-6.0, -60.0, ParkLayout.SPAWN_HOVER))

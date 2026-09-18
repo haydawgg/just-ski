@@ -127,6 +127,23 @@ func _validate_local_telemetry() -> void:
 		"rotation_orientation_error_degrees": 12.0,
 	})
 	tracker._on_trick_landed("Left 180", 420, 0.84, LandingSolver.Outcome.HARD)
+	tracker.observe_crash_start({
+		"reason": "FEATURE_IMPACT",
+		"source": "OBSTACLE",
+		"source_state": SkierController.State.AIR,
+		"severity": 0.72,
+		"settle_deadline": 2.0,
+		"impact_speed": 11.5,
+		"speed_loss": 7.0,
+		"angular_speed": 2.4,
+		"balance_error": 0.2,
+		"rail_balance": 0.0,
+		"collision_asset_id": "test_wall",
+		"collision_collider": "TestWall",
+	}, Vector3.ZERO, 14.0)
+	tracker.observe_crash_frame(0.4, {"stage": "FALL"}, Vector3(0.0, 0.0, -2.0), 8.0)
+	tracker.observe_crash_frame(0.3, {"stage": "REST"}, Vector3(0.0, 0.0, -2.5), 0.8)
+	tracker.complete_crash_diagnostic("recovered", Vector3(0.0, 0.0, -2.5), 3.0)
 	tracker.record_event(&"marker_save", {"position": Vector3.ZERO})
 	tracker.record_event(&"marker_return", {"position": Vector3.ZERO})
 	tracker.record_event(&"run_complete", {"total_score": 1000})
@@ -152,9 +169,25 @@ func _validate_local_telemetry() -> void:
 	var trick := diagnostics.get("last_trick", {}) as Dictionary
 	if str(trick.get("name", "")) != "Left 180" or int(trick.get("points", 0)) != 420:
 		failures.append("spot diagnostics lost landed trick feedback")
+	if int(diagnostics.get("crash_count", 0)) != 1:
+		failures.append("spot diagnostics did not count the crash")
+	if int((diagnostics.get("crashes_by_reason", {}) as Dictionary).get("FEATURE_IMPACT", 0)) != 1 \
+		or int((diagnostics.get("crashes_by_source", {}) as Dictionary).get("OBSTACLE", 0)) != 1:
+		failures.append("spot diagnostics did not classify crash reason/source")
+	if int((diagnostics.get("crash_outcomes", {}) as Dictionary).get("recovered", 0)) != 1:
+		failures.append("spot diagnostics did not record the recovery outcome")
+	var crash := diagnostics.get("last_crash", {}) as Dictionary
+	var crash_stages := crash.get("stage_durations_s", {}) as Dictionary
+	if not is_equal_approx(float(crash.get("time_to_control_s", 0.0)), 0.7) \
+		or not is_equal_approx(float(crash.get("slide_distance_m", 0.0)), 2.5) \
+		or not is_equal_approx(float(crash_stages.get("FALL", 0.0)), 0.4) \
+		or not is_equal_approx(float(crash_stages.get("REST", 0.0)), 0.3):
+		failures.append("spot diagnostics lost crash timing, travel, or stage durations")
+	if str(crash.get("collision_asset_id", "")) != "test_wall" or str(crash.get("outcome", "")) != "recovered":
+		failures.append("spot diagnostics lost crash collision context or outcome")
 	var kinds: Dictionary = {}
 	for event: Dictionary in snapshot.get("trace_events", []):
 		kinds[StringName(event.get("kind", &""))] = true
-	for expected: StringName in [&"spot_entry", &"feature_approach", &"rail_capture", &"camera_fallback", &"landing", &"landing_feedback", &"trick_feedback", &"marker_save", &"marker_return", &"run_complete"]:
+	for expected: StringName in [&"spot_entry", &"feature_approach", &"rail_capture", &"camera_fallback", &"landing", &"landing_feedback", &"trick_feedback", &"crash_start", &"crash_outcome", &"marker_save", &"marker_return", &"run_complete"]:
 		if not kinds.has(expected):
 			failures.append("local telemetry omitted %s" % expected)

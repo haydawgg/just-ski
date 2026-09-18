@@ -28,6 +28,8 @@ func _ready() -> void:
 	_test_airborne_bail_continuity_unchanged()
 	_test_ground_alignment_weakens_with_speed()
 	_test_rest_detection_and_recovery_timing()
+	_test_crash_severity_duration_bands()
+	_test_hybrid_ragdoll_contract()
 	_test_rest_waits_for_snow_alignment()
 	_test_crash_settling_shows_low_speed_motion()
 	_test_recovery_is_rate_limited_and_coordinated()
@@ -780,6 +782,111 @@ func _test_rest_detection_and_recovery_timing() -> void:
 	var moving := solver.resolve_rest(true, profile.crash_min_duration, profile.crash_rest_speed + 0.5, 0.0, false, 0.05, 1.0 / 60.0, 0.18, 0.22, profile)
 	if moving.rest_detected or moving.rest_elapsed != 0.0:
 		failures.append("Rest detection confirmed while planar speed was still above the rest threshold")
+
+func _test_crash_severity_duration_bands() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	var soft := CrashContext.new()
+	soft.begin(
+		CrashContext.Reason.LANDING_IMPACT,
+		CrashContext.Source.LANDING,
+		SkierController.State.GROUND,
+		Vector3(0.0, 0.0, -9.0),
+		Vector3(0.0, 0.0, -9.0),
+		Vector3.UP,
+		0.0,
+		0.0
+	)
+	var medium := CrashContext.new()
+	medium.begin(
+		CrashContext.Reason.FEATURE_IMPACT,
+		CrashContext.Source.OBSTACLE,
+		SkierController.State.AIR,
+		Vector3(8.0, 0.0, -8.0),
+		Vector3(4.0, 0.0, -5.0),
+		Vector3.LEFT,
+		skier.profile.bail_impact_speed * 0.5,
+		skier.profile.maximum_angular_speed * skier.profile.bail_angular_ratio * 0.5,
+		0.5
+	)
+	var severe := CrashContext.new()
+	severe.begin(
+		CrashContext.Reason.LANDING_ANGULAR,
+		CrashContext.Source.LANDING,
+		SkierController.State.AIR,
+		Vector3(0.0, -16.0, -8.0),
+		Vector3(0.0, -8.0, -4.0),
+		Vector3.UP,
+		skier.profile.bail_impact_speed,
+		skier.profile.maximum_angular_speed * skier.profile.bail_angular_ratio,
+		1.0
+	)
+	var soft_deadline := skier.crash_settle_deadline(soft)
+	var medium_deadline := skier.crash_settle_deadline(medium)
+	var severe_deadline := skier.crash_settle_deadline(severe)
+	if not is_equal_approx(soft_deadline, skier.profile.crash_soft_max_duration):
+		failures.append("Low-severity crash did not use the short settle deadline")
+	if medium_deadline <= soft_deadline or medium_deadline >= severe_deadline:
+		failures.append("Medium crash deadline was not between soft and severe budgets")
+	if not is_equal_approx(severe_deadline, skier.profile.crash_max_duration):
+		failures.append("Severe crash did not retain the full settle deadline")
+	remove_child(skier)
+	skier.queue_free()
+
+func _test_hybrid_ragdoll_contract() -> void:
+	var ragdoll := CrashRagdoll3D.new()
+	add_child(ragdoll)
+	var profile := SkiPhysicsProfile.new()
+	var transforms := {
+		&"pelvis": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)),
+		&"spine": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.22, 0.0)),
+		&"chest": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.55, 0.0)),
+		&"head": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.92, 0.0)),
+		&"left_hip": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.96, 0.0)),
+		&"left_knee": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.50, 0.0)),
+		&"left_boot": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.08, -0.03)),
+		&"right_hip": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.96, 0.0)),
+		&"right_knee": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.50, 0.0)),
+		&"right_boot": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.08, -0.03)),
+		&"left_shoulder": Transform3D(Basis.IDENTITY, Vector3(-0.32, 1.58, 0.0)),
+		&"left_elbow": Transform3D(Basis.IDENTITY, Vector3(-0.62, 1.34, 0.0)),
+		&"left_hand": Transform3D(Basis.IDENTITY, Vector3(-0.82, 1.08, 0.0)),
+		&"right_shoulder": Transform3D(Basis.IDENTITY, Vector3(0.32, 1.58, 0.0)),
+		&"right_elbow": Transform3D(Basis.IDENTITY, Vector3(0.62, 1.34, 0.0)),
+		&"right_hand": Transform3D(Basis.IDENTITY, Vector3(0.82, 1.08, 0.0)),
+		&"left_ski": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.0, -0.08)),
+		&"right_ski": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.0, -0.08)),
+		&"left_pole": Transform3D(Basis.IDENTITY, Vector3(-0.82, 1.08, 0.0)),
+		&"right_pole": Transform3D(Basis.IDENTITY, Vector3(0.82, 1.08, 0.0)),
+		&"left_pole_tip": Transform3D(Basis.IDENTITY, Vector3(-0.9, -0.08, 0.1)),
+		&"right_pole_tip": Transform3D(Basis.IDENTITY, Vector3(0.9, -0.08, 0.1)),
+	}
+	var activated := ragdoll.activate(
+		transforms,
+		Vector3(2.0, -1.0, -6.0),
+		Vector3(0.5, 0.2, 0.8),
+		1.0,
+		-1.0,
+		profile,
+		1.0
+	)
+	var snapshot := ragdoll.snapshot()
+	if not activated or not bool(snapshot.active) or int(snapshot.body_count) != 15 or int(snapshot.joint_count) != 10:
+		failures.append("Hybrid ragdoll did not build the expected bounded physical skeleton")
+	if not bool(snapshot.left_ski_released) or not bool(snapshot.right_ski_released) or not bool(snapshot.left_pole_released):
+		failures.append("Major crash did not release skis and poles at the configured thresholds")
+	var pose := ragdoll.physics_pose()
+	if pose.size() < 20 or not (pose.get(&"pelvis", Transform3D.IDENTITY) as Transform3D).origin.is_finite():
+		failures.append("Hybrid ragdoll did not expose a finite full-body presentation pose")
+	ragdoll.begin_recovery()
+	if not bool(ragdoll.snapshot().recovering):
+		failures.append("Hybrid ragdoll did not freeze into the recovery blend")
+	ragdoll.stop()
+	if bool(ragdoll.snapshot().active):
+		failures.append("Hybrid ragdoll retained physics ownership after cleanup")
+	remove_child(ragdoll)
+	ragdoll.queue_free()
 
 func _make_sprawl_frame(velocity: Vector3) -> SkierAnimationFrame:
 	var frame := SkierAnimationFrame.new()
