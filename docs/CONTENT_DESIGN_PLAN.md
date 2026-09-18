@@ -10,7 +10,7 @@ The structural content pass is implemented:
 - semantic feature metadata and stable spot IDs;
 - optional spot/line challenges;
 - an opt-in Session Yard profile;
-- local development telemetry for attempts, routes, landings, rails, bails, markers, challenges, and run completion;
+- local development telemetry for attempts, routes, landings, rails, bails, markers, challenges, run completion, and per-spot camera/landing/trick diagnostics;
 - deterministic runtime and preview construction from the same course data;
 - automated acceptance for content references, ordering, metadata, challenges, and Session Yard construction.
 
@@ -188,6 +188,13 @@ Run clean-player sessions at normal physics rate and record, for each spot:
 - transfer attempts;
 - miss recovery versus forced reset;
 - confusion about route/readability versus confusion about controls.
+
+Debug builds and runs started with `--content-trace` expose `spot_diagnostics`
+through `ParkContentTracker.snapshot()`. Each stable spot accumulates camera
+fallback deltas and states, peak carve look-ahead, normalized landing outcomes,
+landing speed loss/retention, and the latest landed-trick target/residual
+feedback. Use these values to locate what the player experienced; they are
+diagnostic evidence, not success targets or progression rules.
 
 Review the generated resort and Session Yard previews for approach sightlines, crossovers, landing/runout spacing, and feature relationships, but treat gameplay-camera observation as authoritative for readability.
 
