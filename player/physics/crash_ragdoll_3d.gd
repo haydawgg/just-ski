@@ -5,8 +5,16 @@ extends Node3D
 ## driven; this node is activated only after SkierController has committed to a
 ## BAIL and hands the evaluated visual pose plus root momentum to physics.
 
-const TERRAIN_AND_FEATURE_MASK := 1 | 4
-const RAGDOLL_LAYER := 16
+const CollisionLayers := preload("res://resources/physics/collision_layers.gd")
+const TERRAIN_AND_FEATURE_MASK := CollisionLayers.WORLD_SOLID_MASK
+const RAGDOLL_LAYER := CollisionLayers.RAGDOLL
+const REQUIRED_BODY_SEMANTICS: Array[StringName] = [
+	&"pelvis", &"spine", &"chest", &"head",
+	&"left_hip", &"left_knee", &"left_boot",
+	&"right_hip", &"right_knee", &"right_boot",
+	&"left_shoulder", &"left_elbow", &"left_hand",
+	&"right_shoulder", &"right_elbow", &"right_hand",
+]
 const POSE_BODY: Dictionary = {
 	&"pelvis": &"pelvis",
 	&"spine": &"chest",
@@ -41,6 +49,7 @@ var right_pole_released := false
 var bodies: Dictionary = {}
 var pose_offsets: Dictionary = {}
 var _joints: Array[Joint3D] = []
+var _joint_anchors: Array[Dictionary] = []
 var _profile: SkiPhysicsProfile
 var _recovery_pose: Dictionary = {}
 var _physics_material: PhysicsMaterial
@@ -92,6 +101,8 @@ func activate(
 		crash_severity if binding_severity < 0.0 else clampf(binding_severity, 0.0, 1.0),
 		lateral_bias
 	)
+	if not _has_required_transforms(world_transforms):
+		return false
 	_physics_material = PhysicsMaterial.new()
 	_physics_material.friction = clampf(_profile.ragdoll_body_friction, 0.0, 1.0)
 	_physics_material.bounce = clampf(_profile.ragdoll_restitution, 0.0, 1.0)
@@ -107,7 +118,9 @@ func activate(
 
 	_add_capsule(&"pelvis", pelvis - Vector3.UP * 0.12, spine, 0.20, 16.0)
 	_add_capsule(&"chest", spine, chest + (head - chest) * 0.18, 0.22, 24.0)
-	_add_capsule(&"head", chest + (head - chest) * 0.55, head + (head - chest).normalized() * 0.18, 0.145, 5.0)
+	var head_axis := head - chest
+	var head_tip := head + (head_axis.normalized() * 0.18 if head_axis.length_squared() > 0.0001 else Vector3.UP * 0.18)
+	_add_capsule(&"head", chest + head_axis * 0.55, head_tip, 0.145, 5.0)
 	_add_limb(world_transforms, &"left_upper_arm", &"left_shoulder", &"left_elbow", 0.09, 2.2)
 	_add_limb(world_transforms, &"left_forearm", &"left_elbow", &"left_hand", 0.075, 1.5)
 	_add_limb(world_transforms, &"right_upper_arm", &"right_shoulder", &"right_elbow", 0.09, 2.2)
@@ -163,6 +176,7 @@ func stop() -> void:
 		if is_instance_valid(joint):
 			joint.queue_free()
 	_joints.clear()
+	_joint_anchors.clear()
 	for body_value: Variant in bodies.values():
 		var body := body_value as RigidBody3D
 		if is_instance_valid(body):
@@ -234,6 +248,20 @@ func maximum_angular_speed() -> float:
 			maximum = maxf(maximum, body.angular_velocity.length())
 	return maximum
 
+func maximum_joint_error() -> float:
+	var maximum := 0.0
+	for entry: Dictionary in _joint_anchors:
+		var body_a := entry["body_a"] as RigidBody3D
+		var body_b := entry["body_b"] as RigidBody3D
+		if body_a == null or body_b == null:
+			continue
+		var world_a := body_a.global_transform * (entry["anchor_a"] as Vector3)
+		var world_b := body_b.global_transform * (entry["anchor_b"] as Vector3)
+		var error := world_a.distance_to(world_b)
+		if is_finite(error):
+			maximum = maxf(maximum, error)
+	return maximum
+
 func has_ground_support() -> bool:
 	var pelvis_body := bodies.get(&"pelvis") as RigidBody3D
 	if pelvis_body == null or not pelvis_body.is_inside_tree():
@@ -265,6 +293,7 @@ func snapshot() -> Dictionary:
 		"right_pole_released": right_pole_released,
 		"linear_speed": pelvis_velocity().length(),
 		"angular_speed": pelvis_angular_velocity().length(),
+		"joint_error": maximum_joint_error(),
 	}
 
 func _choose_equipment_release(binding_severity: float, lateral_bias: float) -> void:
@@ -278,6 +307,20 @@ func _choose_equipment_release(binding_severity: float, lateral_bias: float) -> 
 			left_ski_released = true
 		else:
 			right_ski_released = true
+
+func _has_required_transforms(world_transforms: Dictionary) -> bool:
+	for semantic: StringName in REQUIRED_BODY_SEMANTICS:
+		if not world_transforms.has(semantic):
+			return false
+	if left_ski_released and not world_transforms.has(&"left_ski"):
+		return false
+	if right_ski_released and not world_transforms.has(&"right_ski"):
+		return false
+	if left_pole_released and not world_transforms.has(&"left_pole"):
+		return false
+	if right_pole_released and not world_transforms.has(&"right_pole"):
+		return false
+	return true
 
 func _add_limb(
 	world_transforms: Dictionary,
@@ -367,6 +410,12 @@ func _add_cone_joint(
 	joint.set_param(ConeTwistJoint3D.PARAM_RELAXATION, 1.0)
 	body_a.add_collision_exception_with(body_b)
 	_joints.append(joint)
+	_joint_anchors.append({
+		"body_a": body_a,
+		"body_b": body_b,
+		"anchor_a": body_a.global_transform.affine_inverse() * anchor,
+		"anchor_b": body_b.global_transform.affine_inverse() * anchor,
+	})
 
 func _apply_ski_snow_resistance(id: StringName, released: bool) -> void:
 	var ski := bodies.get(id) as RigidBody3D

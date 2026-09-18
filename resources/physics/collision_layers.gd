@@ -8,6 +8,7 @@ const SKIER := 1 << 1
 const FEATURE := 1 << 2
 const BOUNDARY := FEATURE
 const GRIND := 1 << 3
+const RAGDOLL := 1 << 4
 
 const WORLD_SOLID_MASK := TERRAIN | FEATURE
 const SKIER_COLLISION_MASK := WORLD_SOLID_MASK
