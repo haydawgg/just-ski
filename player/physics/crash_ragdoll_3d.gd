@@ -419,16 +419,30 @@ func _add_cone_joint(
 
 func _apply_ski_snow_resistance(id: StringName, released: bool) -> void:
 	var ski := bodies.get(id) as RigidBody3D
-	if ski == null or ski.freeze:
+	var target := ski
+	var ski_transform := Transform3D.IDENTITY
+	if ski != null:
+		ski_transform = ski.global_transform
+	else:
+		if released:
+			return
+		# Bound skis have no rigid body of their own, so approximate attached
+		# resistance at the carrying limb while keeping the visual ski
+		# orientation from the captured rigid offset.
+		target = bodies.get(_pose_body_id(id)) as RigidBody3D
+		if target == null:
+			return
+		ski_transform = target.global_transform * (pose_offsets.get(id, Transform3D.IDENTITY) as Transform3D)
+	if target.freeze:
 		return
-	var forward := -ski.global_basis.z.normalized()
-	var right := ski.global_basis.x.normalized()
-	var forward_speed := ski.linear_velocity.dot(forward)
-	var lateral_speed := ski.linear_velocity.dot(right)
+	var forward := -ski_transform.basis.z.normalized()
+	var right := ski_transform.basis.x.normalized()
+	var forward_speed := target.linear_velocity.dot(forward)
+	var lateral_speed := target.linear_velocity.dot(right)
 	var lateral_grip := _profile.ragdoll_released_ski_lateral_drag if released else _profile.ragdoll_attached_ski_lateral_drag
 	var force := -forward * forward_speed * _profile.ragdoll_ski_longitudinal_drag
 	force -= right * lateral_speed * lateral_grip
-	ski.apply_central_force(force)
+	target.apply_central_force(force)
 
 func _origin(world_transforms: Dictionary, semantic: StringName) -> Vector3:
 	return (world_transforms.get(semantic, Transform3D.IDENTITY) as Transform3D).origin

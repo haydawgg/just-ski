@@ -33,6 +33,7 @@ func _ready() -> void:
 	_test_crash_severity_duration_bands()
 	_test_hybrid_ragdoll_contract()
 	_test_ragdoll_telemetry_contract()
+	await _test_ragdoll_ground_and_joint_stability()
 	_test_rest_waits_for_snow_alignment()
 	_test_crash_settling_shows_low_speed_motion()
 	_test_recovery_is_rate_limited_and_coordinated()
@@ -841,30 +842,7 @@ func _test_hybrid_ragdoll_contract() -> void:
 	var ragdoll := CrashRagdoll3D.new()
 	add_child(ragdoll)
 	var profile := SkiPhysicsProfile.new()
-	var transforms := {
-		&"pelvis": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)),
-		&"spine": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.22, 0.0)),
-		&"chest": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.55, 0.0)),
-		&"head": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.92, 0.0)),
-		&"left_hip": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.96, 0.0)),
-		&"left_knee": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.50, 0.0)),
-		&"left_boot": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.08, -0.03)),
-		&"right_hip": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.96, 0.0)),
-		&"right_knee": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.50, 0.0)),
-		&"right_boot": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.08, -0.03)),
-		&"left_shoulder": Transform3D(Basis.IDENTITY, Vector3(-0.32, 1.58, 0.0)),
-		&"left_elbow": Transform3D(Basis.IDENTITY, Vector3(-0.62, 1.34, 0.0)),
-		&"left_hand": Transform3D(Basis.IDENTITY, Vector3(-0.82, 1.08, 0.0)),
-		&"right_shoulder": Transform3D(Basis.IDENTITY, Vector3(0.32, 1.58, 0.0)),
-		&"right_elbow": Transform3D(Basis.IDENTITY, Vector3(0.62, 1.34, 0.0)),
-		&"right_hand": Transform3D(Basis.IDENTITY, Vector3(0.82, 1.08, 0.0)),
-		&"left_ski": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.0, -0.08)),
-		&"right_ski": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.0, -0.08)),
-		&"left_pole": Transform3D(Basis.IDENTITY, Vector3(-0.82, 1.08, 0.0)),
-		&"right_pole": Transform3D(Basis.IDENTITY, Vector3(0.82, 1.08, 0.0)),
-		&"left_pole_tip": Transform3D(Basis.IDENTITY, Vector3(-0.9, -0.08, 0.1)),
-		&"right_pole_tip": Transform3D(Basis.IDENTITY, Vector3(0.9, -0.08, 0.1)),
-	}
+	var transforms := _ragdoll_sample_transforms()
 	var activated := ragdoll.activate(
 		transforms,
 		Vector3(2.0, -1.0, -6.0),
@@ -894,6 +872,21 @@ func _test_hybrid_ragdoll_contract() -> void:
 			break
 	if not is_finite(float(snapshot.get("joint_error", NAN))):
 		failures.append("Hybrid ragdoll did not expose a finite joint anchor error")
+	for semantic: StringName in [&"pelvis", &"left_hand", &"right_boot", &"head"]:
+		if not pose.has(semantic):
+			continue
+		var expected := transforms[semantic] as Transform3D
+		if (pose[semantic] as Transform3D).origin.distance_to(expected.origin) > 0.001:
+			failures.append("Hybrid ragdoll pose round-trip drifted at %s" % semantic)
+	var soft := _activate_ragdoll_sample(ragdoll, transforms, profile, 0.2, 0.2, 0.0)
+	if int(soft.get("body_count", 0)) != 11 or bool(soft.get("left_ski_released", true)) or bool(soft.get("left_pole_released", true)):
+		failures.append("Soft crash released equipment before the configured thresholds")
+	var one_side := _activate_ragdoll_sample(ragdoll, transforms, profile, 0.6, 0.6, -1.0)
+	if int(one_side.get("body_count", 0)) != 14 or not bool(one_side.get("left_ski_released", false)) or bool(one_side.get("right_ski_released", true)):
+		failures.append("Single-ski release did not follow the lateral bias")
+	var both := _activate_ragdoll_sample(ragdoll, transforms, profile, 0.9, 0.9, 1.0)
+	if int(both.get("body_count", 0)) != 15 or not bool(both.get("right_pole_released", false)):
+		failures.append("Severe crash did not release all equipment")
 	var incomplete := CrashRagdoll3D.new()
 	add_child(incomplete)
 	var partial := transforms.duplicate()
@@ -907,6 +900,9 @@ func _test_hybrid_ragdoll_contract() -> void:
 	ragdoll.begin_recovery()
 	if not bool(ragdoll.snapshot().recovering):
 		failures.append("Hybrid ragdoll did not freeze into the recovery blend")
+	var frozen_pose := ragdoll.physics_pose()
+	if frozen_pose != ragdoll.physics_pose():
+		failures.append("Hybrid ragdoll recovery pose changed after the freeze")
 	ragdoll.stop()
 	if bool(ragdoll.snapshot().active):
 		failures.append("Hybrid ragdoll retained physics ownership after cleanup")
@@ -932,6 +928,102 @@ func _test_ragdoll_telemetry_contract() -> void:
 			failures.append("Crash telemetry lost finite carrier and pelvis slip speeds")
 	remove_child(skier)
 	skier.queue_free()
+
+func _ragdoll_sample_transforms() -> Dictionary:
+	return {
+		&"pelvis": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)),
+		&"spine": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.22, 0.0)),
+		&"chest": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.55, 0.0)),
+		&"head": Transform3D(Basis.IDENTITY, Vector3(0.0, 1.92, 0.0)),
+		&"left_hip": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.96, 0.0)),
+		&"left_knee": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.50, 0.0)),
+		&"left_boot": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.08, -0.03)),
+		&"right_hip": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.96, 0.0)),
+		&"right_knee": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.50, 0.0)),
+		&"right_boot": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.08, -0.03)),
+		&"left_shoulder": Transform3D(Basis.IDENTITY, Vector3(-0.32, 1.58, 0.0)),
+		&"left_elbow": Transform3D(Basis.IDENTITY, Vector3(-0.62, 1.34, 0.0)),
+		&"left_hand": Transform3D(Basis.IDENTITY, Vector3(-0.82, 1.08, 0.0)),
+		&"right_shoulder": Transform3D(Basis.IDENTITY, Vector3(0.32, 1.58, 0.0)),
+		&"right_elbow": Transform3D(Basis.IDENTITY, Vector3(0.62, 1.34, 0.0)),
+		&"right_hand": Transform3D(Basis.IDENTITY, Vector3(0.82, 1.08, 0.0)),
+		&"left_ski": Transform3D(Basis.IDENTITY, Vector3(-0.14, 0.0, -0.08)),
+		&"right_ski": Transform3D(Basis.IDENTITY, Vector3(0.14, 0.0, -0.08)),
+		&"left_pole": Transform3D(Basis.IDENTITY, Vector3(-0.82, 1.08, 0.0)),
+		&"right_pole": Transform3D(Basis.IDENTITY, Vector3(0.82, 1.08, 0.0)),
+		&"left_pole_tip": Transform3D(Basis.IDENTITY, Vector3(-0.9, -0.08, 0.1)),
+		&"right_pole_tip": Transform3D(Basis.IDENTITY, Vector3(0.9, -0.08, 0.1)),
+	}
+
+func _activate_ragdoll_sample(
+	ragdoll: CrashRagdoll3D,
+	transforms: Dictionary,
+	profile: SkiPhysicsProfile,
+	crash_severity: float,
+	binding_severity: float,
+	lateral_bias: float
+) -> Dictionary:
+	if not ragdoll.activate(
+		transforms,
+		Vector3(1.0, 0.0, -2.0),
+		Vector3(0.1, 0.2, 0.3),
+		crash_severity,
+		lateral_bias,
+		profile,
+		binding_severity
+	):
+		return {}
+	return ragdoll.snapshot()
+
+func _test_ragdoll_ground_and_joint_stability() -> void:
+	var floor_body := _make_box_body("RagdollFloor", 1, Vector3(40.0, 0.5, 40.0), Vector3(0.0, -0.25, 0.0))
+	var ragdoll := CrashRagdoll3D.new()
+	add_child(ragdoll)
+	var profile := SkiPhysicsProfile.new()
+	var activated := ragdoll.activate(
+		_ragdoll_sample_transforms(),
+		Vector3(3.0, -2.0, -6.0),
+		Vector3(0.4, 0.1, 0.6),
+		0.3,
+		0.0,
+		profile,
+		0.3
+	)
+	if not activated or not bool(ragdoll.snapshot().get("active", false)):
+		failures.append("Ragdoll stability fixture could not activate the proxy")
+	else:
+		var maximum_error := 0.0
+		var first_half_max := 0.0
+		var second_half_max := 0.0
+		var samples := 240
+		for index: int in samples:
+			await get_tree().physics_frame
+			var error := ragdoll.maximum_joint_error()
+			if not is_finite(error):
+				failures.append("Ragdoll joint error became non-finite during simulation")
+				break
+			maximum_error = maxf(maximum_error, error)
+			if index * 2 < samples:
+				first_half_max = maxf(first_half_max, error)
+			else:
+				second_half_max = maxf(second_half_max, error)
+		print("RAGDOLL_JOINT_ERROR max=%.4f first=%.4f second=%.4f" % [maximum_error, first_half_max, second_half_max])
+		if maximum_error > 0.08:
+			failures.append("Ragdoll joint anchors separated beyond tolerance (%.4f)" % maximum_error)
+		if second_half_max > first_half_max + 0.02:
+			failures.append("Ragdoll joint error grew across the settling window")
+		if not ragdoll.has_ground_support():
+			failures.append("Settled ragdoll did not report ground support above the floor")
+		ragdoll.begin_recovery()
+		var frozen := ragdoll.physics_pose()
+		await get_tree().physics_frame
+		if ragdoll.physics_pose() != frozen:
+			failures.append("Ragdoll recovery pose drifted after the freeze")
+		ragdoll.stop()
+	remove_child(ragdoll)
+	ragdoll.queue_free()
+	remove_child(floor_body)
+	floor_body.queue_free()
 
 func _make_sprawl_frame(velocity: Vector3) -> SkierAnimationFrame:
 	var frame := SkierAnimationFrame.new()
