@@ -133,6 +133,27 @@ Physical grabs and style-only poses are data-driven resources.
 
 The grab system blends authored body shapes with bounded arm targeting. Ski-local markers move with the skier, so grab targets remain attached through spins and tweaks. On the production `Skeleton3D`, the adapter receives a typed visual reach request after canonical retargeting and applies bounded upper-spine/clavicle assistance, an actual-length two-bone arm solve, and marker-aligned wrist orientation. The palm contact point is calibrated against the attached equipment marker, with a `0.14 m` acquisition cap and a `0.12 m` maintenance envelope during `HOLD`; no bone scaling, root translation, or gameplay transform is involved. The primitive adapter keeps the canonical solver path, and production helper bones return to their neutral pose outside grabs. Contact is presentation-only; scoring state remains owned by the trick system.
 
+### Equipment self-collision
+
+After final pose synchronization, each rig adapter publishes the same semantic
+capsule set for torso, head, limbs, skis, boots, pole shafts, and baskets. A
+deterministic presentation-only solver evaluates every unrelated registered
+pair in stable ID order for six fixed iterations per solve. Adapters may perform
+up to six bounded reconciliation passes so their applied bone/attachment pose
+is fed back into the proxy model, with an early exit after a clean audit.
+Boot/ski assemblies receive bounded translations and poles receive bounded
+hand-pivot rotations; neither path can move the gameplay root or alter
+locomotion, scoring, rail, or crash state. Explicit shared tags exempt connected
+leg/equipment chains, the pole grip region, and the currently active hand/ski
+grab chain. The final result is audited again and exposed in the animation debug
+snapshot with proxy/pair counts, applied contacts, unresolved pairs, and maximum
+penetration.
+
+The production acceptance runs ground and all supported grabs at 30, 60, and
+120 Hz, requires all 20 semantic proxies to be present, and rejects any
+unwhitelisted contact. Design rationale and the remaining equipment-to-world
+boundary are recorded in `docs/EQUIPMENT_COLLISION_RESEARCH.md`.
+
 Grab presentation moves through setup, reach, contact, hold, release, and recovery behavior without snapping the root or changing airtime. Landing preparation can progressively take priority as contact approaches.
 
 ## Landing presentation
@@ -289,7 +310,7 @@ production boot/pelvis agreement, visible compression, bounded grab torso
 assistance, all supported production grabs, all style poses, maintained contact
 reach after acquisition, a 250 ms acquisition deadline during input HOLD,
 landing handoff, flip rhythm, and slope-tangent contact advection. It is
-included in the 16-scene animation runtime shard. The silhouette inspection
+included in the animation runtime shard. The silhouette inspection
 audit writes JSON beside its fixed images with contact and presentation
 measurements.
 

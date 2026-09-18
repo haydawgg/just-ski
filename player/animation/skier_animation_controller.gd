@@ -16,6 +16,7 @@ const RailPoseLayerModule = preload("res://player/animation/rail_pose_layer.gd")
 const CrashReactionLayerModule = preload("res://player/animation/crash_reaction_layer.gd")
 const SecondaryMotionLayerModule = preload("res://player/animation/secondary_motion_layer.gd")
 const SkiConstrainedLegIKModule = preload("res://player/animation/ski_constrained_leg_ik.gd")
+const EquipmentCollisionContextModule = preload("res://player/animation/equipment_collision_context.gd")
 const GRAB_CONTACT_ACQUISITION_DISTANCE := 0.18
 const GRAB_CONTACT_MAINTENANCE_DISTANCE := 0.12
 
@@ -288,6 +289,7 @@ var _right_boot_target_world := Transform3D.IDENTITY
 var _air_preview_targets_valid := false
 var _air_preview_ik_weight := 0.0
 var _air_preview_obstruction := 1.0
+var _equipment_collision_result: EquipmentCollisionResult
 
 func _ready() -> void:
 	if profile != null:
@@ -360,6 +362,14 @@ func apply_frame(frame: SkierAnimationFrame, delta: float, snap_pose: bool = fal
 	_stabilize_grounded_crash_skis(frame, delta, snap_pose)
 	if rig_adapter != null:
 		rig_adapter.sync_pose(delta, _grab_reach_requests)
+		var collision_context := EquipmentCollisionContextModule.new() as EquipmentCollisionContext
+		collision_context.locomotion_state = frame.locomotion_state
+		if _grab_left_target_active:
+			collision_context.grab_targets[&"left"] = _grab_left_target_world
+		if _grab_right_target_active:
+			collision_context.grab_targets[&"right"] = _grab_right_target_world
+		collision_context.skis_locked = frame.locomotion_state in [STATE_GROUND, STATE_GRIND]
+		_equipment_collision_result = rig_adapter.resolve_equipment_self_collision(collision_context)
 		_sync_grab_visual_metrics()
 	_update_grab_contact_latch(frame, delta)
 	_has_evaluated_frame = true
@@ -614,6 +624,7 @@ func debug_snapshot() -> Dictionary:
 		"pre_bail_side": _pre_bail_side,
 		"state_transition_weight": _secondary_motion_result.state_transition_weight,
 		"equipment_attachment": equipment_attachment_snapshot(),
+		"equipment_collision": rig_adapter.equipment_collision_snapshot() if rig_adapter != null else {},
 	}
 
 func equipment_attachment_snapshot() -> Dictionary:

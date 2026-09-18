@@ -84,6 +84,7 @@ var _grab_target_world: Dictionary = {
 	&"right": Vector3.ZERO,
 }
 var _grab_solver_state := "IDLE"
+var _active_grab_requests: Array[SkierGrabReachRequest] = []
 
 func configure(value: SkierPoseDriver, skeleton_profile: Resource = null) -> bool:
 	if not super.configure(value, skeleton_profile):
@@ -134,6 +135,7 @@ func sync_pose(_delta: float, grab_requests: Array[SkierGrabReachRequest] = []) 
 	if skeleton == null or driver == null:
 		return
 	transform = driver.joint(&"balance_root").transform
+	_active_grab_requests = grab_requests.duplicate()
 	_reset_helper_poses()
 	var axis_inverse := _axis.inverse()
 	var canonical_world: Dictionary = {}
@@ -250,6 +252,178 @@ func pole_shaft_segments() -> Dictionary:
 			"end": tip.global_position,
 		}
 	return segments
+
+func _equipment_collision_proxies(context: EquipmentCollisionContext) -> Array[EquipmentCollisionProxy]:
+	var proxies: Array[EquipmentCollisionProxy] = []
+	if skeleton == null:
+		return proxies
+	_append_body_proxies(proxies, context, true)
+	for side: StringName in [&"left", &"right"]:
+		var ski := equipment_nodes.get(StringName(side + "_ski")) as Node3D
+		var pole := equipment_nodes.get(StringName(side + "_pole")) as Node3D
+		var tip := equipment_tips.get(side) as Node3D
+		var boot_transform := _bone_world(StringName(side + "_boot"))
+		if ski != null:
+			var half_length := SkierEquipment.SKI_SIZE.z * 0.5
+			var forward := -ski.global_basis.z.normalized()
+			var grab_tags := _grab_tags_for_equipment(context, side)
+			var ski_tags: Array[StringName] = [StringName("leg_binding_" + side)]
+			ski_tags.append_array(grab_tags)
+			proxies.append(_proxy(
+				StringName(side + "_ski"), CollisionProxyModule.Kind.SKI, side,
+				ski.global_position - forward * half_length,
+				ski.global_position + forward * half_length,
+				EquipmentFeatureCollisionSolver.SKI_RADIUS,
+				StringName("boot_ski_" + side),
+				CollisionProxyModule.Mobility.FIXED if context.skis_locked else CollisionProxyModule.Mobility.TRANSLATE,
+				ski.global_position, ski_tags))
+		var boot_forward := -boot_transform.basis.z.normalized()
+		var boot_grab_tags := _grab_tags_for_equipment(context, side)
+		var boot_tags: Array[StringName] = [StringName("leg_binding_" + side)]
+		boot_tags.append_array(boot_grab_tags)
+		proxies.append(_proxy(
+			StringName(side + "_boot"), CollisionProxyModule.Kind.BOOT, side,
+			boot_transform.origin - boot_forward * 0.15,
+			boot_transform.origin + boot_forward * 0.15,
+			0.075,
+			StringName("boot_ski_" + side),
+			CollisionProxyModule.Mobility.FIXED if context.skis_locked else CollisionProxyModule.Mobility.TRANSLATE,
+			boot_transform.origin, boot_tags))
+		if pole != null and tip != null:
+			var shaft_start := pole.global_position.lerp(tip.global_position, 0.15)
+			var pole_tags: Array[StringName] = [StringName("grip_" + side)]
+			proxies.append(_proxy(
+				StringName(side + "_pole_shaft"), CollisionProxyModule.Kind.POLE, side,
+				shaft_start, tip.global_position, SkierEquipment.POLE_SHAFT_RADIUS,
+				StringName("pole_" + side), CollisionProxyModule.Mobility.PIVOT,
+				pole.global_position, pole_tags))
+			proxies.append(_proxy(
+				StringName(side + "_pole_basket"), CollisionProxyModule.Kind.POLE, side,
+				tip.global_position, tip.global_position, SkierEquipment.POLE_BASKET_RADIUS,
+				StringName("pole_" + side), CollisionProxyModule.Mobility.PIVOT,
+				pole.global_position, pole_tags))
+	return proxies
+
+func _collision_body_point(semantic: StringName, production: bool) -> Vector3:
+	if production and skeleton != null and bone_indices.has(semantic):
+		return _bone_world(semantic).origin
+	return super._collision_body_point(semantic, production)
+
+func _equipment_collision_position(side: StringName) -> Vector3:
+	var ski := equipment_nodes.get(StringName(side + "_ski")) as Node3D
+	return ski.global_position if ski != null else Vector3.ZERO
+
+func _apply_equipment_collision_result(result: EquipmentCollisionResult) -> void:
+	if skeleton == null or result == null:
+		return
+	var boot_changed := false
+	for side: StringName in [&"left", &"right"]:
+		var assembly := StringName("boot_ski_" + side)
+		var translation := result.translations.get(assembly, Vector3.ZERO) as Vector3
+		if translation.length_squared() <= 0.00000001:
+			continue
+		# Translate the leg root rather than the boot bone so the authored thigh
+		# and shin lengths stay rigid while the whole presentation chain moves.
+		var hip_index := int(bone_indices[StringName(side + "_hip")])
+		var parent_index := skeleton.get_bone_parent(hip_index)
+		var parent_basis := skeleton.global_basis
+		if parent_index >= 0:
+			parent_basis = _bone_world_index(parent_index).basis
+		var local_delta := parent_basis.inverse() * translation
+		skeleton.set_bone_pose_position(
+			hip_index,
+			skeleton.get_bone_pose_position(hip_index) + local_delta)
+		if _active_collision_context != null:
+			for hand_side: StringName in _grab_hands_for_equipment(
+				_active_collision_context, side
+			):
+				var shoulder_index := int(bone_indices[StringName(hand_side + "_shoulder")])
+				var shoulder_parent_index := skeleton.get_bone_parent(shoulder_index)
+				var shoulder_parent_basis := skeleton.global_basis
+				if shoulder_parent_index >= 0:
+					shoulder_parent_basis = _bone_world_index(shoulder_parent_index).basis
+				var shoulder_local_delta := shoulder_parent_basis.inverse() * translation
+				skeleton.set_bone_pose_position(
+					shoulder_index,
+					skeleton.get_bone_pose_position(shoulder_index) + shoulder_local_delta)
+		boot_changed = true
+	if boot_changed:
+		skeleton.force_update_all_bone_transforms()
+		_refresh_bone_attachments()
+		_resync_grab_arms_after_equipment_collision()
+	for side: StringName in [&"left", &"right"]:
+		var actuator := StringName("pole_" + side)
+		var pole := equipment_nodes.get(StringName(side + "_pole")) as Node3D
+		var tip := equipment_tips.get(side) as Node3D
+		if pole == null or tip == null:
+			continue
+		# Outward readability is part of the final equipment constraint, not only
+		# a response to an overlapping capsule. Re-apply it on every reconciliation
+		# pass so a clean solver result cannot leave a transient inward pole after a
+		# grab blend. The following audit/pass still gets to resolve any contact
+		# introduced by choosing the outward-equivalent direction.
+		var direction := tip.global_position - pole.global_position
+		if result.directions.has(actuator):
+			direction = result.directions[actuator] as Vector3
+		direction = _outward_collision_pole_direction(side, direction)
+		_apply_pole_direction(pole, direction)
+	_refresh_bone_attachments()
+
+func _outward_collision_pole_direction(side: StringName, desired: Vector3) -> Vector3:
+	if desired.length_squared() <= 0.0001:
+		return desired
+	var skier_basis := driver.global_basis.orthonormalized()
+	var lateral := skier_basis.x.normalized()
+	var forward := -skier_basis.z.normalized()
+	var down := -skier_basis.y.normalized()
+	var pivot := equipment_nodes.get(StringName(side + "_pole")) as Node3D
+	if lateral.length_squared() <= 0.5 or pivot == null:
+		return desired.normalized()
+	var side_sign := _pole_side_sign(side, pivot.global_position, lateral)
+	var direction := desired.normalized()
+	var lateral_component := direction.dot(lateral)
+	# Mirror an inward collision correction across the skier sagittal plane.
+	# This preserves its vertical/downhill components and lets the next solver
+	# pass audit the equally strong outward alternative.
+	if lateral_component * side_sign < 0.02:
+		var outward_strength := maxf(absf(lateral_component), 0.12)
+		direction = (direction - lateral * lateral_component \
+			+ lateral * side_sign * outward_strength).normalized()
+	# The presentation contract has a wider knee/readability envelope than the
+	# physical capsule clearance. Choose the established deterministic safe
+	# direction here so satisfying outwardness cannot trade away knee daylight.
+	var tip := pivot.global_position + direction * POLE_SHAFT_LENGTH
+	if _minimum_pole_knee_clearance(pivot.global_position, tip) < MIN_POLE_KNEE_CLEARANCE \
+		or _minimum_pole_body_clearance(pivot.global_position, tip) < MIN_POLE_BODY_CLEARANCE:
+		direction = _safest_pole_direction(
+			pivot.global_position, direction, side_sign, down, forward, lateral)
+	return direction
+
+func _resync_grab_arms_after_equipment_collision() -> void:
+	var valid_requests: Array[SkierGrabReachRequest] = []
+	for request: SkierGrabReachRequest in _active_grab_requests:
+		if request == null or request.side not in [&"left", &"right"]:
+			continue
+		if request.weight <= 0.001 or request.target_marker == null \
+			or not is_instance_valid(request.target_marker):
+			continue
+		valid_requests.append(request)
+	if valid_requests.is_empty():
+		return
+	for request: SkierGrabReachRequest in valid_requests:
+		_solve_production_arm(request)
+	skeleton.force_update_all_bone_transforms()
+	_refresh_bone_attachments()
+	var all_in_contact := true
+	for request: SkierGrabReachRequest in valid_requests:
+		var target_world := request.target_marker.global_position
+		var contact_point := grab_contact_point(request.side)
+		var reach_error := contact_point.distance_to(target_world)
+		_grab_target_world[request.side] = target_world
+		_grab_contact_points[request.side] = contact_point
+		_grab_reach_errors[request.side] = reach_error
+		all_in_contact = all_in_contact and reach_error <= 0.12
+	_grab_solver_state = "CONTACT" if all_in_contact else "SOLVED"
 
 func grab_debug_snapshot() -> Dictionary:
 	var left_shoulder_transform := _bone_world(&"left_shoulder") if skeleton != null else Transform3D.IDENTITY

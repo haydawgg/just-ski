@@ -15,7 +15,7 @@ func _ready() -> void:
 	await _check_airborne_pole_crash_exemptions()
 	AudioManager.shutdown_audio()
 	if failures.is_empty():
-		print("EQUIPMENT_COLLISION_PASS: visual skis stop at solid features, pole shafts clear the body and snow envelopes, and ski nose/tail pairs hold separation")
+		print("EQUIPMENT_COLLISION_PASS: all 20 registered proxies clear at 30/60/120 Hz; world sweeps, pole envelopes, and ski span remain nominal")
 		await _finish(0)
 		return
 	for failure: String in failures:
@@ -70,35 +70,46 @@ func _check_visual_ski_feature_sweep() -> void:
 	_remove_now(skier)
 
 func _check_pole_body_and_snow_clearance() -> void:
-	var rig := SkierAnimationController.new()
-	add_child(rig)
-	var frames: Array[Dictionary] = [{"label": "ground", "frame": _ground_frame()}]
-	for pose: int in range(1, 10):
-		var grab := _air_frame()
-		grab.grab_pose = pose
-		grab.grab_amount = 1.0
-		grab.grab_input_strength = 1.0
-		grab.grab_hold_time = 0.65
-		grab.trick_phase = TrickCommand.PresentationPhase.GRAB
-		frames.append({"label": "grab_%d" % pose, "frame": grab})
-	for entry: Dictionary in frames:
-		for _index: int in 90:
-			rig.apply_frame(entry.frame as SkierAnimationFrame, STEP)
-		var adapter := rig.rig_adapter as SkeletonSkierRig
-		if adapter == null:
-			failures.append("Production skeleton rig was unavailable for pole clearance")
-			break
-		var signed_clearance := _minimum_pole_body_clearance(adapter)
-		var snow_clearance := _minimum_ground_pole_tip_clearance(adapter) if str(entry.label) == "ground" else INF
-		var production_clearance := adapter.pole_clearance_snapshot()
-		print("EQUIPMENT_POLE_CLEARANCE %s body=%.3f snow=%.3f left=%.3f right=%.3f polepole=%.3f" % [entry.label, signed_clearance, snow_clearance, float(production_clearance.get("left_pole_body_clearance_m", -INF)), float(production_clearance.get("right_pole_body_clearance_m", -INF)), float(production_clearance.get("pole_pole_clearance_m", -INF))])
-		if signed_clearance < 0.015:
-			failures.append("%s pole shaft entered the body envelope (%.3fm signed clearance)" % [entry.label, signed_clearance])
-		if snow_clearance < -0.055:
-			failures.append("%s pole tip passed too far below the ski contact plane (%.3fm)" % [entry.label, snow_clearance])
-		if str(entry.label) == "ground" and float(production_clearance.get("pole_pole_clearance_m", -INF)) < 0.04:
-			failures.append("%s pole shafts converged (%.3fm shaft daylight)" % [entry.label, float(production_clearance.get("pole_pole_clearance_m", -INF))])
-	_remove_now(rig)
+	for rate: int in [30, 60, 120]:
+		var step := 1.0 / float(rate)
+		var rig := SkierAnimationController.new()
+		add_child(rig)
+		var frames: Array[Dictionary] = [{"label": "ground", "frame": _ground_frame()}]
+		for pose: int in range(1, 10):
+			var grab := _air_frame()
+			grab.grab_pose = pose
+			grab.grab_amount = 1.0
+			grab.grab_input_strength = 1.0
+			grab.grab_hold_time = 0.65
+			grab.trick_phase = TrickCommand.PresentationPhase.GRAB
+			frames.append({"label": "grab_%d" % pose, "frame": grab})
+		for entry: Dictionary in frames:
+			for _index: int in ceili(1.5 * rate):
+				rig.apply_frame(entry.frame as SkierAnimationFrame, step)
+			var adapter := rig.rig_adapter as SkeletonSkierRig
+			if adapter == null:
+				failures.append("Production skeleton rig was unavailable for pole clearance at %d Hz" % rate)
+				break
+			var signed_clearance := _minimum_pole_body_clearance(adapter)
+			var snow_clearance := _minimum_ground_pole_tip_clearance(adapter) if str(entry.label) == "ground" else INF
+			var production_clearance := adapter.pole_clearance_snapshot()
+			var collision_snapshot := rig.debug_snapshot().get("equipment_collision", {}) as Dictionary
+			var label := "%s@%dHz" % [entry.label, rate]
+			print("EQUIPMENT_POLE_CLEARANCE %s body=%.3f snow=%.3f left=%.3f right=%.3f polepole=%.3f proxies=%d unresolved=%d penetration=%.3f" % [label, signed_clearance, snow_clearance, float(production_clearance.get("left_pole_body_clearance_m", -INF)), float(production_clearance.get("right_pole_body_clearance_m", -INF)), float(production_clearance.get("pole_pole_clearance_m", -INF)), int(collision_snapshot.get("proxy_count", -1)), int(collision_snapshot.get("unresolved_count", -1)), float(collision_snapshot.get("max_penetration_m", -1.0))])
+			if not bool(collision_snapshot.get("valid", false)):
+				failures.append("%s self-collision proxy set was invalid" % label)
+			if int(collision_snapshot.get("proxy_count", 0)) != 20:
+				failures.append("%s did not audit all 20 registered body/equipment proxies" % label)
+			if int(collision_snapshot.get("unresolved_count", -1)) != 0:
+				print("EQUIPMENT_COLLISION_UNRESOLVED %s %s" % [label, str(collision_snapshot.get("unresolved", []))])
+				failures.append("%s retained unwhitelisted proxy contacts: %s" % [label, str(collision_snapshot.get("unresolved", []))])
+			if signed_clearance < 0.015:
+				failures.append("%s pole shaft entered the body envelope (%.3fm signed clearance)" % [label, signed_clearance])
+			if snow_clearance < -0.055:
+				failures.append("%s pole tip passed too far below the ski contact plane (%.3fm)" % [label, snow_clearance])
+			if str(entry.label) == "ground" and float(production_clearance.get("pole_pole_clearance_m", -INF)) < 0.04:
+				failures.append("%s pole shafts converged (%.3fm shaft daylight)" % [label, float(production_clearance.get("pole_pole_clearance_m", -INF))])
+		_remove_now(rig)
 
 func _minimum_pole_body_clearance(adapter: SkeletonSkierRig) -> float:
 	var capsules: Array[Dictionary] = [
