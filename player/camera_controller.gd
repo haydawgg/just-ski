@@ -1602,6 +1602,19 @@ func debug_snapshot() -> Dictionary:
 		"hockey_heading_hold_active": _ground_heading_hold_timer > 0.0,
 	}
 
+## Narrow local-playtest payload. ParkContentTracker samples this in debug or
+## --content-trace runs without constructing the full F3 camera snapshot.
+func content_diagnostic_snapshot() -> Dictionary:
+	return {
+		"state": CameraState.keys()[camera_state],
+		"camera_fallback_count": _camera_fallback_count,
+		"target_distance": global_position.distance_to(target.global_position) if target != null else 0.0,
+		"composition_recovery_active": _composition_recovery_active,
+		"camera_occluded": _camera_occluded,
+		"foreground_occlusion_fraction": _foreground_occlusion_fraction,
+		"carve_look_ahead_offset": _smoothed_carve_look_ahead_offset,
+	}
+
 func _rail_orbit_target(skier: SkierController) -> float:
 	if skier == null or skier.state != SkierController.State.GRIND or skier.rail_pose == 0:
 		return 0.0
