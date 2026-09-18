@@ -62,8 +62,9 @@ func feature_specs() -> Array[Dictionary]:
 		{"kind": "bonk", "name": "UpperBonk", "x": 22.0, "z": 76.0, "height": 1.3, "radius": 0.42, "color": Color("#ffc857")},
 
 		# Mid park: Jump 2 (MediumTable) with the yard shifted downhill to
-		# follow it; all yard content stays right of the hero lane.
-		{"kind": "tabletop", "name": "MediumTable", "x": -12.0, "z": 12.0, "speed": 20.0, "lip": 9.5, "width": 10.5, "pop": 0.72},
+		# follow it; all yard content stays right of the hero lane. The committed
+		# hero line uses a full charge, so the landing profile is sized for it.
+		{"kind": "tabletop", "name": "MediumTable", "x": -12.0, "z": 12.0, "speed": 21.0, "lip": 9.5, "width": 10.5, "pop": 1.0},
 		{"kind": "moguls", "name": "MidMoguls", "x": -1.0, "z": 27.0, "rows": 5, "spacing": 4.4, "height": 0.48, "width": 4.5},
 		{"kind": "butter", "name": "MidButterPad", "x": 0.0, "z": 3.0, "length": 13.0, "width": 9.0, "height": 0.12},
 		{"kind": "rail", "name": "KinkRail", "rail_type": GrindRail3D.RailType.RAIL, "radius": 0.82, "friction": 0.7, "approach": 40.0, "drift_bias": 0.28, "points": [Vector3(10.0, 28.0, 0.16), Vector3(10.0, 18.0, 0.16), Vector3(15.0, 6.0, 0.16)]},
@@ -78,8 +79,10 @@ func feature_specs() -> Array[Dictionary]:
 		{"kind": "rail", "name": "TransferBox", "rail_type": GrindRail3D.RailType.BOX, "radius": 1.1, "friction": 0.95, "approach": 48.0, "drift_bias": -0.24, "points": [Vector3(14.0, -50.0, 0.22), Vector3(2.0, -76.0, 0.22)]},
 		{"kind": "bonk", "name": "TransferBonk", "x": 24.0, "z": -62.0, "height": 1.8, "radius": 0.5, "color": Color("#55d6be")},
 
-		# Lower park: Jump 3 (LargeTable) with its side content.
-		{"kind": "tabletop", "name": "LargeTable", "x": -12.0, "z": -106.0, "speed": 23.0, "lip": 11.5, "width": 11.5, "pop": 0.72},
+		# Lower park: Jump 3 (LargeTable) with its side content. Its 0.85 design
+		# pop catches the speed retained from a clean MediumTable while preserving
+		# the required finish runout.
+		{"kind": "tabletop", "name": "LargeTable", "x": -12.0, "z": -106.0, "speed": 23.0, "lip": 11.5, "width": 11.5, "pop": 0.85},
 		{"kind": "side_hit", "name": "LowerRightSideHit", "x": 25.0, "z": -106.0, "length": 10.0, "height": 1.45, "width": 7.0, "yaw": 22.0},
 		{"kind": "butter", "name": "LowerButterPad", "x": 1.0, "z": -118.0, "length": 16.0, "width": 10.0, "height": 0.14},
 		{"kind": "rail", "name": "SRail", "rail_type": GrindRail3D.RailType.RAIL, "radius": 0.8, "friction": 0.7, "approach": 38.0, "drift_bias": 0.30, "points": [Vector3(16.0, -98.0, 0.16), Vector3(9.0, -110.0, 0.16), Vector3(16.0, -122.0, 0.16)]},

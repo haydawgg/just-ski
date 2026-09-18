@@ -278,7 +278,7 @@ func _build_player() -> void:
 	content_tracker = ParkContentTracker.new()
 	content_tracker.name = "ParkContentTracker"
 	add_child(content_tracker)
-	content_tracker.configure(course_profile, player)
+	content_tracker.configure(course_profile, player, camera_rig)
 	ui.call_deferred("bind_content_tracker", content_tracker)
 	ui.recovery_fade_out_duration = course_recovery.fade_out_duration
 	ui.recovery_fade_in_duration = course_recovery.fade_in_duration

@@ -14,6 +14,7 @@ const HERO_JUMPS: Array[String] = ["SmallTable", "MediumTable", "LargeTable"]
 const MAX_TRACE_SECONDS := 55.0
 const MIN_STABLE_GROUND_SECONDS := 0.5
 const MIN_POST_LARGE_SECONDS := 5.0
+const MIN_HERO_LANDING_SPEED_RETENTION := 0.85
 const MIN_DROP_IN_SLOPE_M := 60.0
 const MAX_DROP_IN_SLOPE_M := 100.0
 const ACCEPTANCE_PHYSICS_HZ := 60
@@ -351,6 +352,9 @@ func _validate_trace() -> void:
 			failures.append("%s airtime %.2f s escaped the physical jump window" % [record.name, record.airtime_seconds])
 		if float(record.stable_recovery_seconds) < 0.0:
 			failures.append("%s never established %.1f s of stable grounded recovery" % [record.name, MIN_STABLE_GROUND_SECONDS])
+		var landing_result := record.landing_result as Dictionary
+		if int(landing_result.get("outcome", LandingSolver.Outcome.BAIL)) != LandingSolver.Outcome.CLEAN:
+			failures.append("%s reference-line landing was not clean" % record.name)
 	if not skier.scoring.finished or finish_frame < 0:
 		failures.append("The skier did not cross the actual finish trigger")
 	if post_large_landing_frame < 0 or finish_frame - post_large_landing_frame < int(ceil(MIN_POST_LARGE_SECONDS * physics_hz)):
@@ -363,6 +367,46 @@ func _validate_trace() -> void:
 		failures.append("Camera produced %d hard-composition-invalid frames" % hard_composition_invalid_frames)
 	if minimum_camera_distance < camera.minimum_camera_distance - 0.05 or maximum_camera_distance > camera.maximum_camera_distance + 0.05:
 		failures.append("Camera distance escaped safety band: %.2f-%.2f m" % [minimum_camera_distance, maximum_camera_distance])
+	var attributed_fallbacks := 0
+	var attributed_landings := 0
+	var finalized_landing_feedback := 0
+	var diagnostics_by_spot := _spot_diagnostics()
+	for spot_id: Variant in diagnostics_by_spot:
+		var spot_diagnostics := diagnostics_by_spot.get(spot_id, {}) as Dictionary
+		attributed_fallbacks += int(spot_diagnostics.get("camera_fallback_count", 0))
+		attributed_landings += int(spot_diagnostics.get("landing_count", 0))
+		if int(spot_diagnostics.get("landing_count", 0)) > 0:
+			var landing_feedback := spot_diagnostics.get("last_landing", {}) as Dictionary
+			if landing_feedback.has("speed_before_mps") \
+				and landing_feedback.has("speed_after_mps") \
+				and landing_feedback.has("speed_retention"):
+				finalized_landing_feedback += 1
+				if float(landing_feedback.get("speed_retention", 0.0)) < MIN_HERO_LANDING_SPEED_RETENTION:
+					failures.append(
+						"%s reference-line landing retained %.1f%% speed (need at least %.0f%%)" % [
+							str(spot_id),
+							float(landing_feedback.get("speed_retention", 0.0)) * 100.0,
+							MIN_HERO_LANDING_SPEED_RETENTION * 100.0,
+						]
+					)
+	if attributed_fallbacks != camera_fallback_count:
+		failures.append(
+			"Per-spot camera fallbacks %d did not match camera total %d" % [
+				attributed_fallbacks, camera_fallback_count
+			]
+		)
+	if attributed_landings != HERO_JUMPS.size():
+		failures.append(
+			"Per-spot landing diagnostics counted %d hero landings instead of %d" % [
+				attributed_landings, HERO_JUMPS.size()
+			]
+		)
+	if finalized_landing_feedback != HERO_JUMPS.size():
+		failures.append(
+			"Per-spot diagnostics finalized speed feedback for %d of %d hero landings" % [
+				finalized_landing_feedback, HERO_JUMPS.size()
+			]
+		)
 
 func _write_profile() -> void:
 	if jump_specs.is_empty():
@@ -394,6 +438,7 @@ func _write_profile() -> void:
 			"hard_composition_invalid_frames": hard_composition_invalid_frames,
 			"fallback_count": camera_fallback_count,
 		},
+		"spot_diagnostics": VisualEvidence.normalize(_spot_diagnostics()),
 		"finish": {
 			"finished": skier.scoring.finished,
 			"frame": finish_frame,
@@ -415,6 +460,14 @@ func _write_profile() -> void:
 		if evidence.write_json_artifact(scenario_id, "telemetry", "continuous_course_release_profile.json", payload, {"trace_version": TRACE_VERSION}).is_empty():
 			failures.append("Could not write continuous visual-evidence telemetry")
 	print("CONTINUOUS_RELEASE_SUMMARY profile=%s data=%s" % [ProjectSettings.globalize_path(path), JSON.stringify(payload)])
+
+func _spot_diagnostics() -> Dictionary:
+	if resort == null:
+		return {}
+	var tracker := resort.get("content_tracker") as ParkContentTracker
+	if tracker == null:
+		return {}
+	return tracker.snapshot().get("spot_diagnostics", {}) as Dictionary
 
 func _mark(event_name: String) -> void:
 	var event := {

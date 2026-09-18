@@ -93,7 +93,40 @@ func _validate_local_telemetry() -> void:
 	tracker.configure(ParkCourseProfile.new())
 	tracker.record_event(&"feature_approach", {"feature_id": &"small_table"})
 	tracker.record_event(&"rail_capture", {"feature_id": &"summit_flat_box", "captured": true})
-	tracker.record_event(&"landing", {"outcome": LandingSolver.Outcome.CLEAN})
+	tracker.observe_camera_snapshot({
+		"camera_fallback_count": 2,
+		"state": "GROUND",
+		"target_distance": 4.8,
+		"composition_recovery_active": true,
+		"camera_occluded": false,
+		"foreground_occlusion_fraction": 0.15,
+		"carve_look_ahead_offset": Vector3(0.3, 0.0, 0.4),
+	}, {"state": "GROUND", "speed_mps": 14.0})
+	# Re-observing the same cumulative total must not double-count it.
+	tracker.observe_camera_snapshot({
+		"camera_fallback_count": 2,
+		"state": "GROUND",
+		"carve_look_ahead_offset": Vector3(0.3, 0.0, 0.4),
+	})
+	tracker.observe_camera_snapshot({
+		"camera_fallback_count": 3,
+		"state": "AIR",
+		"target_distance": 5.2,
+	}, {"state": "AIR", "speed_mps": 16.0})
+	tracker._on_landed({
+		"outcome": LandingSolver.Outcome.HARD,
+		"score": 0.42,
+		"impact": 5.1,
+		"impact_severity": 0.8,
+		"balance_error": 0.4,
+		"ski_alignment_error": 0.2,
+		"body_roll_error": 0.1,
+		"body_pitch_error": 0.15,
+		"rotation_residual_degrees": -37.3,
+		"rotation_quality": 0.84,
+		"rotation_orientation_error_degrees": 12.0,
+	})
+	tracker._on_trick_landed("Left 180", 420, 0.84, LandingSolver.Outcome.HARD)
 	tracker.record_event(&"marker_save", {"position": Vector3.ZERO})
 	tracker.record_event(&"marker_return", {"position": Vector3.ZERO})
 	tracker.record_event(&"run_complete", {"total_score": 1000})
@@ -102,9 +135,26 @@ func _validate_local_telemetry() -> void:
 		failures.append("content tracker did not initialize the first spot")
 	if int((snapshot.get("attempt_counts", {}) as Dictionary).get(&"summit_fundamentals", 0)) != 1:
 		failures.append("content tracker did not count the spot attempt")
+	var diagnostics_by_spot := snapshot.get("spot_diagnostics", {}) as Dictionary
+	var diagnostics := diagnostics_by_spot.get(&"summit_fundamentals", {}) as Dictionary
+	if int(diagnostics.get("camera_fallback_count", -1)) != 3:
+		failures.append("spot diagnostics did not accumulate camera fallback deltas")
+	if int(diagnostics.get("camera_fallback_event_count", -1)) != 2:
+		failures.append("spot diagnostics double-counted an unchanged camera fallback total")
+	var fallback_states := diagnostics.get("camera_fallbacks_by_state", {}) as Dictionary
+	if int(fallback_states.get("GROUND", 0)) != 2 or int(fallback_states.get("AIR", 0)) != 1:
+		failures.append("spot diagnostics did not classify camera fallbacks by state")
+	if not is_equal_approx(float(diagnostics.get("max_carve_look_ahead_m", 0.0)), 0.5):
+		failures.append("spot diagnostics did not retain peak carve look-ahead")
+	var landing := diagnostics.get("last_landing", {}) as Dictionary
+	if str(landing.get("outcome_name", "")) != "HARD" or not is_equal_approx(float(landing.get("rotation_residual_degrees", 0.0)), -37.3):
+		failures.append("spot diagnostics lost normalized landing outcome/residual feedback")
+	var trick := diagnostics.get("last_trick", {}) as Dictionary
+	if str(trick.get("name", "")) != "Left 180" or int(trick.get("points", 0)) != 420:
+		failures.append("spot diagnostics lost landed trick feedback")
 	var kinds: Dictionary = {}
 	for event: Dictionary in snapshot.get("trace_events", []):
 		kinds[StringName(event.get("kind", &""))] = true
-	for expected: StringName in [&"spot_entry", &"feature_approach", &"rail_capture", &"landing", &"marker_save", &"marker_return", &"run_complete"]:
+	for expected: StringName in [&"spot_entry", &"feature_approach", &"rail_capture", &"camera_fallback", &"landing", &"landing_feedback", &"trick_feedback", &"marker_save", &"marker_return", &"run_complete"]:
 		if not kinds.has(expected):
 			failures.append("local telemetry omitted %s" % expected)
