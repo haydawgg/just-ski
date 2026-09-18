@@ -200,6 +200,7 @@ save_clip={
 3d_physics/layer_2="Player"
 3d_physics/layer_3="Features"
 3d_physics/layer_4="Grind"
+3d_physics/layer_5="Ragdoll"
 
 [physics]
 

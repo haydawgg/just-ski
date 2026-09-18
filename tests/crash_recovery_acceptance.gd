@@ -1,5 +1,7 @@
 extends Node
 
+const CollisionLayers := preload("res://resources/physics/collision_layers.gd")
+
 var failures: Array[String] = []
 
 func _ready() -> void:
@@ -30,6 +32,7 @@ func _ready() -> void:
 	_test_rest_detection_and_recovery_timing()
 	_test_crash_severity_duration_bands()
 	_test_hybrid_ragdoll_contract()
+	_test_ragdoll_telemetry_contract()
 	_test_rest_waits_for_snow_alignment()
 	_test_crash_settling_shows_low_speed_motion()
 	_test_recovery_is_rate_limited_and_coordinated()
@@ -879,6 +882,28 @@ func _test_hybrid_ragdoll_contract() -> void:
 	var pose := ragdoll.physics_pose()
 	if pose.size() < 20 or not (pose.get(&"pelvis", Transform3D.IDENTITY) as Transform3D).origin.is_finite():
 		failures.append("Hybrid ragdoll did not expose a finite full-body presentation pose")
+	for body_value: Variant in ragdoll.bodies.values():
+		var body := body_value as RigidBody3D
+		if body == null:
+			continue
+		if body.collision_layer != CollisionLayers.RAGDOLL or body.collision_mask != CollisionLayers.WORLD_SOLID_MASK:
+			failures.append("Hybrid ragdoll body escaped the shared collision-layer ABI")
+			break
+		if not body.continuous_cd:
+			failures.append("Hybrid ragdoll body disabled continuous collision detection")
+			break
+	if not is_finite(float(snapshot.get("joint_error", NAN))):
+		failures.append("Hybrid ragdoll did not expose a finite joint anchor error")
+	var incomplete := CrashRagdoll3D.new()
+	add_child(incomplete)
+	var partial := transforms.duplicate()
+	partial.erase(&"head")
+	if incomplete.activate(partial, Vector3(1.0, 0.0, -2.0), Vector3.ZERO, 0.5, 0.0, profile, 0.5):
+		failures.append("Hybrid ragdoll accepted a pose missing a required body transform")
+	if bool(incomplete.snapshot().active) or not incomplete.bodies.is_empty():
+		failures.append("Rejected hybrid ragdoll retained physical bodies")
+	remove_child(incomplete)
+	incomplete.queue_free()
 	ragdoll.begin_recovery()
 	if not bool(ragdoll.snapshot().recovering):
 		failures.append("Hybrid ragdoll did not freeze into the recovery blend")
@@ -887,6 +912,26 @@ func _test_hybrid_ragdoll_contract() -> void:
 		failures.append("Hybrid ragdoll retained physics ownership after cleanup")
 	remove_child(ragdoll)
 	ragdoll.queue_free()
+
+func _test_ragdoll_telemetry_contract() -> void:
+	var skier := SkierController.new()
+	add_child(skier)
+	skier.set_physics_process(false)
+	skier.reset_for_benchmark(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0)), Vector3(2.0, -1.0, -6.0))
+	skier.enter_crash(_make_crash_context(skier.velocity))
+	skier.contact.grounded = true
+	skier.contact.average_normal = Vector3.UP
+	skier._update_ragdoll_presentation()
+	if skier.crash_ragdoll == null or not skier.crash_ragdoll.active:
+		failures.append("Ragdoll telemetry fixture could not activate the crash proxy")
+	else:
+		var ragdoll_telemetry := skier._crash_telemetry_snapshot().get("ragdoll", {}) as Dictionary
+		if not is_finite(float(ragdoll_telemetry.get("joint_error", NAN))):
+			failures.append("Crash telemetry lost the finite ragdoll joint error")
+		if not is_finite(float(ragdoll_telemetry.get("carrier_speed", NAN))) or not is_finite(float(ragdoll_telemetry.get("slip_speed", NAN))):
+			failures.append("Crash telemetry lost finite carrier and pelvis slip speeds")
+	remove_child(skier)
+	skier.queue_free()
 
 func _make_sprawl_frame(velocity: Vector3) -> SkierAnimationFrame:
 	var frame := SkierAnimationFrame.new()

@@ -1345,6 +1345,10 @@ func _crash_telemetry_snapshot() -> Dictionary:
 	crash["severity"] = crash_severity(crash_context)
 	crash["settle_deadline"] = crash_settle_deadline(crash_context)
 	crash["ragdoll"] = crash_ragdoll.snapshot() if crash_ragdoll != null else {}
+	if crash_ragdoll != null and crash_ragdoll.active and not crash_ragdoll.recovering:
+		var ragdoll_snapshot := crash["ragdoll"] as Dictionary
+		ragdoll_snapshot["carrier_speed"] = velocity.length()
+		ragdoll_snapshot["slip_speed"] = (crash_ragdoll.pelvis_velocity() - velocity).length()
 	return crash
 
 func _clear_crash_state() -> void:
