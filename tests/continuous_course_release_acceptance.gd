@@ -14,6 +14,7 @@ const HERO_JUMPS: Array[String] = ["SmallTable", "MediumTable", "LargeTable"]
 const MAX_TRACE_SECONDS := 55.0
 const MIN_STABLE_GROUND_SECONDS := 0.5
 const MIN_POST_LARGE_SECONDS := 5.0
+const MIN_HERO_LANDING_SPEED_RETENTION := 0.85
 const MIN_DROP_IN_SLOPE_M := 60.0
 const MAX_DROP_IN_SLOPE_M := 100.0
 const ACCEPTANCE_PHYSICS_HZ := 60
@@ -351,6 +352,9 @@ func _validate_trace() -> void:
 			failures.append("%s airtime %.2f s escaped the physical jump window" % [record.name, record.airtime_seconds])
 		if float(record.stable_recovery_seconds) < 0.0:
 			failures.append("%s never established %.1f s of stable grounded recovery" % [record.name, MIN_STABLE_GROUND_SECONDS])
+		var landing_result := record.landing_result as Dictionary
+		if int(landing_result.get("outcome", LandingSolver.Outcome.BAIL)) != LandingSolver.Outcome.CLEAN:
+			failures.append("%s reference-line landing was not clean" % record.name)
 	if not skier.scoring.finished or finish_frame < 0:
 		failures.append("The skier did not cross the actual finish trigger")
 	if post_large_landing_frame < 0 or finish_frame - post_large_landing_frame < int(ceil(MIN_POST_LARGE_SECONDS * physics_hz)):
@@ -366,7 +370,9 @@ func _validate_trace() -> void:
 	var attributed_fallbacks := 0
 	var attributed_landings := 0
 	var finalized_landing_feedback := 0
-	for spot_diagnostics: Dictionary in _spot_diagnostics().values():
+	var diagnostics_by_spot := _spot_diagnostics()
+	for spot_id: Variant in diagnostics_by_spot:
+		var spot_diagnostics := diagnostics_by_spot.get(spot_id, {}) as Dictionary
 		attributed_fallbacks += int(spot_diagnostics.get("camera_fallback_count", 0))
 		attributed_landings += int(spot_diagnostics.get("landing_count", 0))
 		if int(spot_diagnostics.get("landing_count", 0)) > 0:
@@ -375,6 +381,14 @@ func _validate_trace() -> void:
 				and landing_feedback.has("speed_after_mps") \
 				and landing_feedback.has("speed_retention"):
 				finalized_landing_feedback += 1
+				if float(landing_feedback.get("speed_retention", 0.0)) < MIN_HERO_LANDING_SPEED_RETENTION:
+					failures.append(
+						"%s reference-line landing retained %.1f%% speed (need at least %.0f%%)" % [
+							str(spot_id),
+							float(landing_feedback.get("speed_retention", 0.0)) * 100.0,
+							MIN_HERO_LANDING_SPEED_RETENTION * 100.0,
+						]
+					)
 	if attributed_fallbacks != camera_fallback_count:
 		failures.append(
 			"Per-spot camera fallbacks %d did not match camera total %d" % [
