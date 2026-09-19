@@ -18,11 +18,11 @@ The `docs/` directory contains maintained project contracts, active worklists, a
 
 ## Validation and performance
 
-- [Known issues](KNOWN_ISSUES.md) — concrete unresolved bugs and missing functionality only.
+- [Known issues](KNOWN_ISSUES.md) — concrete unresolved bugs and missing functionality only; authoritative when an intended contract differs from current behavior.
 - [Controller validation](CONTROLLER_VALIDATION.md) — physical-device validation matrix.
 - [Production ski-run QA](PRODUCTION_SKI_RUN_QA.md) — end-to-end human gameplay and visual checks.
 - [Performance backlog](PERFORMANCE_BACKLOG.md) — active measured performance work.
-- [1080p performance baseline](PERFORMANCE_BASELINE_1080P.md) — current reproducible measurement contract and recorded results.
+- [1080p performance reference](PERFORMANCE_BASELINE_1080P.md) — reproducible measurement contract and dated 2026-09-02 reference results.
 - [Visual evidence](VISUAL_EVIDENCE.md) — deterministic GPU capture/review workflow.
 
 ## Build, media, and assets

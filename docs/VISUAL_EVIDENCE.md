@@ -99,7 +99,7 @@ Contact sheets and subject crops prefer the clean `analysis` artifact when an ad
 
 ## Baselines
 
-Curated baselines live under `tests/visual_baselines/` and are created only by the explicit `-UpdateBaselines` command. The command refuses a dirty worktree unless `-AllowDirtyBaseline` is supplied. The initial dirty worktree is not authoritative baseline evidence.
+Curated baselines live under `tests/visual_baselines/` and are created only by the explicit `-UpdateBaselines` command. The command refuses a dirty worktree unless `-AllowDirtyBaseline` is supplied. Baseline seeding must use an explicitly reviewed clean reference capture; dirty-tree captures are never authoritative baseline evidence.
 
 The intended curated set is five environment trajectory frames, the 18 canonical animation presentation frames at the reference rate, and one sunset capture. Animation audit-rate/profile matrices, environment motion sweeps, recovery lifecycle captures, and the close-range ramp role shots remain in run bundles for review until a human review explicitly selects a baseline. Every baseline has a sidecar JSON file containing compatibility identity, thresholds, source run, and source hash. Matrix captures record fixed-rate per-frame telemetry and generate one motion contact sheet per behavior/variant. Do not seed or overwrite an existing baseline automatically from the ramp run.
 

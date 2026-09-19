@@ -151,8 +151,22 @@ penetration.
 
 The production acceptance runs ground and all supported grabs at 30, 60, and
 120 Hz, requires all 20 semantic proxies to be present, and rejects any
-unwhitelisted contact. Design rationale and the remaining equipment-to-world
-boundary are recorded in `docs/EQUIPMENT_COLLISION_RESEARCH.md`.
+unwhitelisted contact.
+
+The solver deliberately covers presentation self-collision only. Capsule
+proxies were chosen over compound `CharacterBody3D` equipment shapes,
+`PhysicalBone3D`/ragdoll simulation, query-only diagnostics, and more
+pair-specific clamps: primitive shapes keep the pair algorithm uniform and
+fast, one registered proxy set stays auditable, and none of the rejected
+alternatives respects the gameplay/presentation boundary without adding a
+competing pose owner. Equipment-to-world overlap recovery remains out of
+scope: `PhysicsDirectSpaceState3D.cast_motion()` reports safe/unsafe travel
+fractions but cannot resolve a shape that begins already overlapping, and
+final animation attachment updates run after part of the gameplay sweep path.
+A general fix therefore needs a starting-overlap recovery policy plus an
+explicit decision between visual-only recovery and gameplay crash handling;
+that remains the single equipment-collision entry in
+[Known Issues](KNOWN_ISSUES.md).
 
 Grab presentation moves through setup, reach, contact, hold, release, and recovery behavior without snapping the root or changing airtime. Landing preparation can progressively take priority as contact approaches.
 

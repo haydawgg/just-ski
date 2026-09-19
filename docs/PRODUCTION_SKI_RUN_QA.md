@@ -133,7 +133,7 @@ For daytime snow and landing review, run:
 Both GPU gates wait for the capture process, inspect its exit code and logs,
 require fresh output files, and fail when a renderer shutdown leak is reported.
 
-For the complete Codex-facing review bundle, run `.\tests\visual_analysis_bundle.ps1` after the headless gate. Do not update baselines from this dirty worktree; baseline seeding must use an explicitly reviewed clean reference capture.
+For the complete Codex-facing review bundle, run `.\tests\visual_analysis_bundle.ps1` after the headless gate. Baseline seeding must use an explicitly reviewed clean reference capture; dirty-tree captures are never authoritative baseline evidence.
 
 ## Local GPU characterization and deferred review
 
@@ -164,16 +164,15 @@ red against the maintained 0.095 threshold (0.061 average spread), the Sunset
 carve motion manifest was not produced after a local audio-device invalidation,
 and the Sunset straight motion log contains a renderer shutdown warning. A
 follow-up root-cause investigation (verified retimed-corridor numbers,
-Golden-preset comparison, and single-knob Day experiments) is recorded in
-`docs/RELEASE_READINESS_REPORT.md`; it left the Day preset and the threshold
-unchanged pending a human-reviewed art decision. The
+Golden-preset comparison, and single-knob Day experiments) left the Day preset
+and the threshold unchanged pending a human-reviewed art decision; its
+conclusions are carried in issue #80. The
 earlier eight `scenario ROI is invalid` errors came from PR #69 adding the
 `medium_deck`, `medium_landing`, `large_knuckle` and `large_landing` shots
 without catalog entries; those entries now exist in `tests/visual_scenarios.json`
 and the bundle was rebuilt with the Python post-processor only, which produced
 all eight subject crops. Preserve the remaining objective results; do not lower
-the metric or call the partial bundle green. The complete pass summary is in
-`docs/RELEASE_READINESS_REPORT.md`.
+the metric or call the partial bundle green.
 
 The uninterrupted gameplay trace has its own passing structured, lossless
 1280×720 set at `.godot_user/visual_runs/continuous_course_release`: 16 frames
