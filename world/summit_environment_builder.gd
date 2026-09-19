@@ -354,7 +354,7 @@ static func _append_ridge_body(st: SurfaceTool, radius: float, height: float, se
 			var ridge := sin(angle * ridge_primary + float(seed)) * 0.12 + sin(angle * ridge_secondary + 0.4) * 0.07
 			var irregularity := 1.0 + ridge + rng.randf_range(-0.035, 0.035)
 			var ring_radius := radius * float(ring_scales[ring_index]) * irregularity
-			var ring_y := float(ring_heights[ring_index]) + sin(angle * 3.0 + seed) * height * 0.08 * sin(float(ring_index) / 9.0 * PI)
+			var ring_y := float(ring_heights[ring_index]) * height + sin(angle * 3.0 + seed) * height * 0.08 * sin(float(ring_index) / 9.0 * PI)
 			points.append(Vector3(cos(angle) * ring_radius * x_stretch + center_offset.x, ring_y, sin(angle) * ring_radius * z_stretch + center_offset.y))
 		ridge_points.append(points)
 	for ring_index: int in range(ridge_points.size() - 1):
