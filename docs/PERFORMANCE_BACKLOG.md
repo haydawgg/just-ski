@@ -10,6 +10,11 @@ This file is the active performance worklist for Summit Sessions. The reproducib
 - Ultra is best-effort rather than a release baseline.
 - Performance changes must be measured against the maintained deterministic scenario matrix. Do not infer wins from source size, object count, or FPS alone.
 
+## P0 — clean current-`master` baseline refresh
+
+- [ ] Recapture the maintained 1080p matrix on a clean `master` worktree so the maintained reference reflects current behavior instead of the 2026-09-02 dirty-tree capture (issue #30).
+- [ ] Update the [performance reference](PERFORMANCE_BASELINE_1080P.md) identity block with the new commit, tree state, and capture date.
+
 ## P0 — release-hardware validation
 
 - [ ] Repeat the maintained 1080p benchmark matrix on each representative supported hardware tier.

@@ -102,7 +102,11 @@ Rails can be traversed in either direction when the spline and momentum allow it
 
 ## Session controls
 
-A marker can only be saved while grounded on valid snow contact. Returning to the marker uses the normal session respawn path, which clears transient crash, rail, landing, and motion state.
+A marker can only be saved while grounded in the `GROUND` state on snow contact. Feature, metal, and unknown surfaces are ineligible even when grounded, and airborne or bail states never qualify. The hotkey and the pause-menu action share the same eligibility decision and save a downhill-facing marker basis at the skier position.
+
+Returning to the marker uses the normal session respawn path, which clears transient crash, rail, landing, and motion state. During an active run it applies the configured retry score cost; from the run-results screen it starts a clean scoring run instead of recording a retry.
+
+Gameplay input is scoped to the keyboard plus the active controller once a pad claims ownership with a pressed button or deliberate stick deflection; button releases and sub-threshold stick motion do not steal the active identity. When the final controller disconnects mid-run, the game pauses with an explanatory notice and presentation returns to keyboard; a keyboard-driven disconnect only renames prompts, and disconnect handling never stacks a second pause menu over run results.
 
 The pause menu is controller navigable and includes an in-game trick guide.
 

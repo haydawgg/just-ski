@@ -19,6 +19,8 @@ Open Pause → Settings during a run to edit these values. Apply promotes pendin
 
 The settings loader validates maintained numeric ranges and falls back to defaults for invalid values.
 
+Resolution is a Windowed-mode display change only: the selector is disabled for fullscreen modes with an explanatory tooltip, and in fullscreen modes the stored value is not applied, so a fullscreen resolution change alone never triggers the risky-display Keep/Revert confirmation.
+
 ## Graphics presets
 
 The maintained graphics settings include:
