@@ -20,4 +20,4 @@ Every added binary asset must have:
 4. No committed Godot import cache or generated intermediate.
 5. A size justification when the file is 10 MB or larger.
 
-The quality gate should gain an automated size/provenance lint before the first production asset expansion. Until then, this checklist is a required review item.
+**Status:** the automated size/provenance lint is still missing from the quality gate. Until it exists, this checklist is a required manual review item before the first production asset expansion.

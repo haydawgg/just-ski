@@ -1,12 +1,12 @@
-# Current 1080p performance baseline
+# 1080p performance reference (2026-09-02 capture)
 
-This document is the maintained reproducible performance reference for Summit Sessions. Old investigations and superseded diagnoses belong in Git history rather than parallel baseline documents.
+This document is the maintained reproducible performance reference for Summit Sessions. Old investigations and superseded diagnoses belong in Git history rather than parallel baseline documents. The recorded results below are dated reference evidence from a dirty 2026-09-02 worktree, not a current-`master` baseline; refresh them on a clean `master` tree before treating any row as the live baseline (see the P0 backlog item and issue #30).
 
 ## Measurement contract
 
 - Capture date: 2026-09-02.
 - Source commit: `012a0d40f6b7c91a53c80840794dacee5b651a29`.
-- Working tree: dirty. These numbers are useful measurements but must not be described as a pristine commit baseline.
+- Working tree: dirty. These numbers are useful measurements but must not be described as a pristine commit baseline or cited as current-`master` performance.
 - Godot: `4.7.2-stable (official)`.
 - Reference host: Windows, 12th Gen Intel Core i7-12650H, NVIDIA GeForce RTX 4050 Laptop GPU.
 - Output: 1920×1080; VSync and FPS cap disabled for profiling.
@@ -16,7 +16,7 @@ The profiler records environment, preset, isolation scenario, commit/dirty state
 
 `tests/performance_compare.ps1` compares rows only when scenario and runtime identity are compatible. `-FailOnRegression` rejects both measured regressions and mismatched identities instead of pretending cross-hardware results are comparable.
 
-## Current discrete-GPU matrix
+## Discrete-GPU matrix (2026-09-02 reference)
 
 | Environment | Preset | Scale | Average frame | p95 | FPS | Objects | Draw calls | Primitives | Audio average | Audio max |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -44,7 +44,7 @@ Both stayed below the 16.67 ms target on that host. Baseline audio averages were
 
 This is one integrated-GPU host, not a universal hardware guarantee. Repeat the matrix on every supported/release-representative tier before distribution.
 
-## Current measured optimization result
+## Measured optimization result (2026-09-02 reference)
 
 Tree presentation uses one render-only `ParkTreeBatch` with six component `MultiMeshInstance3D` submissions while lightweight placement roots retain collision, deterministic placement, scale variation, and asset metadata.
 
