@@ -75,8 +75,8 @@ foreach ($requiredContentText in @(
 if ($contentDesign -match 'The best first code/content change' -or $contentDesign -match '(?m)^# Milestone [0-9]') {
 	$failures.Add("CONTENT_DESIGN_PLAN.md still contains superseded implementation-roadmap framing.")
 }
-if ($knownIssues -notmatch 'concrete, actionable bugs and missing functionality' -or $knownIssues -notmatch 'Resolved items.*relevant project docs') {
-	$failures.Add("KNOWN_ISSUES.md must track actionable issues and direct resolved status to the project docs.")
+if ($knownIssues -notmatch 'concrete, actionable bugs and missing functionality' -or $knownIssues -notmatch 'Resolved items.*relevant project docs' -or $knownIssues -notmatch 'authoritative for current behavior') {
+	$failures.Add("KNOWN_ISSUES.md must be authoritative for current behavior, track actionable issues, and direct resolved status to the project docs.")
 }
 if ($graphics -notmatch 'environment_visual_quality_gate.ps1' -or $graphics -notmatch 'shutdown leaks' -or $graphics -notmatch 'human visual review') {
 	$failures.Add("GRAPHICS.md is missing the deterministic capture gate, shutdown failure policy, or human review boundary.")
@@ -101,6 +101,8 @@ foreach ($obsoletePath in @(
 	"docs/ANIMATION_OWNERSHIP_ROOT_CAUSE.md",
 	"docs/VISUAL_QUALITY_FIXES.md",
 	"docs/LICENSING_DECISION.md",
+	"docs/EQUIPMENT_COLLISION_RESEARCH.md",
+	"docs/RELEASE_READINESS_REPORT.md",
 	"docs/history"
 )) {
 	if (Test-Path -LiteralPath (Join-Path $RepoRoot $obsoletePath)) {
@@ -161,7 +163,7 @@ if (-not (Test-Path -LiteralPath $performanceBaselinePath -PathType Leaf)) {
 }
 else {
 	$performanceBaseline = Get-Content -Raw $performanceBaselinePath
-	foreach ($requiredBaselineText in @("Measurement contract", "Current discrete-GPU matrix", "Integrated-GPU validation", "Regression policy", "16.67 ms")) {
+	foreach ($requiredBaselineText in @("Measurement contract", "Discrete-GPU matrix (2026-09-02 reference)", "Integrated-GPU validation", "Regression policy", "16.67 ms", "dated reference evidence")) {
 		if ($performanceBaseline -notmatch [regex]::Escape($requiredBaselineText)) {
 			$failures.Add("PERFORMANCE_BASELINE_1080P.md is missing required content: $requiredBaselineText")
 		}
