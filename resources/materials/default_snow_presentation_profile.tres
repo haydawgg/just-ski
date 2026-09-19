@@ -49,3 +49,6 @@ park_feature_form_contrast_boost = 0.025
 park_feature_corduroy_boost = 0.02
 park_feature_emphasis_floor = 0.16
 park_feature_detail_far_distance = 84.0
+piste_drift_strength = 0.9
+piste_drift_scale = 0.18
+piste_breakup_floor = 0.58

@@ -60,6 +60,15 @@ class SnowMaterialInstance extends ShaderMaterial:
 		set_shader_parameter("far_macro_scale", SnowMaterial.PRESENTATION.broad_variation_scale)
 		set_shader_parameter("form_light_direction_world_xz", SnowMaterial.PRESENTATION.form_light_direction_world_xz)
 		set_shader_parameter("steepness_contrast_strength", SnowMaterial.PRESENTATION.steepness_contrast)
+		# Piste value breakup: world-space multiplicative drift from the
+		# presentation profile. The shadow-safe summit variant keeps its own
+		# bounded drift, so the shared field is zeroed there to avoid stacking.
+		var piste_drift_strength := SnowMaterial.PRESENTATION.piste_drift_strength
+		if render_shadow_safe:
+			piste_drift_strength = 0.0
+		set_shader_parameter("piste_drift_strength", piste_drift_strength)
+		set_shader_parameter("piste_drift_scale", SnowMaterial.PRESENTATION.piste_drift_scale)
+		set_shader_parameter("piste_breakup_floor", SnowMaterial.PRESENTATION.piste_breakup_floor)
 		set_shader_parameter("minimum_albedo_luminance", SnowMaterial.PRESENTATION.minimum_albedo_luminance)
 		set_shader_parameter("feature_tint", Color(0.86, 0.9, 0.94))
 		set_shader_parameter("disturbed_roughness_offset", 0.075)

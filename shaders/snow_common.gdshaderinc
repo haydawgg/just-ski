@@ -33,6 +33,9 @@ uniform float detail_far_distance : hint_range(1.0, 200.0) = 60.0;
 uniform vec2 groom_direction_world_xz = vec2(0.0, -1.0);
 uniform float corduroy_amount : hint_range(0.0, 1.0) = 0.0;
 uniform float corduroy_frequency : hint_range(0.25, 8.0) = 3.0;
+uniform float piste_drift_strength : hint_range(0.0, 1.5) = 0.0;
+uniform float piste_drift_scale : hint_range(0.005, 0.25) = 0.18;
+uniform float piste_breakup_floor : hint_range(0.3, 0.9) = 0.44;
 
 varying vec3 snow_world_position;
 varying vec3 snow_world_normal;
@@ -165,6 +168,18 @@ void snow_surface(
 	surface_albedo *= 1.0 + (near_macro - 0.5) * macro_tint_amount * detail_visibility;
 	surface_albedo *= 1.0 + slope_aspect * slope_contrast_strength;
 	surface_albedo *= 1.0 + form_aspect * form_contrast_strength - steepness * steepness_contrast_strength;
+	// The piste is a single planar face, so geometric form terms are constant
+	// across it; bounded additive world-space drift restores the planar
+	// slope's value breakup. The shared luminance floor keeps the breakup
+	// cells above the gameplay readability band.
+	float piste_drift = snow_value_noise(snow_world_position.xz * piste_drift_scale);
+	surface_albedo += vec3((piste_drift - 0.5) * piste_drift_strength);
+	if (piste_drift_strength > 0.001) {
+		float breakup_luminance = dot(surface_albedo, vec3(0.2126, 0.7152, 0.0722));
+		if (breakup_luminance < piste_breakup_floor) {
+			surface_albedo += vec3(piste_breakup_floor - breakup_luminance);
+		}
+	}
 	surface_albedo *= 1.0 + (wind_crust - 0.5) * wind_crust_amount;
 	surface_albedo = mix(surface_albedo, feature_tint, disturbance * 0.12);
 	surface_roughness = roughness_base + (far_macro - 0.5) * macro_roughness_amount + disturbance * disturbed_roughness_offset;

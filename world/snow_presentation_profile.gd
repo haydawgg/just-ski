@@ -43,6 +43,11 @@ extends Resource
 @export_range(0.0, 100.0, 0.5) var detail_near_distance := 10.0
 @export_range(1.0, 200.0, 0.5) var detail_far_distance := 64.0
 
+@export_category("Piste Value Breakup")
+@export_range(0.0, 1.5, 0.01) var piste_drift_strength := 0.9
+@export_range(0.005, 0.25, 0.001) var piste_drift_scale := 0.18
+@export_range(0.3, 0.9, 0.01) var piste_breakup_floor := 0.58
+
 @export_category("Park Feature Surface")
 @export_range(0.25, 8.0, 0.01) var park_feature_texture_world_size := 1.1
 @export_range(0.0, 1.0, 0.01) var park_feature_albedo_texture_strength := 0.32
