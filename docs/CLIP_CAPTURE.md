@@ -18,6 +18,8 @@ The recorder advances a capture-slot clock for every elapsed 1/30-second interva
 
 This is deterministic duplicate-frame compensation rather than variable-duration MP4 timestamps. It preserves the simple MJPEG sample-table and fixed-rate playback contract.
 
+The stop-time minimum-length gate counts **elapsed capture slots** (`MIN_CLIP_FRAMES`, 18 slots ≈ 0.6 s at 30 fps), not the number of encoded JPEG frames, so sustained worker back-pressure cannot reject a capture that ran long enough as "too short"; the slot expansion above preserves its output duration. A capture that ran long enough but never encoded a single usable frame is still discarded (`DEBUG CLIP TOO SHORT — NO USABLE FRAME WAS ENCODED`).
+
 ## Memory and shutdown
 
 JPEG samples remain available to the background mux until the clip is written, but `Mp4Encoder.write_to_file()` streams `mdat` samples and writes the `moov` box directly to a temporary `user://` file. The recorder copies that file to Downloads in bounded chunks, falling back to Godot's user-data directory when Downloads is unavailable.
@@ -28,7 +30,7 @@ The compatibility `Mp4Encoder.encode()` byte-returning API remains available for
 
 ## Verification
 
-The runtime quality gate covers worker lifecycle, sustained-drop timeline expansion, and MP4 structure. For a longer local capture/memory diagnostic:
+The runtime quality gate covers worker lifecycle, sustained-drop/backpressure slot expansion, the slot-based minimum-length decision, and MP4 structure. For a longer local capture/memory diagnostic:
 
 ```powershell
 & $env:GODOT_PATH --headless --path . res://tests/mp4_capture_diagnostic.tscn
